@@ -22,7 +22,7 @@ import threading
 import time
 import uuid
 from collections import deque
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from importlib import metadata as importlib_metadata
 
@@ -60,11 +60,25 @@ INTERCOM_PEER_READY_TIMEOUT = 5.0
 INTERCOM_SPEAKER_ACTIVATION_TIMEOUT = 12.0
 INTERCOM_SPEAKER_RETRY_SECONDS = 0.25
 INTERCOM_STATISTICS_TIMEOUT = 1.0
+WEBRTC_OFFER_TIMEOUT = 10.0
+WEBRTC_SIGNALING_TIMEOUT = 20.0
+WEBRTC_ANSWER_TIMEOUT = 15.0
+WEBRTC_REMOTE_DESCRIPTION_TIMEOUT = 5.0
+RECEIVER_TASK_CLEANUP_TIMEOUT = 0.5
+RECEIVER_CLOSE_TIMEOUT = 2.0
 _DIAGNOSTIC_VALUE_LIMIT = 128
 
 
 class EncodedFrameAdapterError(RuntimeError):
     """Raised when aiortc's validated encoded-frame boundary is unavailable."""
+
+
+class MediaCompatibilityError(RuntimeError):
+    """Raised when the installed media dependencies no longer match Halo's patches."""
+
+
+class RingMediaNegotiationError(RuntimeError):
+    """Raised when Ring's WebRTC answer cannot be applied to the local peer."""
 
 
 @dataclass(frozen=True)
@@ -274,7 +288,7 @@ async def request_startup_keyframes(
             await asyncio.sleep(STARTUP_KEYFRAME_INTERVAL_SECONDS)
 
 
-def patch_aiortc_h264() -> None:
+def patch_aiortc_h264() -> bool:
     """Monkey-patch aiortc for H264 and RTP receiver compatibility with Ring cameras.
 
     Three patches are applied at module import time so they take effect before
@@ -422,8 +436,59 @@ def patch_aiortc_h264() -> None:
             _log.debug("Applied H264 decoder warning throttle")
 
         _log.debug("aiortc H264/RTP patches applied")
+        return True
     except Exception as exc:
-        _log.debug("Could not apply aiortc compatibility patches: %s", exc)
+        _log.warning("Could not apply aiortc compatibility patches: %s", exc)
+        return False
+
+
+def validate_media_compatibility() -> None:
+    """Fail startup when Halo's exact private media contracts are unavailable."""
+    import aiortc
+    from aiortc.codecs import CODECS
+    from aiortc.codecs.h264 import H264Decoder
+    from aiortc.rtcrtpreceiver import RTCRtpReceiver
+    from ring_doorbell.webrtcstream import RingWebRtcStream
+
+    errors: list[str] = []
+    aiortc_version = str(getattr(aiortc, "__version__", "unknown"))
+    if aiortc_version not in _ENCODED_FRAME_AIORTC_VERSIONS:
+        errors.append(f"aiortc {aiortc_version} is not validated")
+    if not getattr(RTCRtpReceiver, "_halo_jitter_buffer_patch_applied", False):
+        errors.append("aiortc video jitter-buffer patch is missing")
+    if not getattr(H264Decoder, "_halo_output_corrupt_patch_applied", False):
+        errors.append("aiortc H.264 decoder recovery patch is missing")
+    if not getattr(H264Decoder, "_halo_quiet_decode_patch_applied", False):
+        errors.append("aiortc H.264 logging patch is missing")
+
+    required_h264 = {
+        ("0", "42001f"),
+        ("0", "42e01f"),
+        ("1", "640032"),
+        ("0", "640032"),
+    }
+    available_h264 = {
+        (
+            str(codec.parameters.get("packetization-mode")),
+            str(codec.parameters.get("profile-level-id")),
+        )
+        for codec in CODECS["video"]
+        if codec.mimeType.lower() == "video/h264"
+    }
+    if not required_h264.issubset(available_h264):
+        errors.append("required Ring H.264 offer profiles are missing")
+
+    try:
+        ring_version = importlib_metadata.version("ring-doorbell")
+    except importlib_metadata.PackageNotFoundError:
+        ring_version = "missing"
+    if ring_version not in _RING_DOORBELL_WEBRTC_CLOSE_VERSIONS:
+        errors.append(f"ring-doorbell {ring_version} is not validated")
+    if not getattr(RingWebRtcStream, "_halo_reader_self_await_patch_applied", False):
+        errors.append("ring-doorbell WebRTC close patch is missing")
+
+    if errors:
+        raise MediaCompatibilityError("; ".join(errors))
 
 
 patch_aiortc_h264()
@@ -974,6 +1039,59 @@ def _safe_direction(value: object) -> str:
     return "unknown"
 
 
+def _consume_cleanup_result(task: asyncio.Task) -> None:
+    with contextlib.suppress(asyncio.CancelledError, Exception):
+        task.exception()
+
+
+async def _run_bounded_cleanup(
+    awaitable: Awaitable[object],
+    *,
+    timeout: float,
+    label: str,
+    camera_id: str,
+    session_reference: str,
+) -> bool:
+    task = asyncio.create_task(awaitable)
+    try:
+        done, _ = await asyncio.wait((task,), timeout=timeout)
+    except asyncio.CancelledError:
+        task.cancel()
+        task.add_done_callback(_consume_cleanup_result)
+        raise
+    if not done:
+        task.cancel()
+        task.add_done_callback(_consume_cleanup_result)
+        _log.warning(
+            "%s timed out camera_id=%s session=%s timeout=%.1f",
+            label,
+            camera_id,
+            session_reference,
+            timeout,
+        )
+        return False
+    try:
+        task.result()
+    except asyncio.CancelledError:
+        _log.warning(
+            "%s was cancelled camera_id=%s session=%s",
+            label,
+            camera_id,
+            session_reference,
+        )
+        return False
+    except Exception as exc:
+        _log.warning(
+            "%s failed camera_id=%s session=%s reason=%s",
+            label,
+            camera_id,
+            session_reference,
+            _diagnostic_value(exc),
+        )
+        return False
+    return True
+
+
 class RingStreamReceiver:
     """Negotiate a Ring WebRTC stream and deliver decoded frames via callbacks.
 
@@ -1030,7 +1148,9 @@ class RingStreamReceiver:
         mic_track = None
         ring_session_started = False
         terminal = asyncio.Event()
+        answer_applied = asyncio.Event()
         stream_errors: list[str] = []
+        remote_description_error: Exception | None = None
         tasks: set[asyncio.Task] = set()
 
         def retain(task: asyncio.Task, label: str) -> asyncio.Task:
@@ -1092,6 +1212,7 @@ class RingStreamReceiver:
                         _log.debug("on_audio error: %s", exc)
 
         async def on_answer(sdp) -> None:
+            nonlocal remote_description_error
             try:
                 _log.info(
                     "Ring WebRTC answer camera_id=%s kind=%s session=%s codecs=%s",
@@ -1100,7 +1221,9 @@ class RingStreamReceiver:
                     session_reference,
                     summarize_sdp_codecs(sdp),
                 )
-                await pc.setRemoteDescription(RTCSessionDescription(sdp=sdp, type="answer"))
+                async with asyncio.timeout(WEBRTC_REMOTE_DESCRIPTION_TIMEOUT):
+                    await pc.setRemoteDescription(RTCSessionDescription(sdp=sdp, type="answer"))
+                answer_applied.set()
                 _log.info(
                     "Ring WebRTC answer applied camera_id=%s session=%s "
                     "remote_audio_direction=%s current_audio_direction=%s",
@@ -1110,7 +1233,14 @@ class RingStreamReceiver:
                     _safe_direction(getattr(audio_transceiver, "currentDirection", None)),
                 )
             except Exception as exc:  # noqa: BLE001
-                _log.debug("answer err: %s", exc)
+                remote_description_error = exc
+                _log.warning(
+                    "Ring WebRTC answer rejected camera_id=%s session=%s reason=%s",
+                    camera_id,
+                    session_reference,
+                    _diagnostic_value(exc),
+                )
+                terminal.set()
             finally:
                 retain_aiortc_connect_tasks(pc, retain)
 
@@ -1217,8 +1347,14 @@ class RingStreamReceiver:
                     _diagnostic_value(getattr(pc, "iceConnectionState", None)),
                 )
 
-            offer = await pc.createOffer()
-            await pc.setLocalDescription(offer)
+            try:
+                async with asyncio.timeout(WEBRTC_OFFER_TIMEOUT):
+                    offer = await pc.createOffer()
+                    await pc.setLocalDescription(offer)
+            except TimeoutError as exc:
+                raise RingMediaNegotiationError(
+                    "Ring WebRTC local offer preparation timed out"
+                ) from exc
             _log.info(
                 "Ring WebRTC offer camera_id=%s kind=%s session=%s codecs=%s",
                 camera_id,
@@ -1228,20 +1364,45 @@ class RingStreamReceiver:
             )
             retain_aiortc_connect_tasks(pc, retain)
             ring_session_started = True
-            await self._device.generate_async_webrtc_stream(
-                pc.localDescription.sdp,
-                session_id,
-                on_rtc_message,
-                keep_alive_timeout=300,
-            )
+            try:
+                async with asyncio.timeout(WEBRTC_SIGNALING_TIMEOUT):
+                    await self._device.generate_async_webrtc_stream(
+                        pc.localDescription.sdp,
+                        session_id,
+                        on_rtc_message,
+                        keep_alive_timeout=300,
+                    )
+            except TimeoutError as exc:
+                raise RingMediaNegotiationError("Ring WebRTC signaling timed out") from exc
             _log.info(
                 "Ring WebRTC initiated camera_id=%s kind=%s session=%s",
                 camera_id,
                 camera_kind,
                 session_reference,
             )
+            if not stop.is_set() and not terminal.is_set():
+                try:
+                    async with asyncio.timeout(WEBRTC_ANSWER_TIMEOUT):
+                        while (
+                            not answer_applied.is_set()
+                            and not stop.is_set()
+                            and not terminal.is_set()
+                        ):
+                            await asyncio.sleep(INTERCOM_SPEAKER_POLL_SECONDS)
+                except TimeoutError as exc:
+                    raise RingMediaNegotiationError("Ring WebRTC answer timed out") from exc
+            if remote_description_error is not None:
+                raise RingMediaNegotiationError(
+                    "Ring WebRTC remote description could not be applied"
+                ) from remote_description_error
+            if stream_errors:
+                raise RuntimeError(stream_errors[-1])
             audio_sender = getattr(audio_transceiver, "sender", None)
-            if self._microphone_source is not None and audio_sender is not None:
+            if (
+                answer_applied.is_set()
+                and self._microphone_source is not None
+                and audio_sender is not None
+            ):
                 spawn(
                     manage_intercom_speaker(
                         self._device,
@@ -1257,7 +1418,7 @@ class RingStreamReceiver:
                     ),
                     "intercom speaker controller",
                 )
-            if self._on_encoded_video is not None:
+            if answer_applied.is_set() and self._on_encoded_video is not None:
                 spawn(
                     request_startup_keyframes(
                         video_transceiver.receiver,
@@ -1268,6 +1429,10 @@ class RingStreamReceiver:
                 )
             while not stop.is_set() and not terminal.is_set():
                 await asyncio.sleep(0.1)
+            if remote_description_error is not None:
+                raise RingMediaNegotiationError(
+                    "Ring WebRTC remote description could not be applied"
+                ) from remote_description_error
             if stream_errors:
                 raise RuntimeError(stream_errors[-1])
         finally:
@@ -1290,14 +1455,36 @@ class RingStreamReceiver:
             for task in pending:
                 task.cancel()
             if pending:
-                await asyncio.gather(*pending, return_exceptions=True)
+                _, unfinished = await asyncio.wait(
+                    pending,
+                    timeout=RECEIVER_TASK_CLEANUP_TIMEOUT,
+                )
+                if unfinished:
+                    for task in unfinished:
+                        task.cancel()
+                    _log.warning(
+                        "Ring WebRTC task cleanup timed out camera_id=%s session=%s tasks=%d",
+                        camera_id,
+                        session_reference,
+                        len(unfinished),
+                    )
 
             if ring_session_started:
-                with contextlib.suppress(Exception):
-                    await self._device.close_webrtc_stream(session_id)
+                await _run_bounded_cleanup(
+                    self._device.close_webrtc_stream(session_id),
+                    timeout=RECEIVER_CLOSE_TIMEOUT,
+                    label="Ring WebRTC stream close",
+                    camera_id=camera_id,
+                    session_reference=session_reference,
+                )
             if pc is not None:
-                with contextlib.suppress(Exception):
-                    await pc.close()
+                await _run_bounded_cleanup(
+                    pc.close(),
+                    timeout=RECEIVER_CLOSE_TIMEOUT,
+                    label="WebRTC peer close",
+                    camera_id=camera_id,
+                    session_reference=session_reference,
+                )
 
 
 def summarize_sdp_codecs(sdp: object) -> str:

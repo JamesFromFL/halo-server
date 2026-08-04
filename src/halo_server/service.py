@@ -30,6 +30,7 @@ from halo_server.incidents.coordinator import (
     IncidentCoordinator,
 )
 from halo_server.media.leases import LeasePurpose
+from halo_server.media.ring_media import validate_media_compatibility
 from halo_server.media.ring_speaker import supports_ring_camera_intercom
 from halo_server.media.rtsp import BufferedMediaConsumer, RtspMediaGateway
 from halo_server.media.session import CameraMediaSession, MediaSessionState
@@ -187,6 +188,7 @@ class HaloService:
         """Start the admin plane, then restore Ring state in the background loop."""
         if self._started_at is not None:
             return
+        validate_media_compatibility()
         self.paths.prepare()
         self._main_loop = asyncio.get_running_loop()
         self._stop_requested.clear()

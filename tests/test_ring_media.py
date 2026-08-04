@@ -512,6 +512,17 @@ def test_ring_doorbell_close_patch_rejects_changed_contract(monkeypatch):
     assert ring_media.patch_ring_doorbell_webrtc_close() is False
 
 
+def test_media_compatibility_gate_accepts_installed_validated_contracts():
+    ring_media.validate_media_compatibility()
+
+
+def test_media_compatibility_gate_rejects_unvalidated_aiortc(monkeypatch):
+    monkeypatch.setattr(aiortc, "__version__", "1.15.0")
+
+    with pytest.raises(ring_media.MediaCompatibilityError, match="aiortc 1.15.0"):
+        ring_media.validate_media_compatibility()
+
+
 @pytest.mark.asyncio
 async def test_microphone_track_never_opens_a_server_local_capture_device(monkeypatch):
     monkeypatch.setattr(
@@ -783,6 +794,172 @@ async def test_receiver_cleans_up_when_ring_negotiation_fails(monkeypatch):
     assert peer.closed is True
     assert len(device.closed_sessions) == 1
     assert FakeMicrophoneTrack.instances[0].stopped is True
+
+
+@pytest.mark.asyncio
+async def test_receiver_remote_description_failure_is_terminal(monkeypatch):
+    peer = install_media_fakes(monkeypatch)
+
+    async def reject_answer(_answer):
+        raise RuntimeError("injected invalid SDP")
+
+    peer.setRemoteDescription = reject_answer
+
+    async def send_answer(_session_id, on_rtc_message):
+        on_rtc_message(
+            SimpleNamespace(
+                answer="invalid answer",
+                candidate=None,
+                sdp_m_line_index=None,
+                error_code=None,
+            )
+        )
+
+    device = FakeDevice(on_generate=send_answer)
+    receiver = ring_media.RingStreamReceiver(device, lambda *_args: None)
+
+    with pytest.raises(
+        ring_media.RingMediaNegotiationError,
+        match="remote description",
+    ):
+        await asyncio.wait_for(receiver.receive(threading.Event()), timeout=0.5)
+
+    assert peer.closed is True
+    assert len(device.closed_sessions) == 1
+
+
+@pytest.mark.asyncio
+async def test_receiver_remote_description_timeout_is_terminal(monkeypatch):
+    peer = install_media_fakes(monkeypatch)
+
+    async def send_answer(_session_id, on_rtc_message):
+        on_rtc_message(
+            SimpleNamespace(
+                answer="answer",
+                candidate=None,
+                sdp_m_line_index=None,
+                error_code=None,
+            )
+        )
+
+    monkeypatch.setattr(ring_media, "WEBRTC_REMOTE_DESCRIPTION_TIMEOUT", 0.01)
+    device = FakeDevice(on_generate=send_answer)
+    receiver = ring_media.RingStreamReceiver(device, lambda *_args: None)
+
+    with pytest.raises(
+        ring_media.RingMediaNegotiationError,
+        match="remote description",
+    ):
+        await asyncio.wait_for(receiver.receive(threading.Event()), timeout=0.5)
+
+    assert peer.answer_cancelled is True
+    assert peer.closed is True
+
+
+@pytest.mark.asyncio
+async def test_receiver_missing_answer_times_out_and_cleans_up(monkeypatch):
+    peer = install_media_fakes(monkeypatch)
+    monkeypatch.setattr(ring_media, "WEBRTC_ANSWER_TIMEOUT", 0.01)
+    device = FakeDevice()
+    receiver = ring_media.RingStreamReceiver(device, lambda *_args: None)
+
+    with pytest.raises(ring_media.RingMediaNegotiationError, match="answer timed out"):
+        await asyncio.wait_for(receiver.receive(threading.Event()), timeout=0.5)
+
+    assert peer.closed is True
+    assert len(device.closed_sessions) == 1
+
+
+@pytest.mark.asyncio
+async def test_receiver_local_offer_timeout_closes_peer(monkeypatch):
+    peer = install_media_fakes(monkeypatch)
+    local_offer_cancelled = False
+
+    async def hang_local_offer(_offer):
+        nonlocal local_offer_cancelled
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            local_offer_cancelled = True
+            raise
+
+    peer.setLocalDescription = hang_local_offer
+    monkeypatch.setattr(ring_media, "WEBRTC_OFFER_TIMEOUT", 0.01)
+    device = FakeDevice()
+    receiver = ring_media.RingStreamReceiver(device, lambda *_args: None)
+
+    with pytest.raises(ring_media.RingMediaNegotiationError, match="offer preparation"):
+        await asyncio.wait_for(receiver.receive(threading.Event()), timeout=0.5)
+
+    assert local_offer_cancelled is True
+    assert peer.closed is True
+    assert device.closed_sessions == []
+
+
+@pytest.mark.asyncio
+async def test_receiver_ring_signaling_timeout_closes_partial_session(monkeypatch):
+    peer = install_media_fakes(monkeypatch)
+    signaling_cancelled = False
+
+    async def hang_generate(_session_id, _on_rtc_message):
+        nonlocal signaling_cancelled
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            signaling_cancelled = True
+            raise
+
+    monkeypatch.setattr(ring_media, "WEBRTC_SIGNALING_TIMEOUT", 0.01)
+    device = FakeDevice(on_generate=hang_generate)
+    receiver = ring_media.RingStreamReceiver(device, lambda *_args: None)
+
+    with pytest.raises(ring_media.RingMediaNegotiationError, match="signaling timed out"):
+        await asyncio.wait_for(receiver.receive(threading.Event()), timeout=0.5)
+
+    assert signaling_cancelled is True
+    assert peer.closed is True
+    assert len(device.closed_sessions) == 1
+
+
+@pytest.mark.asyncio
+async def test_receiver_bounds_ring_and_peer_close(monkeypatch):
+    peer = install_media_fakes(monkeypatch)
+    stop = threading.Event()
+    ring_close_started = asyncio.Event()
+    peer_close_started = asyncio.Event()
+    cancelled = []
+
+    async def finish_generate(_session_id, _on_rtc_message):
+        stop.set()
+
+    async def hang_ring_close(_session_id):
+        ring_close_started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            cancelled.append("ring")
+            raise
+
+    async def hang_peer_close():
+        peer_close_started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            cancelled.append("peer")
+            raise
+
+    device = FakeDevice(on_generate=finish_generate)
+    device.close_webrtc_stream = hang_ring_close
+    peer.close = hang_peer_close
+    monkeypatch.setattr(ring_media, "RECEIVER_CLOSE_TIMEOUT", 0.01)
+    receiver = ring_media.RingStreamReceiver(device, lambda *_args: None)
+
+    await asyncio.wait_for(receiver.receive(stop), timeout=0.2)
+    await asyncio.sleep(0)
+
+    assert ring_close_started.is_set()
+    assert peer_close_started.is_set()
+    assert sorted(cancelled) == ["peer", "ring"]
 
 
 @pytest.mark.asyncio
