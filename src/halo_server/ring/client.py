@@ -106,26 +106,53 @@ class RingClient:
 
     def stop(self) -> None:
         """Close Ring authentication and terminate the owned event loop."""
+        failures: list[Exception] = []
         with self._loop_lock:
+            ring = self._detach_session()
             loop = self._loop
             thread = self._loop_thread
             if loop and not loop.is_closed() and loop.is_running():
+                if ring is not None:
+                    coroutine = self._close_ring_auth(ring)
+                    try:
+                        close_future = asyncio.run_coroutine_threadsafe(coroutine, loop)
+                    except Exception as exc:
+                        coroutine.close()
+                        failures.append(exc)
+                        _log.exception("Could not submit Ring async close")
+                    else:
+                        try:
+                            close_future.result(timeout=ASYNC_CLOSE_TIMEOUT)
+                        except concurrent.futures.TimeoutError:
+                            close_future.cancel()
+                            failure = TimeoutError("Ring async close timed out")
+                            failures.append(failure)
+                            _log.error("Ring async close did not finish within timeout")
+                        except Exception as exc:
+                            failures.append(exc)
+                            _log.exception("Ring async close failed")
                 try:
-                    asyncio.run_coroutine_threadsafe(self._async_close(), loop).result(
-                        timeout=ASYNC_CLOSE_TIMEOUT
-                    )
+                    loop.call_soon_threadsafe(loop.stop)
                 except Exception as exc:
-                    _log.debug("Error during Ring async close: %s", exc)
-                loop.call_soon_threadsafe(loop.stop)
+                    failures.append(exc)
+                    _log.exception("Could not request Ring event-loop stop")
+            elif ring is not None:
+                failure = RuntimeError("Ring event loop was unavailable during auth close")
+                failures.append(failure)
+                _log.error(str(failure))
 
             if thread is not None and thread.is_alive():
                 thread.join(timeout=LOOP_JOIN_TIMEOUT)
                 if thread.is_alive():
-                    _log.warning("Ring asyncio thread did not stop within timeout")
-                    return
+                    failure = RuntimeError("Ring asyncio thread did not stop within timeout")
+                    failures.append(failure)
+                    _log.error(str(failure))
 
-            self._loop = None
-            self._loop_thread = None
+            if thread is None or not thread.is_alive():
+                self._loop = None
+                self._loop_thread = None
+        if failures:
+            raise ExceptionGroup("Ring client shutdown failed", failures)
 
     def _ensure_loop(self) -> asyncio.AbstractEventLoop:
         with self._loop_lock:
@@ -280,13 +307,22 @@ class RingClient:
         return None
 
     async def _async_close(self) -> None:
+        ring = self._detach_session()
+
+        if ring is not None:
+            await self._close_ring_auth(ring)
+
+    def _detach_session(self) -> Any | None:
         ring = self._ring
         self._authenticated = False
         self._ring = None
         self._pending_auth_token = None
         self._token_updater = None
-        if ring is not None:
-            await self._close_auth(ring.auth)
+        return ring
+
+    @staticmethod
+    async def _close_ring_auth(ring) -> None:
+        await ring.auth.async_close()
 
     @staticmethod
     async def _close_auth(auth) -> None:
@@ -396,7 +432,8 @@ class RingSessionManager:
             client = self._client
             self._client = None
             self._account_email = None
-        _stop_quietly(client)
+        if client is not None:
+            client.stop()
 
     def _begin_operation(self) -> int:
         with self._lock:

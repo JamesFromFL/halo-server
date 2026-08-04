@@ -957,10 +957,13 @@ class HaloService:
                 async with self._camera_media_lock(camera_id):
                     await asyncio.to_thread(session.stop_all, reason)
 
-            await asyncio.gather(
+            results = await asyncio.gather(
                 *(stop_session(camera_id, session) for camera_id, session in sessions),
                 return_exceptions=True,
             )
+            failures = [result for result in results if isinstance(result, Exception)]
+            if failures:
+                raise ExceptionGroup("Halo media session shutdown failed", failures)
 
     async def _sync_rtsp_cameras(self, camera_ids: list[str] | None = None) -> None:
         gateway = self._rtsp_gateway

@@ -1007,6 +1007,28 @@ async def test_service_releases_remaining_resources_when_one_stop_fails(tmp_path
 
 
 @pytest.mark.asyncio
+async def test_media_session_stop_failures_are_propagated_after_all_cameras_stop(tmp_path):
+    class FailingMediaSession(FakeMediaSession):
+        def stop_all(self, reason):
+            super().stop_all(reason)
+            if self.camera_id == "1":
+                raise RuntimeError("camera cleanup failed")
+
+    service = _service(tmp_path)
+    first = FailingMediaSession(None, SimpleNamespace(id=1))
+    second = FailingMediaSession(None, SimpleNamespace(id=2))
+    service._media_sessions = {"1": first, "2": second}
+
+    with pytest.raises(ExceptionGroup, match="media session shutdown failed") as raised:
+        await service._stop_media_sessions("service_stop")
+
+    assert any("camera cleanup failed" in str(error) for error in raised.value.exceptions)
+    assert first.stop_reasons == ["service_stop"]
+    assert second.stop_reasons == ["service_stop"]
+    assert service._media_sessions == {}
+
+
+@pytest.mark.asyncio
 async def test_login_and_logout_sync_rtsp_camera_inventory(tmp_path):
     paths = ServerPaths(tmp_path / "state", tmp_path / "runtime")
     sessions = FakeSessions()

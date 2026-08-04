@@ -33,6 +33,7 @@ class _ManagedClient:
         login_started: threading.Event | None = None,
         login_release: threading.Event | None = None,
         restore_hook=None,
+        stop_error: Exception | None = None,
     ):
         self.token = {"refresh_token": token}
         self.login_error = login_error
@@ -40,6 +41,7 @@ class _ManagedClient:
         self.login_started = login_started
         self.login_release = login_release
         self.restore_hook = restore_hook
+        self.stop_error = stop_error
         self.is_authenticated = False
         self.stopped = False
         self.persist = None
@@ -67,6 +69,8 @@ class _ManagedClient:
     def stop(self):
         self.stopped = True
         self.is_authenticated = False
+        if self.stop_error is not None:
+            raise self.stop_error
 
 
 class _FailingClearStore:
@@ -376,6 +380,93 @@ def test_logout_stops_session_even_when_credential_clear_fails():
     assert client.stopped is True
     assert manager.active_client is None
     assert manager.account_email is None
+
+
+def test_shutdown_surfaces_ring_client_stop_failure(tmp_path):
+    client = _ManagedClient("active", stop_error=RuntimeError("loop did not stop"))
+    manager = RingSessionManager(
+        CredentialStore(tmp_path / "credentials.json"),
+        client_factory=lambda: client,
+    )
+    manager._client = client
+    manager._account_email = "person@example.com"
+
+    with pytest.raises(RuntimeError, match="loop did not stop"):
+        manager.shutdown()
+
+    assert client.stopped is True
+    assert manager.active_client is None
+    assert manager.account_email is None
+
+
+def test_ring_client_stop_surfaces_async_auth_close_failure(monkeypatch):
+    class FakeLoop:
+        def __init__(self):
+            self.stop_requested = False
+
+        def is_closed(self):
+            return False
+
+        def is_running(self):
+            return True
+
+        def stop(self):
+            self.stop_requested = True
+
+        def call_soon_threadsafe(self, callback):
+            callback()
+
+    class FakeThread:
+        def __init__(self):
+            self.alive = True
+
+        def is_alive(self):
+            return self.alive
+
+        def join(self, timeout):
+            assert timeout > 0
+            self.alive = False
+
+    class FailingFuture:
+        def result(self, *, timeout):
+            assert timeout > 0
+            raise RuntimeError("auth close failed")
+
+    def submit(coroutine, _loop):
+        coroutine.close()
+        return FailingFuture()
+
+    monkeypatch.setattr(
+        "halo_server.ring.client.asyncio.run_coroutine_threadsafe",
+        submit,
+    )
+    client = RingClient()
+    loop = FakeLoop()
+    client._ring = SimpleNamespace(auth=object())
+    client._authenticated = True
+    client._loop = loop
+    client._loop_thread = FakeThread()
+
+    with pytest.raises(ExceptionGroup, match="Ring client shutdown failed") as raised:
+        client.stop()
+
+    assert any("auth close failed" in str(error) for error in raised.value.exceptions)
+    assert loop.stop_requested is True
+    assert client._loop is None
+    assert client._loop_thread is None
+
+
+def test_ring_client_stop_quarantines_session_when_event_loop_is_unavailable():
+    client = RingClient()
+    client._ring = SimpleNamespace(auth=object())
+    client._authenticated = True
+
+    with pytest.raises(ExceptionGroup, match="Ring client shutdown failed") as raised:
+        client.stop()
+
+    assert any("event loop was unavailable" in str(error) for error in raised.value.exceptions)
+    assert client.is_authenticated is False
+    assert client.ring is None
 
 
 def test_is_ring_session_rejected_is_specific_to_session_406():
