@@ -38,6 +38,7 @@ class MediaSessionState(StrEnum):
     IDLE = "idle"
     STARTING = "starting"
     READY = "ready"
+    STOPPING = "stopping"
     FAILED = "failed"
 
 
@@ -53,6 +54,12 @@ class MediaSessionSnapshot:
     buffer_bytes: int
     opus_frame_duration_ms: float | None
     failure: str | None
+
+
+@dataclass(frozen=True)
+class _ReceiverStopRequest:
+    generation: int
+    future: concurrent.futures.Future
 
 
 class CameraMediaSession:
@@ -86,6 +93,7 @@ class CameraMediaSession:
         self._on_raw_audio = on_raw_audio
         self._audio_encoder_factory = audio_encoder_factory
         self._lock = threading.RLock()
+        self._condition = threading.Condition(self._lock)
         self._stop: threading.Event | None = None
         self._future: concurrent.futures.Future | None = None
         self._runner_generation = 0
@@ -114,33 +122,43 @@ class CameraMediaSession:
         lease_id: str | None = None,
         now: float | None = None,
     ) -> MediaLease:
-        with self._lock:
-            current_time = self._now(now)
-            intercom_was_active = self._intercom_active_locked()
-            lease, actions = self._leases.acquire(
-                purpose,
-                ttl=ttl,
-                lease_id=lease_id,
-                now=current_time,
-            )
-            try:
-                self._apply_actions_locked(actions)
-                self._retry_if_due_locked(current_time)
-            except BaseException:
-                failure = self._failure
-                self._apply_actions_locked(self._leases.release(lease.id, now=current_time))
-                self._state = MediaSessionState.FAILED
-                self._failure = failure or "receiver_submission_failed"
-                raise
-            if purpose is LeasePurpose.INTERCOM and not intercom_was_active:
-                intercom_generation = self._microphone_source.begin_intercom()
-                _log.info(
-                    "Ring intercom lease opened camera_id=%s generation=%d intercom_generation=%d",
-                    self._camera_id,
-                    lease.generation,
-                    intercom_generation,
+        stop_requests: list[_ReceiverStopRequest] = []
+        try:
+            with self._lock:
+                current_time = self._now(now)
+                intercom_was_active = self._intercom_active_locked()
+                lease, actions = self._leases.acquire(
+                    purpose,
+                    ttl=ttl,
+                    lease_id=lease_id,
+                    now=current_time,
                 )
-            return self._current_lease_locked(lease.id) or lease
+                try:
+                    stop_requests.extend(self._apply_actions_locked(actions))
+                    self._retry_if_due_locked(current_time)
+                except BaseException:
+                    failure = self._failure
+                    stop_requests.extend(
+                        self._apply_actions_locked(self._leases.release(lease.id, now=current_time))
+                    )
+                    self._state = MediaSessionState.FAILED
+                    self._failure = failure or "receiver_submission_failed"
+                    raise
+                if purpose is LeasePurpose.INTERCOM and not intercom_was_active:
+                    intercom_generation = self._microphone_source.begin_intercom()
+                    _log.info(
+                        "Ring intercom lease opened camera_id=%s generation=%d "
+                        "intercom_generation=%d",
+                        self._camera_id,
+                        lease.generation,
+                        intercom_generation,
+                    )
+                current_lease = self._current_lease_locked(lease.id) or lease
+        except BaseException:
+            self._wait_for_stop_requests(stop_requests)
+            raise
+        self._wait_for_stop_requests(stop_requests)
+        return current_lease
 
     def renew(
         self,
@@ -149,38 +167,44 @@ class CameraMediaSession:
         ttl: float | None = None,
         now: float | None = None,
     ) -> MediaLease | None:
+        stop_requests: list[_ReceiverStopRequest]
         with self._lock:
             current_time = self._now(now)
             lease, actions = self._leases.renew(lease_id, ttl=ttl, now=current_time)
-            self._apply_actions_locked(actions)
+            stop_requests = self._apply_actions_locked(actions)
             self._retry_if_due_locked(current_time)
-            if lease is None:
-                return None
-            return self._current_lease_locked(lease.id) or lease
+            current_lease = None if lease is None else self._current_lease_locked(lease.id) or lease
+        self._wait_for_stop_requests(stop_requests)
+        return current_lease
 
     def release(self, lease_id: str, *, now: float | None = None) -> None:
         with self._lock:
             current_time = self._now(now)
             intercom_was_active = self._intercom_active_locked()
-            self._apply_actions_locked(self._leases.release(lease_id, now=current_time))
+            stop_requests = self._apply_actions_locked(
+                self._leases.release(lease_id, now=current_time)
+            )
             self._finish_intercom_if_inactive_locked(intercom_was_active)
             self._clear_retry_without_demand_locked()
+        self._wait_for_stop_requests(stop_requests)
 
     def expire(self, *, now: float | None = None) -> None:
         with self._lock:
             current_time = self._now(now)
             intercom_was_active = self._intercom_active_locked()
-            self._apply_actions_locked(self._leases.expire(now=current_time))
+            stop_requests = self._apply_actions_locked(self._leases.expire(now=current_time))
             self._finish_intercom_if_inactive_locked(intercom_was_active)
             self._clear_retry_without_demand_locked()
             self._retry_if_due_locked(current_time)
+        self._wait_for_stop_requests(stop_requests)
 
     def stop_all(self, reason: str = "service_stop") -> None:
         with self._lock:
             intercom_was_active = self._intercom_active_locked()
-            self._apply_actions_locked(self._leases.stop_all(reason))
+            stop_requests = self._apply_actions_locked(self._leases.stop_all(reason))
             self._finish_intercom_if_inactive_locked(intercom_was_active)
             self._clear_retry_without_demand_locked()
+        self._wait_for_stop_requests(stop_requests)
 
     def push_intercom_audio(self, lease_id: str, payload: bytes) -> None:
         """Queue one normalized PCM frame for an active intercom lease."""
@@ -246,15 +270,29 @@ class CameraMediaSession:
                 failure=self._failure,
             )
 
-    def _apply_actions_locked(self, actions: list[LeaseAction]) -> None:
+    def _apply_actions_locked(
+        self,
+        actions: list[LeaseAction],
+    ) -> list[_ReceiverStopRequest]:
+        stop_requests: list[_ReceiverStopRequest] = []
         for action in actions:
             if action.type is LeaseActionType.START_UPSTREAM:
                 self._start_locked(action)
             elif action.type is LeaseActionType.STOP_UPSTREAM:
-                self._stop_locked(action)
+                request = self._stop_locked(action)
+                if request is not None:
+                    stop_requests.append(request)
+        return stop_requests
 
     def _start_locked(self, action: LeaseAction) -> None:
         if self._future is not None and not self._future.done():
+            _log.info(
+                "Ring media generation waiting for teardown camera_id=%s "
+                "active_generation=%d pending_generation=%d",
+                self._camera_id,
+                self._runner_generation,
+                action.generation,
+            )
             return
         self._runner_generation = action.generation
         self._retry_at = None
@@ -325,9 +363,9 @@ class CameraMediaSession:
         )
         future.add_done_callback(lambda completed: self._runner_done(action.generation, completed))
 
-    def _stop_locked(self, action: LeaseAction) -> None:
+    def _stop_locked(self, action: LeaseAction) -> _ReceiverStopRequest | None:
         if action.generation != self._runner_generation:
-            return
+            return None
         stop = self._stop
         future = self._future
         elapsed = self._elapsed_locked()
@@ -343,23 +381,20 @@ class CameraMediaSession:
             len(media.packets),
             media.payload_bytes,
         )
-        self._stop = None
         self._cancel_retry_locked()
+        self._state = MediaSessionState.STOPPING
+        self._failure = None
         if stop is not None:
             stop.set()
-        if future is not None and not future.done():
-            try:
-                future.result(timeout=STOP_TIMEOUT)
-            except concurrent.futures.TimeoutError:
-                future.cancel()
-            except Exception as exc:
-                _log.debug("Ring media receiver stopped with an error: %s", exc)
-        if action.generation == self._runner_generation:
-            self._future = None
+        if future is None:
+            self._stop = None
             self._audio_encoder = None
             self._microphone_source.clear()
             self._state = MediaSessionState.IDLE
             self._failure = None
+            self._condition.notify_all()
+            return None
+        return _ReceiverStopRequest(action.generation, future)
 
     def _intercom_active_locked(self) -> bool:
         return any(
@@ -489,14 +524,35 @@ class CameraMediaSession:
         generation: int,
         future: concurrent.futures.Future,
     ) -> None:
-        with self._lock:
+        with self._condition:
             if generation != self._runner_generation or future is not self._future:
+                self._condition.notify_all()
                 return
+            was_stopping = self._state is MediaSessionState.STOPPING
             self._future = None
             self._stop = None
             self._audio_encoder = None
             self._microphone_source.clear()
-            if self._leases.snapshot().upstream_requested:
+            leases = self._leases.snapshot()
+            if leases.upstream_requested and was_stopping:
+                try:
+                    self._start_locked(
+                        LeaseAction(
+                            LeaseActionType.START_UPSTREAM,
+                            leases.generation,
+                            "receiver_replacement",
+                        )
+                    )
+                except Exception as exc:
+                    self._state = MediaSessionState.FAILED
+                    self._failure = "receiver_submission_failed"
+                    self._schedule_retry_locked()
+                    _log.warning(
+                        "Could not replace stopped Ring media for camera %s: %s",
+                        self._camera_id,
+                        exc,
+                    )
+            elif leases.upstream_requested:
                 self._state = MediaSessionState.FAILED
                 self._failure = self._failure or "receiver_stopped"
                 self._schedule_retry_locked()
@@ -513,6 +569,35 @@ class CameraMediaSession:
                 self._failure or "none",
                 self._elapsed_locked(),
             )
+            self._condition.notify_all()
+
+    def _wait_for_stop_requests(
+        self,
+        requests: list[_ReceiverStopRequest],
+    ) -> None:
+        for request in requests:
+            deadline = time.monotonic() + STOP_TIMEOUT
+            try:
+                request.future.result(timeout=STOP_TIMEOUT)
+            except concurrent.futures.TimeoutError:
+                pass
+            except Exception as exc:
+                _log.debug("Ring media receiver stopped with an error: %s", exc)
+
+            with self._condition:
+                while self._future is request.future:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        if request.generation == self._runner_generation:
+                            self._state = MediaSessionState.STOPPING
+                            self._failure = "receiver_stop_timeout"
+                        _log.warning(
+                            "Ring media receiver teardown timed out camera_id=%s generation=%d",
+                            self._camera_id,
+                            request.generation,
+                        )
+                        break
+                    self._condition.wait(remaining)
 
     def _retry_if_due_locked(self, now: float) -> None:
         if (

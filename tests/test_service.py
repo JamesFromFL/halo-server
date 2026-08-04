@@ -1,5 +1,6 @@
 import asyncio
 import concurrent.futures
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -375,6 +376,93 @@ async def test_motion_event_acquires_generation_named_media_lease(tmp_path):
         ("event", "incident-1")
     ]
     assert service.status()["media"]["active_upstreams"] == 1
+
+
+@pytest.mark.asyncio
+async def test_media_actions_for_different_cameras_do_not_share_a_lock(tmp_path):
+    first_acquire_entered = threading.Event()
+    allow_first_acquire = threading.Event()
+
+    class BlockingFirstCameraSession(FakeMediaSession):
+        def acquire(self, purpose, *, lease_id):
+            if self.camera_id == "1":
+                first_acquire_entered.set()
+                assert allow_first_acquire.wait(2)
+            return super().acquire(purpose, lease_id=lease_id)
+
+    sessions = FakeSessions()
+    sessions.client.all_devices = [
+        SimpleNamespace(id=1, name="First"),
+        SimpleNamespace(id=2, name="Second"),
+    ]
+    sessions.active_client = sessions.client
+    service = _service(tmp_path, sessions, BlockingFirstCameraSession)
+    service._media_client = sessions.client
+
+    first = asyncio.create_task(service._acquire_rtsp_consumer("1"))
+    try:
+        for _ in range(100):
+            if first_acquire_entered.is_set():
+                break
+            await asyncio.sleep(0.01)
+        assert first_acquire_entered.is_set()
+
+        second_session, second_lease = await asyncio.wait_for(
+            service._acquire_rtsp_consumer("2"),
+            timeout=0.5,
+        )
+    finally:
+        allow_first_acquire.set()
+
+    first_session, first_lease = await first
+    await service._close_rtsp_consumer_async("1", first_lease)
+    await service._close_rtsp_consumer_async("2", second_lease)
+
+    assert first_session.camera_id == "1"
+    assert second_session.camera_id == "2"
+
+
+@pytest.mark.asyncio
+async def test_account_invalidation_releases_in_flight_event_acquire(tmp_path):
+    acquire_entered = threading.Event()
+    allow_acquire = threading.Event()
+    created_sessions = []
+
+    class BlockingMediaSession(FakeMediaSession):
+        def __init__(self, client, device):
+            super().__init__(client, device)
+            created_sessions.append(self)
+
+        def acquire(self, purpose, *, lease_id):
+            acquire_entered.set()
+            assert allow_acquire.wait(2)
+            return super().acquire(purpose, lease_id=lease_id)
+
+    sessions = FakeSessions()
+    sessions.client.all_devices = [SimpleNamespace(id=1, name="First")]
+    sessions.active_client = sessions.client
+    service = _service(tmp_path, sessions, BlockingMediaSession)
+    service._media_client = sessions.client
+
+    acquire = asyncio.create_task(service._execute_media_actions("1", [], 1))
+    for _ in range(100):
+        if acquire_entered.is_set():
+            break
+        await asyncio.sleep(0.01)
+    assert acquire_entered.is_set()
+
+    stop = asyncio.create_task(service._stop_media_sessions("account_replaced"))
+    await asyncio.sleep(0)
+    assert service._media_sessions == {}
+    assert service._media_client is None
+
+    allow_acquire.set()
+    await acquire
+    await stop
+
+    media = created_sessions[0]
+    assert media.released == ["incident-1"]
+    assert media.stop_reasons == ["account_replaced"]
 
 
 def test_failed_media_session_is_not_reported_as_an_active_upstream(tmp_path):

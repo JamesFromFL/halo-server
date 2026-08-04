@@ -158,7 +158,8 @@ class HaloService:
         )
         self._admin = AdminServer(paths.admin_socket, self.handle_admin)
         self._session_change_lock = asyncio.Lock()
-        self._media_action_lock = asyncio.Lock()
+        self._camera_media_locks: dict[str, asyncio.Lock] = {}
+        self._media_epoch = 0
         self._listener: EventListener | None = None
         self._listener_generation = 0
         self._accept_events = False
@@ -297,6 +298,8 @@ class HaloService:
     async def _reconcile_account_integrations(self, client) -> bool:
         """Bring media registration and Ring events in line with an authenticated client."""
         self._account_integrations_ready = False
+        if self._media_client is not client:
+            self._media_epoch += 1
         self._media_client = client
         try:
             await self._sync_rtsp_cameras()
@@ -545,6 +548,7 @@ class HaloService:
                     "ring_unavailable",
                     "Ring login could not be completed",
                 ) from exc
+            self._invalidate_media_access()
             self._accept_events = False
             self._listener_generation += 1
             self._account_integrations_ready = False
@@ -563,6 +567,7 @@ class HaloService:
 
     async def _logout(self) -> dict[str, Any]:
         async with self._session_change_lock:
+            self._invalidate_media_access()
             self._accept_events = False
             self._listener_generation += 1
             listener = self._listener
@@ -818,7 +823,8 @@ class HaloService:
         actions: list[IncidentAction],
         ensure_event_generation: int | None,
     ) -> None:
-        async with self._media_action_lock:
+        async with self._camera_media_lock(camera_id):
+            epoch = self._media_epoch
             session = self._media_sessions.get(camera_id)
             for action in actions:
                 if action.type is IncidentActionType.STOP_CAPTURE and session is not None:
@@ -827,6 +833,9 @@ class HaloService:
                         _event_lease_id(action.generation),
                     )
             if ensure_event_generation is None:
+                return
+            client = self._media_client
+            if client is None or client is not self._sessions.active_client:
                 return
             if session is None:
                 session = self._create_media_session(camera_id)
@@ -844,11 +853,19 @@ class HaloService:
                     lease_id=_event_lease_id(ensure_event_generation),
                 )
             except Exception:
+                if epoch != self._media_epoch or self._media_sessions.get(camera_id) is not session:
+                    return
                 _log.exception("Could not start event media for Ring camera %s", camera_id)
                 self._media_failed(
                     camera_id,
                     ensure_event_generation,
                     "receiver_start_failed",
+                )
+                return
+            if epoch != self._media_epoch or self._media_sessions.get(camera_id) is not session:
+                await asyncio.to_thread(
+                    session.release,
+                    _event_lease_id(ensure_event_generation),
                 )
 
     def _create_media_session(self, camera_id: str) -> CameraMediaSession | None:
@@ -925,12 +942,21 @@ class HaloService:
             )
 
     async def _stop_media_sessions(self, reason: str) -> None:
-        sessions = list(self._media_sessions.values())
+        self._invalidate_media_access()
+        sessions = list(self._media_sessions.items())
         self._media_sessions.clear()
         self._intercom_leases.clear()
         if sessions:
+
+            async def stop_session(
+                camera_id: str,
+                session: CameraMediaSession,
+            ) -> None:
+                async with self._camera_media_lock(camera_id):
+                    await asyncio.to_thread(session.stop_all, reason)
+
             await asyncio.gather(
-                *(asyncio.to_thread(session.stop_all, reason) for session in sessions),
+                *(stop_session(camera_id, session) for camera_id, session in sessions),
                 return_exceptions=True,
             )
 
@@ -956,7 +982,8 @@ class HaloService:
         self,
         camera_id: str,
     ) -> tuple[CameraMediaSession, str]:
-        async with self._media_action_lock:
+        async with self._camera_media_lock(camera_id):
+            epoch = self._media_epoch
             session = self._media_sessions.get(camera_id)
             if session is None:
                 session = self._create_media_session(camera_id)
@@ -968,6 +995,9 @@ class HaloService:
                 LeasePurpose.SCRYPTED_LIVE,
                 lease_id=lease_id,
             )
+            if epoch != self._media_epoch or self._media_sessions.get(camera_id) is not session:
+                await asyncio.to_thread(session.release, lease_id)
+                raise RuntimeError("camera media ownership changed")
             return session, lease_id
 
     def _renew_rtsp_consumer(self, camera_id: str, lease_id: str) -> bool:
@@ -980,12 +1010,17 @@ class HaloService:
             return False
 
     async def _renew_rtsp_consumer_async(self, camera_id: str, lease_id: str) -> bool:
-        async with self._media_action_lock:
+        async with self._camera_media_lock(camera_id):
+            epoch = self._media_epoch
             session = self._media_sessions.get(camera_id)
             if session is None:
                 return False
             lease = await asyncio.to_thread(session.renew, lease_id)
-            return lease is not None
+            return bool(
+                lease is not None
+                and epoch == self._media_epoch
+                and self._media_sessions.get(camera_id) is session
+            )
 
     def _close_rtsp_consumer(self, camera_id: str, lease_id: str) -> None:
         try:
@@ -994,13 +1029,14 @@ class HaloService:
             _log.exception("Could not release RTSP media lease for camera %s", camera_id)
 
     async def _close_rtsp_consumer_async(self, camera_id: str, lease_id: str) -> None:
-        async with self._media_action_lock:
+        async with self._camera_media_lock(camera_id):
             session = self._media_sessions.get(camera_id)
             if session is not None:
                 await asyncio.to_thread(session.release, lease_id)
 
     async def _open_plugin_intercom(self, camera_id: str) -> PluginIntercomStream:
-        async with self._media_action_lock:
+        async with self._camera_media_lock(camera_id):
+            epoch = self._media_epoch
             if camera_id in self._intercom_leases:
                 raise PluginIntercomOpenError(
                     "intercom_busy",
@@ -1041,6 +1077,8 @@ class HaloService:
                 intercom_generation = session.intercom_generation(lease_id)
                 if intercom_generation is None:
                     raise RuntimeError("intercom lease did not become active")
+                if epoch != self._media_epoch or self._media_sessions.get(camera_id) is not session:
+                    raise RuntimeError("camera media ownership changed")
             except Exception as exc:
                 if lease_acquired:
                     with contextlib.suppress(Exception):
@@ -1067,14 +1105,19 @@ class HaloService:
         lease_id: str,
         session: CameraMediaSession,
     ) -> bool:
-        async with self._media_action_lock:
+        async with self._camera_media_lock(camera_id):
+            epoch = self._media_epoch
             if (
                 self._intercom_leases.get(camera_id) != lease_id
                 or self._media_sessions.get(camera_id) is not session
             ):
                 return False
             lease = await asyncio.to_thread(session.renew, lease_id)
-            if lease is None:
+            if (
+                lease is None
+                or epoch != self._media_epoch
+                or self._media_sessions.get(camera_id) is not session
+            ):
                 self._intercom_leases.pop(camera_id, None)
                 return False
             return True
@@ -1085,11 +1128,22 @@ class HaloService:
         lease_id: str,
         session: CameraMediaSession,
     ) -> None:
-        async with self._media_action_lock:
+        async with self._camera_media_lock(camera_id):
             if self._intercom_leases.get(camera_id) == lease_id:
                 self._intercom_leases.pop(camera_id, None)
             await asyncio.to_thread(session.release, lease_id)
             _log.info("Halo intercom service lease released camera_id=%s", camera_id)
+
+    def _camera_media_lock(self, camera_id: str) -> asyncio.Lock:
+        lock = self._camera_media_locks.get(camera_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._camera_media_locks[camera_id] = lock
+        return lock
+
+    def _invalidate_media_access(self) -> None:
+        self._media_epoch += 1
+        self._media_client = None
 
     def _run_gateway_call(self, coroutine: Coroutine[Any, Any, Any]) -> Any:
         loop = self._main_loop

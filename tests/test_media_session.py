@@ -1,10 +1,12 @@
 import concurrent.futures
 import logging
+import threading
 from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
+from halo_server.media import session as media_session
 from halo_server.media.leases import LeasePurpose, MediaLeaseCoordinator
 from halo_server.media.session import CameraMediaSession, MediaSessionState
 
@@ -596,24 +598,71 @@ def test_rejected_encoded_video_stops_and_retries_receiver():
     session.stop_all()
 
 
-def test_stop_timeout_cancels_receiver(monkeypatch):
+def test_stop_wait_occurs_outside_session_state_lock():
+    entered = threading.Event()
+    finish = threading.Event()
+
+    class BlockingFuture(FakeFuture):
+        def result(self, *, timeout):
+            entered.set()
+            assert finish.wait(timeout)
+            return super().result(timeout=timeout)
+
+    class BlockingClient(FakeClient):
+        def submit(self, coroutine):
+            future = BlockingFuture(coroutine)
+            self.futures.append(future)
+            return future
+
+    session, client = _session(BlockingClient())
+    lease = session.acquire(LeasePurpose.EVENT)
+    release = threading.Thread(target=session.release, args=(lease.id,))
+    release.start()
+    assert entered.wait(0.5)
+
+    assert session.snapshot().state is MediaSessionState.STOPPING
+
+    finish.set()
+    release.join(timeout=0.5)
+    assert not release.is_alive()
+    assert client.futures[0].finished is True
+    assert session.snapshot().state is MediaSessionState.IDLE
+
+
+def test_stop_timeout_preserves_receiver_barrier(monkeypatch):
+    monkeypatch.setattr(media_session, "STOP_TIMEOUT", 0.01)
+
     class TimeoutFuture(FakeFuture):
         def result(self, *, timeout):
             raise concurrent.futures.TimeoutError
 
-    class TimeoutClient:
+    class TimeoutClient(FakeClient):
         def __init__(self):
-            self.future = None
+            super().__init__()
 
         def submit(self, coroutine):
-            self.future = TimeoutFuture(coroutine)
-            return self.future
+            future = TimeoutFuture(coroutine)
+            self.futures.append(future)
+            return future
 
     client = TimeoutClient()
     session, _ = _session(client)
-    lease = session.acquire(LeasePurpose.EVENT)
+    first = session.acquire(LeasePurpose.EVENT)
 
-    session.release(lease.id)
+    session.release(first.id)
 
-    assert client.future.cancelled is True
+    assert client.futures[0].cancelled is False
+    assert session.snapshot().state is MediaSessionState.STOPPING
+    assert session.snapshot().failure == "receiver_stop_timeout"
+
+    second = session.acquire(LeasePurpose.EVENT)
+    assert second.generation == 2
+    assert len(client.futures) == 1
+
+    client.futures[0].complete_unexpectedly()
+    assert len(client.futures) == 2
+    assert session.snapshot().state is MediaSessionState.STARTING
+
+    session.stop_all()
+    client.futures[1].complete_unexpectedly()
     assert session.snapshot().state is MediaSessionState.IDLE
