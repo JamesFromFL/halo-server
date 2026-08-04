@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import logging
+import math
 import threading
 import time
 from collections.abc import Callable
@@ -29,6 +30,8 @@ from halo_server.media.supervisor import supervise_receiver
 _log = logging.getLogger(__name__)
 
 STOP_TIMEOUT = 5.0
+RETRY_INITIAL_SECONDS = 1.0
+RETRY_MAX_SECONDS = 30.0
 
 
 class MediaSessionState(StrEnum):
@@ -65,12 +68,20 @@ class CameraMediaSession:
         receiver_supervisor=supervise_receiver,
         on_raw_audio: Callable[[bytes, int, int], None] | None = None,
         audio_encoder_factory=NormalizedOpusEncoder,
+        clock: Callable[[], float] = time.monotonic,
+        retry_initial: float = RETRY_INITIAL_SECONDS,
+        retry_max: float = RETRY_MAX_SECONDS,
     ) -> None:
+        _validate_retry_delay(retry_initial, "initial retry delay")
+        _validate_retry_delay(retry_max, "maximum retry delay")
+        if retry_initial > retry_max:
+            raise ValueError("initial retry delay cannot exceed maximum retry delay")
         self._client = client
         self._device = device
         self._camera_id = str(device.id)
-        self._leases = lease_coordinator or MediaLeaseCoordinator()
-        self._buffer = buffer or EncodedMediaBuffer()
+        self._clock = clock
+        self._leases = lease_coordinator or MediaLeaseCoordinator(clock=clock)
+        self._buffer = buffer or EncodedMediaBuffer(clock=clock)
         self._receiver_supervisor = receiver_supervisor
         self._on_raw_audio = on_raw_audio
         self._audio_encoder_factory = audio_encoder_factory
@@ -86,6 +97,10 @@ class CameraMediaSession:
         self._started_at: float | None = None
         self._first_video_at: float | None = None
         self._first_audio_at: float | None = None
+        self._retry_initial = float(retry_initial)
+        self._retry_max = float(retry_max)
+        self._retry_delay = self._retry_initial
+        self._retry_at: float | None = None
 
     @property
     def buffer(self) -> EncodedMediaBuffer:
@@ -100,18 +115,20 @@ class CameraMediaSession:
         now: float | None = None,
     ) -> MediaLease:
         with self._lock:
+            current_time = self._now(now)
             intercom_was_active = self._intercom_active_locked()
             lease, actions = self._leases.acquire(
                 purpose,
                 ttl=ttl,
                 lease_id=lease_id,
-                now=now,
+                now=current_time,
             )
             try:
                 self._apply_actions_locked(actions)
+                self._retry_if_due_locked(current_time)
             except BaseException:
                 failure = self._failure
-                self._apply_actions_locked(self._leases.release(lease.id, now=now))
+                self._apply_actions_locked(self._leases.release(lease.id, now=current_time))
                 self._state = MediaSessionState.FAILED
                 self._failure = failure or "receiver_submission_failed"
                 raise
@@ -123,7 +140,7 @@ class CameraMediaSession:
                     lease.generation,
                     intercom_generation,
                 )
-            return lease
+            return self._current_lease_locked(lease.id) or lease
 
     def renew(
         self,
@@ -133,27 +150,37 @@ class CameraMediaSession:
         now: float | None = None,
     ) -> MediaLease | None:
         with self._lock:
-            lease, actions = self._leases.renew(lease_id, ttl=ttl, now=now)
+            current_time = self._now(now)
+            lease, actions = self._leases.renew(lease_id, ttl=ttl, now=current_time)
             self._apply_actions_locked(actions)
-            return lease
+            self._retry_if_due_locked(current_time)
+            if lease is None:
+                return None
+            return self._current_lease_locked(lease.id) or lease
 
     def release(self, lease_id: str, *, now: float | None = None) -> None:
         with self._lock:
+            current_time = self._now(now)
             intercom_was_active = self._intercom_active_locked()
-            self._apply_actions_locked(self._leases.release(lease_id, now=now))
+            self._apply_actions_locked(self._leases.release(lease_id, now=current_time))
             self._finish_intercom_if_inactive_locked(intercom_was_active)
+            self._clear_retry_without_demand_locked()
 
     def expire(self, *, now: float | None = None) -> None:
         with self._lock:
+            current_time = self._now(now)
             intercom_was_active = self._intercom_active_locked()
-            self._apply_actions_locked(self._leases.expire(now=now))
+            self._apply_actions_locked(self._leases.expire(now=current_time))
             self._finish_intercom_if_inactive_locked(intercom_was_active)
+            self._clear_retry_without_demand_locked()
+            self._retry_if_due_locked(current_time)
 
     def stop_all(self, reason: str = "service_stop") -> None:
         with self._lock:
             intercom_was_active = self._intercom_active_locked()
             self._apply_actions_locked(self._leases.stop_all(reason))
             self._finish_intercom_if_inactive_locked(intercom_was_active)
+            self._clear_retry_without_demand_locked()
 
     def push_intercom_audio(self, lease_id: str, payload: bytes) -> None:
         """Queue one normalized PCM frame for an active intercom lease."""
@@ -210,14 +237,20 @@ class CameraMediaSession:
         if self._future is not None and not self._future.done():
             return
         self._runner_generation = action.generation
+        self._retry_at = None
         self._state = MediaSessionState.STARTING
         self._failure = None
         self._opus_frame_duration_ms = None
-        self._started_at = time.monotonic()
+        self._started_at = self._clock()
         self._first_video_at = None
         self._first_audio_at = None
         self._buffer.clear()
-        self._audio_encoder = self._audio_encoder_factory()
+        try:
+            self._audio_encoder = self._audio_encoder_factory()
+        except BaseException:
+            self._state = MediaSessionState.FAILED
+            self._failure = "audio_encoder_initialization_failed"
+            raise
         self._microphone_source.clear()
         stop = threading.Event()
         self._stop = stop
@@ -236,22 +269,27 @@ class CameraMediaSession:
             ),
             "microphone_source": self._microphone_source,
         }
-        coroutine = self._receiver_supervisor(
-            self._device,
-            None,
-            lambda payload, channels, rate: self._raw_audio(
-                action.generation,
-                payload,
-                channels,
-                rate,
-            ),
-            stop,
-            receiver_kwargs=receiver_kwargs,
-        )
+        coroutine = None
         try:
+            coroutine = self._receiver_supervisor(
+                self._device,
+                None,
+                lambda payload, channels, rate: self._raw_audio(
+                    action.generation,
+                    payload,
+                    channels,
+                    rate,
+                ),
+                stop,
+                receiver_kwargs=receiver_kwargs,
+            )
             future = self._client.submit(coroutine)
         except BaseException:
-            coroutine.close()
+            if coroutine is not None:
+                close = getattr(coroutine, "close", None)
+                if callable(close):
+                    close()
+            stop.set()
             self._stop = None
             self._audio_encoder = None
             self._state = MediaSessionState.FAILED
@@ -286,6 +324,7 @@ class CameraMediaSession:
             media.payload_bytes,
         )
         self._stop = None
+        self._cancel_retry_locked()
         if stop is not None:
             stop.set()
         if future is not None and not future.done():
@@ -305,6 +344,12 @@ class CameraMediaSession:
     def _intercom_active_locked(self) -> bool:
         return any(
             lease.purpose is LeasePurpose.INTERCOM for lease in self._leases.snapshot().leases
+        )
+
+    def _current_lease_locked(self, lease_id: str) -> MediaLease | None:
+        return next(
+            (lease for lease in self._leases.snapshot().leases if lease.id == lease_id),
+            None,
         )
 
     def _finish_intercom_if_inactive_locked(self, was_active: bool) -> None:
@@ -327,7 +372,7 @@ class CameraMediaSession:
         with self._lock:
             if not self._accepts_media_locked(generation):
                 return
-            now = time.monotonic()
+            now = self._clock()
             if self._first_video_at is None:
                 self._first_video_at = now
                 _log.info(
@@ -342,9 +387,13 @@ class CameraMediaSession:
             try:
                 self._buffer.append_video(payload, timestamp)
             except MediaBufferError as exc:
+                self._state = MediaSessionState.FAILED
                 self._failure = "encoded_video_rejected"
+                if self._stop is not None:
+                    self._stop.set()
                 _log.warning("Rejected encoded Ring video for %s: %s", self._device.name, exc)
                 return
+            self._media_recovered_locked()
             if self._state is not MediaSessionState.READY and self._buffer.ready:
                 self._state = MediaSessionState.READY
                 _log.info(
@@ -364,7 +413,7 @@ class CameraMediaSession:
         callback = None
         with self._lock:
             if self._accepts_media_locked(generation):
-                now = time.monotonic()
+                now = self._clock()
                 if self._first_audio_at is None:
                     self._first_audio_at = now
                     _log.info(
@@ -385,6 +434,7 @@ class CameraMediaSession:
                     for packet in encoder.encode(payload, channels, rate):
                         self._buffer.append_audio(packet.payload, packet.rtp_timestamp)
                     self._opus_frame_duration_ms = OPUS_FRAME_DURATION_MS
+                    self._media_recovered_locked()
                 except (AudioNormalizationError, MediaBufferError) as exc:
                     self._state = MediaSessionState.FAILED
                     self._failure = "audio_normalization_failed"
@@ -425,12 +475,15 @@ class CameraMediaSession:
             self._future = None
             self._stop = None
             self._audio_encoder = None
+            self._microphone_source.clear()
             if self._leases.snapshot().upstream_requested:
                 self._state = MediaSessionState.FAILED
                 self._failure = self._failure or "receiver_stopped"
+                self._schedule_retry_locked()
             else:
                 self._state = MediaSessionState.IDLE
                 self._failure = None
+                self._cancel_retry_locked()
             _log.info(
                 "Ring media generation completed camera_id=%s generation=%d state=%s "
                 "failure=%s elapsed=%.3f",
@@ -440,6 +493,50 @@ class CameraMediaSession:
                 self._failure or "none",
                 self._elapsed_locked(),
             )
+
+    def _retry_if_due_locked(self, now: float) -> None:
+        if (
+            self._retry_at is None
+            or now < self._retry_at
+            or (self._future is not None and not self._future.done())
+            or not self._leases.snapshot().leases
+        ):
+            return
+        self._retry_at = None
+        actions = self._leases.restart_upstream("receiver_retry")
+        try:
+            self._apply_actions_locked(actions)
+        except Exception as exc:
+            _log.warning(
+                "Could not restart Ring media for camera %s: %s",
+                self._camera_id,
+                exc,
+            )
+            self._schedule_retry_locked(now)
+
+    def _schedule_retry_locked(self, now: float | None = None) -> None:
+        if not self._leases.snapshot().leases:
+            self._cancel_retry_locked()
+            return
+        current_time = self._now(now)
+        self._retry_at = current_time + self._retry_delay
+        self._retry_delay = min(self._retry_delay * 2, self._retry_max)
+
+    def _cancel_retry_locked(self) -> None:
+        self._retry_at = None
+        self._retry_delay = self._retry_initial
+
+    def _clear_retry_without_demand_locked(self) -> None:
+        if self._leases.snapshot().leases:
+            return
+        self._cancel_retry_locked()
+        if self._future is None:
+            self._state = MediaSessionState.IDLE
+            self._failure = None
+
+    def _media_recovered_locked(self) -> None:
+        self._retry_at = None
+        self._retry_delay = self._retry_initial
 
     def _accepts_media_locked(self, generation: int) -> bool:
         return (
@@ -451,4 +548,23 @@ class CameraMediaSession:
     def _elapsed_locked(self, now: float | None = None) -> float:
         if self._started_at is None:
             return 0.0
-        return max(0.0, (time.monotonic() if now is None else now) - self._started_at)
+        return max(0.0, (self._clock() if now is None else now) - self._started_at)
+
+    def _now(self, supplied: float | None) -> float:
+        value = self._clock() if supplied is None else supplied
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError("monotonic time must be numeric")
+        normalized = float(value)
+        if not math.isfinite(normalized) or normalized < 0:
+            raise ValueError("monotonic time must be finite and non-negative")
+        return normalized
+
+
+def _validate_retry_delay(value: float, label: str) -> None:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(value)
+        or value <= 0
+    ):
+        raise ValueError(f"{label} must be finite and positive")

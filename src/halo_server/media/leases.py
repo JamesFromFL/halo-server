@@ -7,7 +7,7 @@ import threading
 import time
 import uuid
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 
 
@@ -178,6 +178,27 @@ class MediaLeaseCoordinator:
         with self._lock:
             self._leases.clear()
             return self._stop_locked(reason)
+
+    def restart_upstream(self, reason: str) -> list[LeaseAction]:
+        """Move active demand to a new upstream generation after receiver failure."""
+        if not isinstance(reason, str) or not reason:
+            raise ValueError("upstream restart reason must be a non-empty string")
+        with self._lock:
+            if not self._leases:
+                return []
+            self._generation += 1
+            self._upstream_requested = True
+            self._leases = {
+                lease_id: replace(lease, generation=self._generation)
+                for lease_id, lease in self._leases.items()
+            }
+            return [
+                LeaseAction(
+                    LeaseActionType.START_UPSTREAM,
+                    self._generation,
+                    reason,
+                )
+            ]
 
     def snapshot(self) -> LeaseSnapshot:
         with self._lock:

@@ -431,7 +431,7 @@ class HaloService:
                     ),
                 },
                 "active_upstreams": sum(
-                    snapshot["state"] is not MediaSessionState.IDLE
+                    snapshot["state"] in {MediaSessionState.STARTING, MediaSessionState.READY}
                     for snapshot in media_sessions.values()
                 ),
                 "sessions": media_sessions,
@@ -967,7 +967,7 @@ class HaloService:
     async def _renew_rtsp_consumer_async(self, camera_id: str, lease_id: str) -> bool:
         async with self._media_action_lock:
             session = self._media_sessions.get(camera_id)
-            if session is None or session.snapshot().state is MediaSessionState.FAILED:
+            if session is None:
                 return False
             lease = await asyncio.to_thread(session.renew, lease_id)
             return lease is not None

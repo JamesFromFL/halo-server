@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from halo_server.media.leases import LeasePurpose
+from halo_server.media.leases import LeasePurpose, MediaLeaseCoordinator
 from halo_server.media.session import CameraMediaSession, MediaSessionState
 
 SPS_PPS_IDR = (
@@ -62,6 +62,14 @@ class FailingClient:
     def submit(self, coroutine):
         self.coroutine = coroutine
         raise RuntimeError("loop unavailable")
+
+
+class FakeClock:
+    def __init__(self, value=0):
+        self.value = value
+
+    def __call__(self):
+        return self.value
 
 
 async def fake_supervisor(
@@ -181,6 +189,293 @@ def test_unexpected_receiver_completion_does_not_clear_active_lease():
     session.stop_all()
 
 
+def test_failed_receiver_restarts_same_lease_after_backoff():
+    clock = FakeClock()
+    client = FakeClient()
+    session = CameraMediaSession(
+        client,
+        SimpleNamespace(id=42, name="Front Door"),
+        lease_coordinator=MediaLeaseCoordinator(clock=clock),
+        receiver_supervisor=fake_supervisor,
+        clock=clock,
+        retry_initial=1,
+        retry_max=4,
+    )
+    lease = session.acquire(LeasePurpose.EVENT, lease_id="event")
+
+    client.futures[0].complete_unexpectedly()
+    clock.value = 0.9
+    session.expire(now=clock.value)
+    assert len(client.futures) == 1
+
+    clock.value = 1
+    session.expire(now=clock.value)
+
+    assert len(client.futures) == 2
+    assert session.snapshot().state is MediaSessionState.STARTING
+    assert session.snapshot().generation == 2
+    assert session.snapshot().lease_count == 1
+    assert session.renew(lease.id, now=clock.value).generation == 2
+    _receiver_kwargs(client.futures[1])["on_encoded_video"](SPS_PPS_IDR, 200)
+    assert session.snapshot().state is MediaSessionState.READY
+    session.stop_all()
+
+
+def test_failed_intercom_receiver_rearms_speaker_gate_before_retry():
+    clock = FakeClock()
+    client = FakeClient()
+    session = CameraMediaSession(
+        client,
+        SimpleNamespace(id=42, name="Front Door"),
+        lease_coordinator=MediaLeaseCoordinator(clock=clock),
+        receiver_supervisor=fake_supervisor,
+        clock=clock,
+        retry_initial=1,
+        retry_max=2,
+    )
+    lease = session.acquire(LeasePurpose.INTERCOM, lease_id="talk")
+    source = _receiver_kwargs(client.futures[0])["microphone_source"]
+    payload = b"\x01\x00" * 960
+    session.push_intercom_audio(lease.id, payload)
+    generation = source.snapshot().intercom_generation
+    assert source.set_speaker_ready(generation, True)
+    assert source.pull() == payload
+
+    client.futures[0].complete_unexpectedly()
+    session.push_intercom_audio(lease.id, payload)
+
+    assert source.snapshot().intercom_active is True
+    assert source.snapshot().speaker_ready is False
+    assert source.pull() is None
+
+    clock.value = 1
+    session.expire(now=clock.value)
+    assert session.snapshot().generation == 2
+    assert source.snapshot().intercom_active is True
+    assert source.snapshot().speaker_ready is False
+    session.stop_all()
+
+
+def test_repeated_receiver_failures_use_bounded_exponential_backoff():
+    clock = FakeClock()
+    client = FakeClient()
+    session = CameraMediaSession(
+        client,
+        SimpleNamespace(id=42, name="Front Door"),
+        lease_coordinator=MediaLeaseCoordinator(clock=clock),
+        receiver_supervisor=fake_supervisor,
+        clock=clock,
+        retry_initial=1,
+        retry_max=2,
+    )
+    session.acquire(LeasePurpose.EVENT)
+    client.futures[0].complete_unexpectedly()
+
+    clock.value = 1
+    session.expire(now=clock.value)
+    client.futures[1].complete_unexpectedly()
+    clock.value = 2.9
+    session.expire(now=clock.value)
+    assert len(client.futures) == 2
+
+    clock.value = 3
+    session.expire(now=clock.value)
+    client.futures[2].complete_unexpectedly()
+    clock.value = 4.9
+    session.expire(now=clock.value)
+    assert len(client.futures) == 3
+
+    clock.value = 5
+    session.expire(now=clock.value)
+    assert len(client.futures) == 4
+    session.stop_all()
+
+
+def test_additional_lease_during_backoff_does_not_start_overlapping_receiver():
+    clock = FakeClock()
+    client = FakeClient()
+    session = CameraMediaSession(
+        client,
+        SimpleNamespace(id=42, name="Front Door"),
+        lease_coordinator=MediaLeaseCoordinator(clock=clock),
+        receiver_supervisor=fake_supervisor,
+        clock=clock,
+        retry_initial=1,
+        retry_max=2,
+    )
+    session.acquire(LeasePurpose.EVENT)
+    client.futures[0].complete_unexpectedly()
+
+    clock.value = 0.5
+    session.acquire(LeasePurpose.HOMEKIT_LIVE, now=clock.value)
+    assert len(client.futures) == 1
+
+    clock.value = 1
+    session.expire(now=clock.value)
+    assert len(client.futures) == 2
+    assert session.snapshot().lease_count == 2
+    session.stop_all()
+
+
+def test_acquire_at_retry_deadline_returns_new_receiver_generation():
+    clock = FakeClock()
+    client = FakeClient()
+    session = CameraMediaSession(
+        client,
+        SimpleNamespace(id=42, name="Front Door"),
+        lease_coordinator=MediaLeaseCoordinator(clock=clock),
+        receiver_supervisor=fake_supervisor,
+        clock=clock,
+        retry_initial=1,
+        retry_max=2,
+    )
+    session.acquire(LeasePurpose.EVENT, lease_id="event")
+    client.futures[0].complete_unexpectedly()
+
+    clock.value = 1
+    lease = session.acquire(
+        LeasePurpose.HOMEKIT_LIVE,
+        lease_id="live",
+        now=clock.value,
+    )
+
+    assert lease.generation == 2
+    assert session.snapshot().generation == 2
+    session.stop_all()
+
+
+def test_renew_at_retry_deadline_returns_new_receiver_generation():
+    clock = FakeClock()
+    client = FakeClient()
+    session = CameraMediaSession(
+        client,
+        SimpleNamespace(id=42, name="Front Door"),
+        lease_coordinator=MediaLeaseCoordinator(clock=clock),
+        receiver_supervisor=fake_supervisor,
+        clock=clock,
+        retry_initial=1,
+        retry_max=2,
+    )
+    session.acquire(LeasePurpose.EVENT, lease_id="event")
+    client.futures[0].complete_unexpectedly()
+
+    clock.value = 1
+    lease = session.renew("event", now=clock.value)
+
+    assert lease is not None
+    assert lease.generation == 2
+    assert session.snapshot().generation == 2
+    session.stop_all()
+
+
+def test_retry_submission_failure_remains_retryable_with_same_lease():
+    class FailsSecondSubmissionClient(FakeClient):
+        def __init__(self):
+            super().__init__()
+            self.submission_attempts = 0
+
+        def submit(self, coroutine):
+            self.submission_attempts += 1
+            if self.submission_attempts == 2:
+                coroutine.close()
+                raise RuntimeError("injected retry submission failure")
+            return super().submit(coroutine)
+
+    clock = FakeClock()
+    client = FailsSecondSubmissionClient()
+    session = CameraMediaSession(
+        client,
+        SimpleNamespace(id=42, name="Front Door"),
+        lease_coordinator=MediaLeaseCoordinator(clock=clock),
+        receiver_supervisor=fake_supervisor,
+        clock=clock,
+        retry_initial=1,
+        retry_max=2,
+    )
+    session.acquire(LeasePurpose.EVENT)
+    client.futures[0].complete_unexpectedly()
+
+    clock.value = 1
+    session.expire(now=clock.value)
+    assert session.snapshot().state is MediaSessionState.FAILED
+    assert session.snapshot().failure == "receiver_submission_failed"
+    assert session.snapshot().lease_count == 1
+
+    clock.value = 3
+    session.expire(now=clock.value)
+    assert client.submission_attempts == 3
+    assert len(client.futures) == 2
+    assert session.snapshot().state is MediaSessionState.STARTING
+    session.stop_all()
+
+
+def test_retry_audio_encoder_failure_remains_retryable_with_same_lease():
+    class FakeEncoder:
+        def encode(self, _payload, _channels, _rate):
+            return []
+
+    encoder_attempts = 0
+
+    def encoder_factory():
+        nonlocal encoder_attempts
+        encoder_attempts += 1
+        if encoder_attempts == 2:
+            raise RuntimeError("injected encoder initialization failure")
+        return FakeEncoder()
+
+    clock = FakeClock()
+    client = FakeClient()
+    session = CameraMediaSession(
+        client,
+        SimpleNamespace(id=42, name="Front Door"),
+        lease_coordinator=MediaLeaseCoordinator(clock=clock),
+        receiver_supervisor=fake_supervisor,
+        audio_encoder_factory=encoder_factory,
+        clock=clock,
+        retry_initial=1,
+        retry_max=2,
+    )
+    session.acquire(LeasePurpose.EVENT)
+    client.futures[0].complete_unexpectedly()
+
+    clock.value = 1
+    session.expire(now=clock.value)
+    assert session.snapshot().state is MediaSessionState.FAILED
+    assert session.snapshot().failure == "audio_encoder_initialization_failed"
+    assert session.snapshot().lease_count == 1
+
+    clock.value = 3
+    session.expire(now=clock.value)
+    assert encoder_attempts == 3
+    assert len(client.futures) == 2
+    assert session.snapshot().state is MediaSessionState.STARTING
+    session.stop_all()
+
+
+def test_releasing_last_lease_cancels_failed_receiver_retry():
+    clock = FakeClock()
+    client = FakeClient()
+    session = CameraMediaSession(
+        client,
+        SimpleNamespace(id=42, name="Front Door"),
+        lease_coordinator=MediaLeaseCoordinator(clock=clock),
+        receiver_supervisor=fake_supervisor,
+        clock=clock,
+        retry_initial=1,
+        retry_max=2,
+    )
+    lease = session.acquire(LeasePurpose.EVENT)
+    client.futures[0].complete_unexpectedly()
+
+    session.release(lease.id, now=0)
+    clock.value = 2
+    session.expire(now=clock.value)
+
+    assert len(client.futures) == 1
+    assert session.snapshot().state is MediaSessionState.IDLE
+    assert session.snapshot().lease_count == 0
+
+
 def test_receiver_submission_failure_closes_coroutine_and_marks_failure():
     client = FailingClient()
     session, _ = _session(client)
@@ -264,6 +559,34 @@ def test_invalid_raw_audio_stops_session_with_stable_failure():
     assert stop.is_set() is True
     assert session.snapshot().state is MediaSessionState.FAILED
     assert session.snapshot().failure == "audio_normalization_failed"
+    session.stop_all()
+
+
+def test_rejected_encoded_video_stops_and_retries_receiver():
+    clock = FakeClock()
+    client = FakeClient()
+    session = CameraMediaSession(
+        client,
+        SimpleNamespace(id=42, name="Front Door"),
+        lease_coordinator=MediaLeaseCoordinator(clock=clock),
+        receiver_supervisor=fake_supervisor,
+        clock=clock,
+        retry_initial=1,
+        retry_max=2,
+    )
+    session.acquire(LeasePurpose.EVENT)
+    future = client.futures[0]
+    stop = future.coroutine.cr_frame.f_locals["_stop"]
+
+    _receiver_kwargs(future)["on_encoded_video"](b"", 100)
+
+    assert stop.is_set() is True
+    assert session.snapshot().state is MediaSessionState.FAILED
+    assert session.snapshot().failure == "encoded_video_rejected"
+    future.complete_unexpectedly()
+    clock.value = 1
+    session.expire(now=clock.value)
+    assert len(client.futures) == 2
     session.stop_all()
 
 

@@ -160,6 +160,25 @@ def test_microphone_pcm_buffer_gates_intercom_until_speaker_is_ready():
     assert snapshot.queued_frames == 0
 
 
+def test_microphone_pcm_buffer_rearms_speaker_gate_when_transport_clears():
+    source = ring_media.MicrophonePcmBuffer(max_frames=2)
+    generation = source.begin_intercom()
+    payload = b"\x01\x00" * ring_media.MIC_SAMPLES
+    source.push(payload)
+    assert source.set_speaker_ready(generation, True)
+
+    source.clear()
+    source.push(payload)
+
+    snapshot = source.snapshot()
+    assert snapshot.intercom_active is True
+    assert snapshot.intercom_generation == generation
+    assert snapshot.speaker_ready is False
+    assert source.pull() is None
+    assert source.set_speaker_ready(generation, True)
+    assert source.pull() == payload
+
+
 def test_sdp_diagnostics_report_codecs_without_network_or_session_data():
     sdp = "\r\n".join(
         [

@@ -104,6 +104,32 @@ def test_expired_generation_cannot_stop_new_generation():
     assert second.generation == start_actions[0].generation == 2
 
 
+def test_active_leases_move_to_a_new_generation_when_upstream_restarts():
+    clock = FakeClock()
+    coordinator = MediaLeaseCoordinator(clock=clock)
+    first, _ = coordinator.acquire(LeasePurpose.EVENT, lease_id="event")
+    second, _ = coordinator.acquire(LeasePurpose.HOMEKIT_LIVE, lease_id="live")
+
+    actions = coordinator.restart_upstream("receiver_retry")
+    snapshot = coordinator.snapshot()
+
+    assert action_types(actions) == [LeaseActionType.START_UPSTREAM]
+    assert actions[0].generation == 2
+    assert actions[0].reason == "receiver_retry"
+    assert snapshot.generation == 2
+    assert {lease.id: lease.generation for lease in snapshot.leases} == {
+        first.id: 2,
+        second.id: 2,
+    }
+    assert snapshot.upstream_requested is True
+
+
+def test_upstream_restart_requires_active_demand():
+    coordinator = MediaLeaseCoordinator(clock=FakeClock())
+
+    assert coordinator.restart_upstream("receiver_retry") == []
+
+
 def test_stop_all_is_idempotent():
     coordinator = MediaLeaseCoordinator(clock=FakeClock())
     coordinator.acquire(LeasePurpose.EVENT)

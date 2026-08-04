@@ -371,6 +371,20 @@ async def test_motion_event_acquires_generation_named_media_lease(tmp_path):
     assert service.status()["media"]["active_upstreams"] == 1
 
 
+def test_failed_media_session_is_not_reported_as_an_active_upstream(tmp_path):
+    service = _service(tmp_path)
+    media = FakeMediaSession(None, SimpleNamespace(id=42))
+    media.state = MediaSessionState.FAILED
+    media.failure = "receiver_stopped"
+    media.leases.add("event")
+    service._media_sessions["42"] = media
+
+    status = service.status()["media"]
+
+    assert status["active_upstreams"] == 0
+    assert status["sessions"]["42"]["state"] is MediaSessionState.FAILED
+
+
 @pytest.mark.asyncio
 async def test_media_readiness_publishes_incident_motion_and_quiet_stop_releases_lease(
     tmp_path,
@@ -954,6 +968,24 @@ async def test_rtsp_consumer_uses_bounded_scrypted_lease(tmp_path):
 
     assert len(media.released) == 1
     assert media.released[0].startswith("rtsp-")
+
+
+@pytest.mark.asyncio
+async def test_rtsp_consumer_can_renew_while_session_waits_to_recover(tmp_path):
+    sessions = FakeSessions()
+    camera = SimpleNamespace(id=42, name="Front Door")
+    sessions.client.all_devices = [camera]
+    sessions.active_client = sessions.client
+    service = _service(tmp_path, sessions)
+    service._main_loop = asyncio.get_running_loop()
+    service._media_client = sessions.client
+
+    consumer = await asyncio.to_thread(service._open_rtsp_consumer, "42")
+    media = service._media_sessions["42"]
+    media.state = MediaSessionState.FAILED
+
+    assert await asyncio.to_thread(consumer.renew) is True
+    await asyncio.to_thread(consumer.close)
 
 
 @pytest.mark.asyncio

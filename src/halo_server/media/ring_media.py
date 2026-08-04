@@ -563,8 +563,10 @@ class MicrophonePcmBuffer:
             return self._frames.popleft()
 
     def clear(self, *, reset_statistics: bool = False) -> None:
+        """Discard queued PCM and require speaker activation for the next transport."""
         with self._lock:
             self._frames.clear()
+            self._speaker_ready = False
             if reset_statistics:
                 self._accepted_frames = 0
                 self._consumed_frames = 0
