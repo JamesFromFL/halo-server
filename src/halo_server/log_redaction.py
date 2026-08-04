@@ -6,7 +6,7 @@ import logging
 import re
 from urllib.parse import urlsplit, urlunsplit
 
-_URL_RE = re.compile(r"https?://[^\s\"'<>]+", re.IGNORECASE)
+_URL_RE = re.compile(r"(?:https?|wss?|rtsps?)://[^\s\"'<>]+", re.IGNORECASE)
 _URL_TRAILING_PUNCTUATION = ".,;:!?)]}"
 _SENSITIVE_KEY = (
     r"(?:authorization|access[_-]?token|refresh[_-]?token|oauth[_-]?token|"

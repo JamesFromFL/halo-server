@@ -604,6 +604,32 @@ async def test_plugin_api_rate_limits_each_identity(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_plugin_api_logs_unhandled_request_context_without_exposing_error(tmp_path, caplog):
+    def fail_status():
+        raise RuntimeError("injected provider detail")
+
+    caplog.set_level(logging.ERROR, logger="halo_server.api.plugin")
+    async with _server(tmp_path, status_provider=fail_status) as (
+        server,
+        _tokens,
+        issued,
+        _events,
+    ):
+        url = f"http://127.0.0.1:{server.bound_port}/v1/health"
+        async with aiohttp.ClientSession() as client:
+            response = await client.get(url, headers=_headers(issued.token))
+            body = await response.json()
+
+    assert response.status == 500
+    assert body["error"] == {
+        "code": "internal_error",
+        "message": "Halo Server could not complete the plugin request",
+    }
+    assert "injected provider detail" not in str(body)
+    assert "Unhandled plugin API request method=GET path=/v1/health" in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_plugin_websocket_replays_and_streams_sequenced_events(tmp_path):
     async with _server(tmp_path) as (server, _tokens, issued, events):
         first = events.publish(
@@ -629,6 +655,43 @@ async def test_plugin_websocket_replays_and_streams_sequenced_events(tmp_path):
     assert hello["type"] == "hello"
     assert replay == {"type": "event", "event": first.as_dict()}
     assert streamed == {"type": "event", "event": second.as_dict()}
+
+
+@pytest.mark.asyncio
+async def test_plugin_event_websocket_rejects_binary_client_messages(tmp_path):
+    async with _server(tmp_path) as (server, _tokens, issued, events):
+        url = f"http://127.0.0.1:{server.bound_port}/v1/events"
+        async with aiohttp.ClientSession() as client:
+            socket = await client.ws_connect(url, headers=_headers(issued.token))
+            await socket.receive_json()
+            await socket.send_bytes(b"unsupported")
+            message = await socket.receive()
+
+    assert message.type is aiohttp.WSMsgType.CLOSE
+    assert message.data == 1008
+
+
+@pytest.mark.asyncio
+async def test_plugin_event_websocket_limits_each_client_and_releases_slot(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setattr(plugin_api, "MAX_EVENT_CONNECTIONS_PER_CLIENT", 1)
+    async with _server(tmp_path) as (server, _tokens, issued, _events):
+        url = f"http://127.0.0.1:{server.bound_port}/v1/events"
+        async with aiohttp.ClientSession() as client:
+            first = await client.ws_connect(url, headers=_headers(issued.token))
+            await first.receive_json()
+            limited = await client.get(url, headers=_headers(issued.token))
+            limited_body = await limited.json()
+            await first.close()
+            await asyncio.sleep(0)
+            replacement = await client.ws_connect(url, headers=_headers(issued.token))
+            await replacement.receive_json()
+            await replacement.close()
+
+    assert limited.status == 429
+    assert limited_body["error"]["code"] == "connection_limit"
 
 
 @pytest.mark.asyncio

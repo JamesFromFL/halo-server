@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import socket
 import stat
@@ -13,6 +14,8 @@ from pathlib import Path
 from typing import Any
 
 from halo_server.paths import ensure_private_directory
+
+_log = logging.getLogger(__name__)
 
 ADMIN_PROTOCOL_VERSION = 1
 MAX_REQUEST_BYTES = 64 * 1024
@@ -70,6 +73,7 @@ class AdminServer:
         writer: asyncio.StreamWriter,
     ) -> None:
         request_id: str | int | None = None
+        method: str | None = None
         try:
             _require_owner_peer(writer)
             try:
@@ -93,6 +97,11 @@ class AdminServer:
         except AdminProtocolError as exc:
             response = _error_response(request_id, exc.code, str(exc))
         except Exception:
+            _log.exception(
+                "Unhandled admin request failure method=%s request_id=%r",
+                method or "unknown",
+                request_id,
+            )
             response = _error_response(
                 request_id,
                 "internal_error",

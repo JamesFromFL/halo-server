@@ -12,6 +12,17 @@ def test_redact_text_removes_url_credentials_query_and_fragment():
     assert redacted == "open https://[2001:db8::1]:443/video?<redacted>#<redacted> now"
 
 
+def test_redact_text_removes_websocket_and_rtsp_credentials():
+    redacted = redact_text(
+        "connect wss://user:secret@example.test/events?token=value and "
+        "rtsp://halo:camera-secret@127.0.0.1:18554/halo/opaque"
+    )
+
+    assert redacted == (
+        "connect wss://example.test/events?<redacted> and rtsp://127.0.0.1:18554/halo/opaque"
+    )
+
+
 def test_redact_text_removes_ring_and_plugin_secret_fields():
     redacted = redact_text(
         """{"refresh_token": "ring-secret", "plugin_secret": "plugin-secret"} """

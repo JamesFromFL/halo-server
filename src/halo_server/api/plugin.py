@@ -31,6 +31,8 @@ DEFAULT_RATE_LIMIT = 120
 RATE_WINDOW_SECONDS = 60.0
 EVENT_WAIT_SECONDS = 15.0
 MAX_RATE_LIMIT_CLIENTS = 256
+MAX_EVENT_CONNECTIONS = 32
+MAX_EVENT_CONNECTIONS_PER_CLIENT = 4
 INTERCOM_FRAME_BYTES = 1920
 INTERCOM_IDLE_TIMEOUT = 15.0
 INTERCOM_RENEW_INTERVAL = 10.0
@@ -91,6 +93,8 @@ class PluginApiServer:
         self._ssl_context = ssl_context
         self._rate_limit = rate_limit
         self._requests: dict[str, deque[float]] = defaultdict(deque)
+        self._event_connections: dict[str, int] = {}
+        self._event_connection_total = 0
         self._runner: web.AppRunner | None = None
         self._site: web.TCPSite | None = None
 
@@ -136,6 +140,8 @@ class PluginApiServer:
         self.bound_port = None
         if runner is not None:
             await runner.cleanup()
+        self._event_connections.clear()
+        self._event_connection_total = 0
 
     @web.middleware
     async def _error_middleware(self, request, handler):
@@ -151,6 +157,13 @@ class PluginApiServer:
             )
             return _secure_response(_error_response(code, message, status=exc.status))
         except Exception:
+            identity = request.get(PLUGIN_IDENTITY_KEY)
+            _log.exception(
+                "Unhandled plugin API request method=%s path=%s client_id=%s",
+                request.method,
+                request.path,
+                identity.id if isinstance(identity, PluginIdentity) else "unverified",
+            )
             return _secure_response(
                 _error_response(
                     "internal_error",
@@ -337,6 +350,31 @@ class PluginApiServer:
                 status=409,
             )
 
+        identity = request[PLUGIN_IDENTITY_KEY]
+        if not self._claim_event_connection(identity.id):
+            return _error_response(
+                "connection_limit",
+                "Plugin event connection limit reached",
+                status=429,
+            )
+        try:
+            return await self._serve_event_socket(
+                request,
+                epoch=epoch,
+                after_sequence=after_sequence,
+                replay=replay,
+            )
+        finally:
+            self._release_event_connection(identity.id)
+
+    async def _serve_event_socket(
+        self,
+        request: web.Request,
+        *,
+        epoch: str,
+        after_sequence: int,
+        replay,
+    ) -> web.StreamResponse:
         socket = web.WebSocketResponse(heartbeat=30, max_msg_size=MAX_REQUEST_BYTES)
         _secure_response(socket)
         await socket.prepare(request)
@@ -374,9 +412,14 @@ class PluginApiServer:
 
             if receive_task in done:
                 message = receive_task.result()
-                if message.type in {WSMsgType.CLOSE, WSMsgType.CLOSED, WSMsgType.ERROR}:
+                if message.type in {
+                    WSMsgType.CLOSE,
+                    WSMsgType.CLOSING,
+                    WSMsgType.CLOSED,
+                    WSMsgType.ERROR,
+                }:
                     break
-                if message.type is WSMsgType.TEXT:
+                if message.type in {WSMsgType.TEXT, WSMsgType.BINARY}:
                     await socket.close(code=1008, message=b"client messages are not supported")
                     break
 
@@ -582,6 +625,26 @@ class PluginApiServer:
             return False
         requests.append(now)
         return True
+
+    def _claim_event_connection(self, client_id: str) -> bool:
+        count = self._event_connections.get(client_id, 0)
+        if (
+            self._event_connection_total >= MAX_EVENT_CONNECTIONS
+            or count >= MAX_EVENT_CONNECTIONS_PER_CLIENT
+        ):
+            return False
+        self._event_connections[client_id] = count + 1
+        self._event_connection_total += 1
+        return True
+
+    def _release_event_connection(self, client_id: str) -> None:
+        count = self._event_connections.get(client_id, 0)
+        if count <= 1:
+            self._event_connections.pop(client_id, None)
+        else:
+            self._event_connections[client_id] = count - 1
+        if count:
+            self._event_connection_total -= 1
 
 
 def _error_response(code: str, message: str, *, status: int) -> web.Response:

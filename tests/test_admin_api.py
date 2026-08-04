@@ -1,4 +1,5 @@
 import json
+import logging
 import stat
 
 import pytest
@@ -100,6 +101,25 @@ async def test_admin_server_does_not_expose_unhandled_exception_text(tmp_path):
 
     assert raised.value.code == "internal_error"
     assert "secret" not in str(raised.value)
+
+
+@pytest.mark.asyncio
+async def test_admin_server_logs_unhandled_request_context(tmp_path, caplog):
+    socket_path = tmp_path / "runtime" / "admin.sock"
+
+    async def handler(_method, _params):
+        raise RuntimeError("injected admin failure")
+
+    caplog.set_level(logging.ERROR, logger="halo_server.api.admin")
+    server = AdminServer(socket_path, handler)
+    await server.start()
+    try:
+        with pytest.raises(AdminClientError):
+            await AdminClient(socket_path).request("status")
+    finally:
+        await server.stop()
+
+    assert "Unhandled admin request failure method=status" in caplog.text
 
 
 @pytest.mark.asyncio
