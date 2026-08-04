@@ -664,15 +664,121 @@ async def test_service_starts_stops_and_reports_optional_rtsp_gateway(tmp_path):
 
     await service.start()
     status = service.status()
+    inventory_task = service._inventory_task
     await service.stop()
 
     assert service._rtsp_gateway.started is True
     assert service._rtsp_gateway.stopped is True
+    assert inventory_task is not None and inventory_task.done()
+    assert service._inventory_task is None
     assert status["media"]["gateway"] == {
         "enabled": True,
         "host": "127.0.0.1",
         "port": 18555,
     }
+
+
+@pytest.mark.asyncio
+async def test_inventory_refresh_updates_gateway_and_retires_stale_media_sessions(tmp_path):
+    def camera(device_id, name):
+        return SimpleNamespace(
+            id=device_id,
+            name=name,
+            family="doorbots",
+            kind="lpd_v4",
+            model="Doorbell",
+            subscribed=True,
+            battery_life=90,
+            motion_detection=True,
+            has_capability=lambda _capability: False,
+        )
+
+    class RefreshingClient:
+        is_authenticated = True
+
+        def __init__(self):
+            self.all_devices = [camera(1, "Old Camera")]
+            self.refresh_calls = 0
+
+        def refresh_devices(self):
+            self.refresh_calls += 1
+            self.all_devices = [camera(2, "New Camera")]
+            return list(self.all_devices)
+
+    client = RefreshingClient()
+    sessions = FakeSessions()
+    sessions.client = client
+    sessions.active_client = client
+    paths = ServerPaths(tmp_path / "state", tmp_path / "runtime")
+    service = HaloService(
+        paths,
+        session_manager=sessions,
+        listener_factory=FakeListener,
+        media_session_factory=FakeMediaSession,
+        rtsp_host="127.0.0.1",
+        rtsp_gateway_factory=FakeGateway,
+    )
+    service._media_client = client
+    removed = FakeMediaSession(None, SimpleNamespace(id=1))
+    refreshed = FakeMediaSession(None, SimpleNamespace(id=2))
+    refreshed.state = MediaSessionState.IDLE
+    service._media_sessions = {"1": removed, "2": refreshed}
+
+    await service._refresh_active_inventory()
+
+    assert client.refresh_calls == 1
+    assert service._rtsp_gateway.camera_updates == [["2"]]
+    assert service._media_sessions == {}
+    assert removed.stop_reasons == ["inventory_refreshed"]
+    assert refreshed.stop_reasons == ["inventory_refreshed"]
+    assert [item["id"] for item in service.status()["cameras"]] == ["2"]
+
+
+@pytest.mark.asyncio
+async def test_stale_inventory_refresh_cannot_republish_previous_account(tmp_path):
+    refresh_started = threading.Event()
+    allow_refresh = threading.Event()
+
+    class BlockingClient:
+        is_authenticated = True
+
+        def __init__(self, device_id):
+            self.all_devices = [SimpleNamespace(id=device_id)]
+
+        def refresh_devices(self):
+            refresh_started.set()
+            assert allow_refresh.wait(2)
+            return list(self.all_devices)
+
+    previous = BlockingClient(1)
+    replacement = BlockingClient(2)
+    sessions = FakeSessions()
+    sessions.client = previous
+    sessions.active_client = previous
+    paths = ServerPaths(tmp_path / "state", tmp_path / "runtime")
+    service = HaloService(
+        paths,
+        session_manager=sessions,
+        listener_factory=FakeListener,
+        media_session_factory=FakeMediaSession,
+        rtsp_host="127.0.0.1",
+        rtsp_gateway_factory=FakeGateway,
+    )
+    service._media_client = previous
+
+    refresh = asyncio.create_task(service._refresh_active_inventory())
+    for _ in range(100):
+        if refresh_started.is_set():
+            break
+        await asyncio.sleep(0.01)
+    assert refresh_started.is_set()
+
+    sessions.active_client = replacement
+    service._invalidate_media_access()
+    allow_refresh.set()
+    await refresh
+
+    assert service._rtsp_gateway.camera_updates == []
 
 
 @pytest.mark.asyncio

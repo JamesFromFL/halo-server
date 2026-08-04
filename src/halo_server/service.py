@@ -52,6 +52,7 @@ RECENT_EVENT_LIMIT = 100
 GATEWAY_CALL_TIMEOUT = 10.0
 RESTORE_RETRY_INITIAL_SECONDS = 5.0
 RESTORE_RETRY_MAX_SECONDS = 300.0
+INVENTORY_REFRESH_INTERVAL_SECONDS = 60.0
 
 
 class _ServiceIntercomStream(PluginIntercomStream):
@@ -174,6 +175,7 @@ class HaloService:
         self._recent_actions: deque[dict[str, Any]] = deque(maxlen=RECENT_EVENT_LIMIT)
         self._main_loop: asyncio.AbstractEventLoop | None = None
         self._tick_task: asyncio.Task | None = None
+        self._inventory_task: asyncio.Task | None = None
         self._restore_task: asyncio.Task | None = None
         self._repair_requested = False
         self._stop_requested = asyncio.Event()
@@ -216,6 +218,10 @@ class HaloService:
             self._main_loop = None
             raise
         self._tick_task = asyncio.create_task(self._tick_incidents(), name="incident-timer")
+        self._inventory_task = asyncio.create_task(
+            self._refresh_inventory_loop(),
+            name="ring-inventory-refresh",
+        )
         if await self._try_restore_ring_session():
             self._request_account_repair()
 
@@ -251,6 +257,12 @@ class HaloService:
             restore_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await restore_task
+        inventory_task = self._inventory_task
+        self._inventory_task = None
+        if inventory_task is not None:
+            inventory_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await inventory_task
         listener = self._listener
         self._listener = None
         if listener is not None:
@@ -756,6 +768,88 @@ class HaloService:
             for session in list(self._media_sessions.values()):
                 await asyncio.to_thread(session.expire)
             self._reconcile_media_state()
+
+    async def _refresh_inventory_loop(self) -> None:
+        while not self._stop_requested.is_set():
+            try:
+                await asyncio.wait_for(
+                    self._stop_requested.wait(),
+                    timeout=INVENTORY_REFRESH_INTERVAL_SECONDS,
+                )
+                return
+            except TimeoutError:
+                pass
+            await self._refresh_active_inventory()
+
+    async def _refresh_active_inventory(self) -> None:
+        client = self._sessions.active_client
+        refresh = getattr(client, "refresh_devices", None)
+        if (
+            client is None
+            or not client.is_authenticated
+            or self._media_client is not client
+            or not callable(refresh)
+        ):
+            return
+        epoch = self._media_epoch
+        try:
+            devices = await asyncio.to_thread(refresh)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            if self._sessions.active_client is client:
+                _log.exception("Ring camera inventory refresh failed")
+            return
+
+        async with self._session_change_lock:
+            if (
+                epoch != self._media_epoch
+                or self._sessions.active_client is not client
+                or self._media_client is not client
+            ):
+                return
+            camera_ids = [device["id"] for device in summarize_cameras(devices)]
+            try:
+                await self._sync_rtsp_cameras(camera_ids)
+                await self._reconcile_refreshed_media(camera_ids)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                if self._sessions.active_client is client:
+                    self._account_integrations_ready = False
+                    self._last_account_error = (
+                        "Ring camera inventory integrations are unavailable; retrying"
+                    )
+                    _log.exception("Ring camera inventory integration failed")
+                    self._request_account_repair()
+
+    async def _reconcile_refreshed_media(self, camera_ids: list[str]) -> None:
+        available = set(camera_ids)
+
+        async def reconcile(camera_id: str, session: CameraMediaSession) -> None:
+            snapshot = session.snapshot()
+            if camera_id in available and (
+                snapshot.lease_count > 0 or snapshot.state is not MediaSessionState.IDLE
+            ):
+                return
+            async with self._camera_media_lock(camera_id):
+                if self._media_sessions.get(camera_id) is not session:
+                    return
+                snapshot = session.snapshot()
+                if camera_id in available and (
+                    snapshot.lease_count > 0 or snapshot.state is not MediaSessionState.IDLE
+                ):
+                    return
+                self._media_sessions.pop(camera_id, None)
+                self._intercom_leases.pop(camera_id, None)
+                await asyncio.to_thread(session.stop_all, "inventory_refreshed")
+
+        await asyncio.gather(
+            *(
+                reconcile(camera_id, session)
+                for camera_id, session in list(self._media_sessions.items())
+            )
+        )
 
     def _handle_incident_actions(
         self,
