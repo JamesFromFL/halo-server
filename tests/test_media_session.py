@@ -1,0 +1,290 @@
+import concurrent.futures
+import logging
+from types import SimpleNamespace
+
+import numpy as np
+import pytest
+
+from halo_server.media.leases import LeasePurpose
+from halo_server.media.session import CameraMediaSession, MediaSessionState
+
+SPS_PPS_IDR = (
+    b"\x00\x00\x00\x01\x67\x64\x00\x32\x00\x00\x00\x01\x68\xee\x3c\x80\x00\x00\x00\x01\x65\x88\x84"
+)
+
+
+class FakeFuture:
+    def __init__(self, coroutine):
+        self.coroutine = coroutine
+        self.callbacks = []
+        self.cancelled = False
+        self.finished = False
+
+    def add_done_callback(self, callback):
+        self.callbacks.append(callback)
+
+    def done(self):
+        return self.finished
+
+    def result(self, *, timeout):
+        assert timeout > 0
+        self.finished = True
+        self.coroutine.close()
+        for callback in self.callbacks:
+            callback(self)
+
+    def cancel(self):
+        self.cancelled = True
+        self.finished = True
+        self.coroutine.close()
+
+    def complete_unexpectedly(self):
+        self.finished = True
+        self.coroutine.close()
+        for callback in self.callbacks:
+            callback(self)
+
+
+class FakeClient:
+    def __init__(self):
+        self.futures = []
+
+    def submit(self, coroutine):
+        future = FakeFuture(coroutine)
+        self.futures.append(future)
+        return future
+
+
+class FailingClient:
+    def __init__(self):
+        self.coroutine = None
+
+    def submit(self, coroutine):
+        self.coroutine = coroutine
+        raise RuntimeError("loop unavailable")
+
+
+async def fake_supervisor(
+    _device,
+    _on_video,
+    _on_audio,
+    _stop,
+    *,
+    receiver_kwargs,
+):
+    del receiver_kwargs
+
+
+def _session(client=None):
+    client = client or FakeClient()
+    device = SimpleNamespace(id=42, name="Front Door")
+    return (
+        CameraMediaSession(
+            client,
+            device,
+            receiver_supervisor=fake_supervisor,
+        ),
+        client,
+    )
+
+
+def _receiver_kwargs(future):
+    return future.coroutine.cr_frame.f_locals["receiver_kwargs"]
+
+
+def test_multiple_leases_submit_exactly_one_ring_receiver():
+    session, client = _session()
+
+    event = session.acquire(LeasePurpose.EVENT)
+    live = session.acquire(LeasePurpose.HOMEKIT_LIVE)
+
+    assert len(client.futures) == 1
+    assert event.generation == live.generation == 1
+    assert session.snapshot().lease_count == 2
+    assert session.snapshot().state is MediaSessionState.STARTING
+    session.stop_all()
+
+
+def test_last_release_stops_receiver_but_first_release_does_not():
+    session, client = _session()
+    event = session.acquire(LeasePurpose.EVENT)
+    live = session.acquire(LeasePurpose.HOMEKIT_LIVE)
+    future = client.futures[0]
+    stop = future.coroutine.cr_frame.f_locals["_stop"]
+
+    session.release(event.id)
+    assert stop.is_set() is False
+    assert future.finished is False
+
+    session.release(live.id)
+    assert stop.is_set() is True
+    assert future.finished is True
+    assert session.snapshot().state is MediaSessionState.IDLE
+
+
+def test_encoded_keyframe_marks_buffer_and_session_ready():
+    session, client = _session()
+    session.acquire(LeasePurpose.EVENT)
+    callbacks = _receiver_kwargs(client.futures[0])
+
+    on_audio = client.futures[0].coroutine.cr_frame.f_locals["_on_audio"]
+    on_audio(np.zeros((960, 2), dtype="<i2").tobytes(), 2, 48_000)
+    callbacks["on_encoded_video"](SPS_PPS_IDR, 200)
+
+    snapshot = session.snapshot()
+    assert snapshot.state is MediaSessionState.READY
+    assert snapshot.buffer_ready is True
+    assert snapshot.buffer_packets == 1
+    assert snapshot.opus_frame_duration_ms == 20
+    session.stop_all()
+
+
+def test_stale_callbacks_cannot_write_into_new_generation():
+    session, client = _session()
+    first = session.acquire(LeasePurpose.SNAPSHOT)
+    stale_callbacks = _receiver_kwargs(client.futures[0])
+    session.release(first.id)
+    second = session.acquire(LeasePurpose.EVENT)
+
+    stale_callbacks["on_encoded_video"](SPS_PPS_IDR, 100)
+
+    assert first.generation == 1
+    assert second.generation == 2
+    assert session.snapshot().buffer_ready is False
+    session.stop_all()
+
+
+def test_incompatible_codec_stops_retry_loop_and_marks_failure():
+    session, client = _session()
+    session.acquire(LeasePurpose.EVENT)
+    future = client.futures[0]
+    callbacks = _receiver_kwargs(future)
+    stop = future.coroutine.cr_frame.f_locals["_stop"]
+
+    callbacks["on_encoded_incompatible"]("audio", "audio/pcmu")
+
+    assert stop.is_set() is True
+    assert session.snapshot().state is MediaSessionState.FAILED
+    assert session.snapshot().failure == "unsupported_audio_codec"
+    session.stop_all()
+
+
+def test_unexpected_receiver_completion_does_not_clear_active_lease():
+    session, client = _session()
+    session.acquire(LeasePurpose.EVENT)
+
+    client.futures[0].complete_unexpectedly()
+
+    assert session.snapshot().lease_count == 1
+    assert session.snapshot().state is MediaSessionState.FAILED
+    assert session.snapshot().failure == "receiver_stopped"
+    session.stop_all()
+
+
+def test_receiver_submission_failure_closes_coroutine_and_marks_failure():
+    client = FailingClient()
+    session, _ = _session(client)
+
+    with pytest.raises(RuntimeError, match="loop unavailable"):
+        session.acquire(LeasePurpose.EVENT)
+
+    assert client.coroutine.cr_frame is None
+    assert session.snapshot().state is MediaSessionState.FAILED
+    assert session.snapshot().failure == "receiver_submission_failed"
+    assert session.snapshot().lease_count == 0
+    assert session._audio_encoder is None
+
+
+def test_raw_audio_callback_is_generation_guarded():
+    delivered = []
+    client = FakeClient()
+    device = SimpleNamespace(id=42, name="Front Door")
+    session = CameraMediaSession(
+        client,
+        device,
+        receiver_supervisor=fake_supervisor,
+        on_raw_audio=lambda payload, channels, rate: delivered.append((payload, channels, rate)),
+    )
+    lease = session.acquire(LeasePurpose.EVENT)
+    future = client.futures[0]
+    on_audio = future.coroutine.cr_frame.f_locals["_on_audio"]
+
+    raw = np.zeros(960, dtype="<i2").tobytes()
+    on_audio(raw, 1, 48000)
+    session.release(lease.id)
+    on_audio(raw, 1, 48000)
+
+    assert delivered == [(raw, 1, 48000)]
+
+
+def test_intercom_audio_requires_matching_active_lease_and_reaches_receiver_source(caplog):
+    caplog.set_level(logging.INFO)
+    session, client = _session()
+    lease = session.acquire(LeasePurpose.INTERCOM, lease_id="talk")
+    source = _receiver_kwargs(client.futures[0])["microphone_source"]
+    payload = b"\x01\x00" * 960
+
+    with pytest.raises(RuntimeError, match="not active"):
+        session.push_intercom_audio("other", payload)
+    session.push_intercom_audio(lease.id, payload)
+
+    generation = source.snapshot().intercom_generation
+    assert source.pull() is None
+    assert source.set_speaker_ready(generation, True)
+    assert source.pull() == payload
+    session.release(lease.id)
+    assert "accepted=1 consumed=1 dropped=0 queued=0" in caplog.text
+    with pytest.raises(RuntimeError, match="not active"):
+        session.push_intercom_audio(lease.id, payload)
+
+
+def test_releasing_intercom_clears_queued_audio_while_live_stream_continues():
+    session, client = _session()
+    live = session.acquire(LeasePurpose.SCRYPTED_LIVE, lease_id="live")
+    talk = session.acquire(LeasePurpose.INTERCOM, lease_id="talk")
+    source = _receiver_kwargs(client.futures[0])["microphone_source"]
+    session.push_intercom_audio(talk.id, b"\x01\x00" * 960)
+
+    session.release(talk.id)
+
+    assert source.pull() is None
+    assert session.snapshot().lease_count == 1
+    session.release(live.id)
+
+
+def test_invalid_raw_audio_stops_session_with_stable_failure():
+    session, client = _session()
+    session.acquire(LeasePurpose.EVENT)
+    future = client.futures[0]
+    on_audio = future.coroutine.cr_frame.f_locals["_on_audio"]
+    stop = future.coroutine.cr_frame.f_locals["_stop"]
+
+    on_audio(b"misaligned", 2, 48_000)
+
+    assert stop.is_set() is True
+    assert session.snapshot().state is MediaSessionState.FAILED
+    assert session.snapshot().failure == "audio_normalization_failed"
+    session.stop_all()
+
+
+def test_stop_timeout_cancels_receiver(monkeypatch):
+    class TimeoutFuture(FakeFuture):
+        def result(self, *, timeout):
+            raise concurrent.futures.TimeoutError
+
+    class TimeoutClient:
+        def __init__(self):
+            self.future = None
+
+        def submit(self, coroutine):
+            self.future = TimeoutFuture(coroutine)
+            return self.future
+
+    client = TimeoutClient()
+    session, _ = _session(client)
+    lease = session.acquire(LeasePurpose.EVENT)
+
+    session.release(lease.id)
+
+    assert client.future.cancelled is True
+    assert session.snapshot().state is MediaSessionState.IDLE
