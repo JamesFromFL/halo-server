@@ -221,6 +221,33 @@ async def test_plugin_devices_publish_authoritative_empty_authenticated_inventor
 
 
 @pytest.mark.asyncio
+async def test_plugin_devices_preserve_inventory_until_account_integrations_are_ready(tmp_path):
+    def integrations_starting_status():
+        status = _status()
+        status["account"] = {
+            "authenticated": True,
+            "integrations_ready": False,
+            "restoring": True,
+            "last_error": "Ring account integrations are unavailable; retrying",
+        }
+        return status
+
+    async with _server(tmp_path, status_provider=integrations_starting_status) as (
+        server,
+        _tokens,
+        issued,
+        _events,
+    ):
+        url = f"http://127.0.0.1:{server.bound_port}/v1/devices"
+        async with aiohttp.ClientSession() as client:
+            response = await client.get(url, headers=_headers(issued.token))
+            body = await response.json()
+
+    assert response.status == 503
+    assert body["error"]["code"] == "ring_unavailable"
+
+
+@pytest.mark.asyncio
 async def test_plugin_devices_publish_authenticated_on_demand_media_descriptor(tmp_path):
     descriptor = {
         "id": "main",

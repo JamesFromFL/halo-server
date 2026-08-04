@@ -256,6 +256,12 @@ class PluginApiServer:
                 "Ring sign-in is required before device inventory is available",
                 status=503,
             )
+        if account.get("integrations_ready") is False:
+            return _error_response(
+                "ring_unavailable",
+                "Ring account integrations are still starting",
+                status=503,
+            )
         devices = status.get("cameras", [])
         incidents = status.get("incidents", {})
         if not isinstance(devices, list):

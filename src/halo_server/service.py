@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import contextlib
 import logging
 import time
@@ -163,10 +164,12 @@ class HaloService:
         self._main_loop: asyncio.AbstractEventLoop | None = None
         self._tick_task: asyncio.Task | None = None
         self._restore_task: asyncio.Task | None = None
+        self._repair_requested = False
         self._stop_requested = asyncio.Event()
         self._started_at: float | None = None
         self._restoring = False
         self._last_account_error: str | None = None
+        self._account_integrations_ready = False
         self._restore_retry_initial = max(0.01, restore_retry_initial)
         self._restore_retry_max = max(self._restore_retry_initial, restore_retry_max)
 
@@ -177,6 +180,8 @@ class HaloService:
         self.paths.prepare()
         self._main_loop = asyncio.get_running_loop()
         self._stop_requested.clear()
+        self._repair_requested = False
+        self._account_integrations_ready = False
         self._started_at = time.monotonic()
         self._restoring = True
         try:
@@ -200,15 +205,13 @@ class HaloService:
             raise
         self._tick_task = asyncio.create_task(self._tick_incidents(), name="incident-timer")
         if await self._try_restore_ring_session():
-            self._restore_task = asyncio.create_task(
-                self._retry_ring_session_restore(),
-                name="ring-session-restore",
-            )
+            self._request_account_repair()
 
     async def stop(self) -> None:
         """Stop accepting work and release every daemon-owned resource."""
         failures: list[Exception] = []
         self._stop_requested.set()
+        self._repair_requested = False
 
         async def attempt(label: str, operation: Coroutine[Any, Any, Any]) -> None:
             try:
@@ -246,6 +249,7 @@ class HaloService:
         await attempt("media sessions", self._stop_media_sessions("service_stop"))
         await attempt("Ring session", asyncio.to_thread(self._sessions.shutdown))
         self._event_state = EventConnectionState.OFFLINE
+        self._account_integrations_ready = False
         self._started_at = None
         self._main_loop = None
         if failures:
@@ -255,18 +259,15 @@ class HaloService:
         """Attempt a cached login and report whether a later retry is warranted."""
         async with self._session_change_lock:
             active = self._sessions.active_client
-            if active is not None and active.is_authenticated:
-                return False
-
             self._restoring = True
             try:
-                client = await asyncio.to_thread(self._sessions.restore)
+                client = (
+                    active
+                    if active is not None and active.is_authenticated
+                    else await asyncio.to_thread(self._sessions.restore)
+                )
                 if client is not None:
-                    self._media_client = client
-                    self._last_account_error = None
-                    await self._sync_rtsp_cameras()
-                    await self._replace_listener(client)
-                    return False
+                    return await self._reconcile_account_integrations(client)
 
                 retry = await asyncio.to_thread(self._sessions.has_stored_credentials)
                 self._last_account_error = (
@@ -284,6 +285,33 @@ class HaloService:
             finally:
                 self._restoring = False
 
+    async def _reconcile_account_integrations(self, client) -> bool:
+        """Bring media registration and Ring events in line with an authenticated client."""
+        self._account_integrations_ready = False
+        self._media_client = client
+        try:
+            await self._sync_rtsp_cameras()
+            await self._replace_listener(client)
+        except Exception:
+            self._last_account_error = "Ring account integrations are unavailable; retrying"
+            _log.exception("Ring account integration reconciliation failed")
+            return True
+        self._account_integrations_ready = True
+        self._last_account_error = None
+        return False
+
+    def _request_account_repair(self) -> None:
+        if self._started_at is None or self._stop_requested.is_set():
+            return
+        self._repair_requested = True
+        task = self._restore_task
+        if task is not None and not task.done():
+            return
+        self._restore_task = asyncio.create_task(
+            self._retry_ring_session_restore(),
+            name="ring-session-restore",
+        )
+
     async def _retry_ring_session_restore(self) -> None:
         delay = self._restore_retry_initial
         try:
@@ -294,12 +322,16 @@ class HaloService:
                 except TimeoutError:
                     pass
 
-                if not await self._try_restore_ring_session():
+                self._repair_requested = False
+                retry = await self._try_restore_ring_session()
+                if not retry and not self._repair_requested:
                     return
                 delay = min(delay * 2, self._restore_retry_max)
         finally:
             if self._restore_task is asyncio.current_task():
                 self._restore_task = None
+            if self._repair_requested and not self._stop_requested.is_set():
+                self._request_account_repair()
 
     async def wait_for_stop(self) -> None:
         await self._stop_requested.wait()
@@ -378,6 +410,9 @@ class HaloService:
                 "authenticated": bool(client and client.is_authenticated),
                 "email": self._sessions.account_email,
                 "restoring": self._restoring,
+                "integrations_ready": bool(
+                    client and client.is_authenticated and self._account_integrations_ready
+                ),
                 "last_error": self._last_account_error,
             },
             "events": {
@@ -503,6 +538,7 @@ class HaloService:
                 ) from exc
             self._accept_events = False
             self._listener_generation += 1
+            self._account_integrations_ready = False
             for camera_id, coordinator in self._incidents.items():
                 self._handle_incident_actions(
                     camera_id,
@@ -512,9 +548,8 @@ class HaloService:
             await self._drain_media_tasks()
             await self._stop_media_sessions("account_replaced")
             self._media_client = client
-            self._last_account_error = None
-            await self._sync_rtsp_cameras()
-            await self._replace_listener(client)
+            if await self._reconcile_account_integrations(client):
+                self._request_account_repair()
             return self.status()
 
     async def _logout(self) -> dict[str, Any]:
@@ -534,6 +569,8 @@ class HaloService:
             await self._drain_media_tasks()
             await self._stop_media_sessions("logout")
             self._media_client = None
+            self._repair_requested = False
+            self._account_integrations_ready = False
             logout_error: CredentialStoreError | None = None
             try:
                 await asyncio.to_thread(self._sessions.logout)
@@ -562,14 +599,66 @@ class HaloService:
             lambda state: self._receive_event_state(generation, state),
         )
         try:
-            listener.start()
+            future = listener.start()
+            wait_until_started = getattr(listener, "wait_until_started", None)
+            if callable(wait_until_started):
+                await asyncio.to_thread(wait_until_started)
         except Exception:
             self._event_state = EventConnectionState.OFFLINE
-            self._last_account_error = "Ring events could not start"
-            _log.exception("Ring event listener could not start")
-            return
+            with contextlib.suppress(Exception):
+                await asyncio.to_thread(listener.stop)
+            raise
         self._listener = listener
         self._accept_events = True
+        add_done_callback = getattr(future, "add_done_callback", None)
+        if callable(add_done_callback):
+            add_done_callback(
+                lambda completed: self._receive_listener_completion(
+                    generation,
+                    listener,
+                    completed,
+                )
+            )
+
+    def _receive_listener_completion(self, generation: int, listener, future) -> None:
+        try:
+            error = future.exception()
+        except (asyncio.CancelledError, concurrent.futures.CancelledError):
+            error = None
+        except BaseException as exc:
+            error = exc
+        loop = self._main_loop
+        if loop is None or loop.is_closed():
+            return
+        loop.call_soon_threadsafe(
+            self._listener_completed,
+            generation,
+            listener,
+            error,
+        )
+
+    def _listener_completed(self, generation: int, listener, error: BaseException | None) -> None:
+        if (
+            generation != self._listener_generation
+            or listener is not self._listener
+            or not self._accept_events
+            or self._stop_requested.is_set()
+        ):
+            return
+        self._listener = None
+        self._accept_events = False
+        self._event_state = EventConnectionState.OFFLINE
+        self._account_integrations_ready = False
+        self._last_account_error = "Ring event listener stopped; retrying"
+        if error is None:
+            _log.warning("Ring event listener stopped unexpectedly; repairing")
+        else:
+            _log.error(
+                "Ring event listener terminated; repairing: %s",
+                error,
+                exc_info=(type(error), error, error.__traceback__),
+            )
+        self._request_account_repair()
 
     def _receive_event(
         self,

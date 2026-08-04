@@ -1,4 +1,5 @@
 import asyncio
+import concurrent.futures
 from types import SimpleNamespace
 
 import pytest
@@ -204,6 +205,29 @@ def test_start_is_idempotent_and_stop_waits_for_owned_future():
     assert len(client.submissions) == 1
     assert client.future.result_calls == 1
     assert listener.state is EventConnectionState.OFFLINE
+
+
+def test_listener_startup_wait_surfaces_submitted_task_failure():
+    failure = RuntimeError("injected listener bootstrap failure")
+
+    class FakeClient:
+        _loop_thread = None
+
+        def submit(self, coroutine):
+            coroutine.close()
+            future = concurrent.futures.Future()
+            future.set_exception(failure)
+            return future
+
+    listener = EventListener(FakeClient(), lambda _event: None)
+
+    future = listener.start()
+
+    assert future.done() is True
+    assert listener.running is False
+    with pytest.raises(RuntimeError, match="injected listener bootstrap failure"):
+        listener.wait_until_started(timeout=0.01)
+    listener.stop()
 
 
 def test_malformed_event_is_ignored_without_invoking_callback():

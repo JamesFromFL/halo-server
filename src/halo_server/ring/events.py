@@ -20,6 +20,7 @@ RECONNECT_MIN = 1.0
 RECONNECT_MAX = 30.0
 MONITOR_INTERVAL = 2.0
 STOP_TIMEOUT = 5.0
+START_TIMEOUT = 5.0
 
 
 class EventConnectionState(StrEnum):
@@ -115,19 +116,55 @@ class EventListener:
         self._lock = threading.Lock()
         self._future: concurrent.futures.Future | None = None
         self._state = EventConnectionState.OFFLINE
+        self._startup_ready = threading.Event()
+        self._startup_error: BaseException | None = None
 
     @property
     def state(self) -> EventConnectionState:
         with self._lock:
             return self._state
 
-    def start(self) -> None:
+    @property
+    def running(self) -> bool:
+        with self._lock:
+            return self._future is not None and not self._future.done()
+
+    def start(self) -> concurrent.futures.Future:
         """Start listening without blocking; repeated calls are idempotent."""
         with self._lock:
             if self._future is not None and not self._future.done():
-                return
+                return self._future
             self._stop.clear()
-            self._future = self._client.submit(self._run())
+            self._startup_ready.clear()
+            self._startup_error = None
+            coroutine = self._run()
+            try:
+                self._future = self._client.submit(coroutine)
+            except BaseException as exc:
+                coroutine.close()
+                self._startup_error = exc
+                self._startup_ready.set()
+                raise
+            return self._future
+
+    def wait_until_started(self, timeout: float = START_TIMEOUT) -> None:
+        """Wait until the supervisor has initialized or surface its startup failure."""
+        ready = self._startup_ready.wait(timeout)
+        with self._lock:
+            future = self._future
+            startup_error = self._startup_error
+        if not ready:
+            if future is not None and future.done():
+                future.result()
+            raise TimeoutError("Ring event listener did not start in time")
+        if startup_error is not None:
+            raise RuntimeError(str(startup_error)) from startup_error
+        if future is None:
+            raise RuntimeError("Ring event listener was not submitted")
+        if future.done():
+            future.result()
+            if not self._stop.is_set():
+                raise RuntimeError("Ring event listener stopped during startup")
 
     def stop(self) -> None:
         """Request listener teardown and wait briefly outside its loop thread."""
@@ -178,23 +215,22 @@ class EventListener:
                 _log.debug("Ring connection-state callback failed: %s", exc)
 
     async def _run(self) -> None:
-        from ring_doorbell import RingEventListener, RingEventListenerConfig
-
-        ring = self._client.ring
-        if ring is None:
-            _log.error("Cannot start Ring events without an authenticated session")
-            self._set_state(EventConnectionState.OFFLINE)
-            return
-
-        config = RingEventListenerConfig.default_config()
-        config.connection_retry_count = 1_000_000
-        config.abort_on_sequential_error_count = None
-        backoff = RECONNECT_MIN
         try:
+            from ring_doorbell import RingEventListener, RingEventListenerConfig
+
+            ring = self._client.ring
+            if ring is None:
+                raise RuntimeError("Cannot start Ring events without an authenticated session")
+
+            config = RingEventListenerConfig.default_config()
+            config.connection_retry_count = 1_000_000
+            config.abort_on_sequential_error_count = None
+            backoff = RECONNECT_MIN
             while not self._stop.is_set():
                 self._set_state(EventConnectionState.CONNECTING)
                 listener = RingEventListener(ring, config=config)
                 listener.add_notification_callback(self._emit)
+                self._signal_startup()
                 try:
                     try:
                         started = await listener.start()
@@ -224,8 +260,19 @@ class EventListener:
                 finally:
                     with contextlib.suppress(Exception):
                         await listener.stop()
+        except BaseException as exc:
+            self._signal_startup(exc)
+            raise
         finally:
+            self._signal_startup()
             self._set_state(EventConnectionState.OFFLINE)
+
+    def _signal_startup(self, error: BaseException | None = None) -> None:
+        with self._lock:
+            if self._startup_ready.is_set():
+                return
+            self._startup_error = error
+            self._startup_ready.set()
 
     async def _sleep_until_stopped(self, duration: float) -> None:
         deadline = asyncio.get_running_loop().time() + duration

@@ -1,4 +1,5 @@
 import asyncio
+import concurrent.futures
 from types import SimpleNamespace
 
 import pytest
@@ -595,6 +596,263 @@ async def test_service_retries_transient_cached_session_restore(tmp_path):
     assert service.status()["account"]["last_error"] is None
     assert service._listener.started is True
     await service.stop()
+
+
+@pytest.mark.asyncio
+async def test_service_repairs_rtsp_sync_without_reauthenticating(tmp_path):
+    class FailsOnceGateway(FakeGateway):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self.sync_failures = 1
+
+        def sync_cameras(self, camera_ids):
+            self.camera_updates.append(list(camera_ids))
+            if self.sync_failures:
+                self.sync_failures -= 1
+                raise RuntimeError("injected RTSP sync failure")
+
+    sessions = FakeSessions()
+    sessions.client.all_devices = [
+        SimpleNamespace(
+            id=42,
+            name="Front Door",
+            family="doorbots",
+            kind="lpd_v4",
+            model="Doorbell",
+            subscribed=True,
+            battery_life=90,
+            motion_detection=True,
+            has_capability=lambda _capability: False,
+        )
+    ]
+    sessions.restore_results = [sessions.client]
+    paths = ServerPaths(tmp_path / "state", tmp_path / "runtime")
+    service = HaloService(
+        paths,
+        session_manager=sessions,
+        listener_factory=FakeListener,
+        media_session_factory=FakeMediaSession,
+        rtsp_host="127.0.0.1",
+        rtsp_port=0,
+        rtsp_gateway_factory=FailsOnceGateway,
+        restore_retry_initial=0.01,
+        restore_retry_max=0.02,
+    )
+
+    await service.start()
+    try:
+        for _ in range(30):
+            if service._listener is not None:
+                break
+            await asyncio.sleep(0.01)
+
+        assert sessions.restore_calls == 1
+        assert service._listener is not None
+        assert service._listener.started is True
+        assert service._rtsp_gateway.camera_updates == [["42"], ["42"]]
+        assert service.status()["account"]["last_error"] is None
+    finally:
+        await service.stop()
+
+
+@pytest.mark.asyncio
+async def test_service_repairs_listener_start_without_reauthenticating(tmp_path):
+    listeners = []
+
+    class FailsOnceListener(FakeListener):
+        def __init__(self, *args):
+            super().__init__(*args)
+            listeners.append(self)
+
+        def start(self):
+            if len(listeners) == 1:
+                raise RuntimeError("injected listener start failure")
+            super().start()
+
+    sessions = FakeSessions()
+    sessions.restore_results = [sessions.client]
+    paths = ServerPaths(tmp_path / "state", tmp_path / "runtime")
+    service = HaloService(
+        paths,
+        session_manager=sessions,
+        listener_factory=FailsOnceListener,
+        media_session_factory=FakeMediaSession,
+        restore_retry_initial=0.01,
+        restore_retry_max=0.02,
+    )
+
+    await service.start()
+    try:
+        for _ in range(30):
+            if len(listeners) >= 2 and listeners[-1].started:
+                break
+            await asyncio.sleep(0.01)
+
+        assert sessions.restore_calls == 1
+        assert len(listeners) == 2
+        assert listeners[-1].started is True
+        assert service._listener is listeners[-1]
+        assert service.status()["account"]["last_error"] is None
+    finally:
+        await service.stop()
+
+
+@pytest.mark.asyncio
+async def test_login_repairs_listener_start_without_repeating_login(tmp_path):
+    listeners = []
+
+    class FailsOnceListener(FakeListener):
+        def __init__(self, *args):
+            super().__init__(*args)
+            listeners.append(self)
+
+        def start(self):
+            if len(listeners) == 1:
+                raise RuntimeError("injected listener start failure")
+            super().start()
+
+    sessions = FakeSessions()
+    paths = ServerPaths(tmp_path / "state", tmp_path / "runtime")
+    service = HaloService(
+        paths,
+        session_manager=sessions,
+        listener_factory=FailsOnceListener,
+        media_session_factory=FakeMediaSession,
+        restore_retry_initial=0.01,
+        restore_retry_max=0.02,
+    )
+
+    await service.start()
+    try:
+        result = await service.handle_admin(
+            "login",
+            {"email": "person@example.com", "password": "secret"},
+        )
+        assert result["account"]["authenticated"] is True
+
+        for _ in range(30):
+            if len(listeners) >= 2 and listeners[-1].started:
+                break
+            await asyncio.sleep(0.01)
+
+        assert len(listeners) == 2
+        assert listeners[-1].started is True
+        assert service._listener is listeners[-1]
+        assert service.status()["account"]["last_error"] is None
+    finally:
+        await service.stop()
+
+
+@pytest.mark.asyncio
+async def test_service_repairs_listener_that_terminates_after_start(tmp_path):
+    listeners = []
+
+    class TerminatingListener(FakeListener):
+        def __init__(self, *args):
+            super().__init__(*args)
+            self.future = concurrent.futures.Future()
+            listeners.append(self)
+
+        @property
+        def running(self):
+            return not self.future.done()
+
+        def start(self):
+            super().start()
+            return self.future
+
+        def wait_until_started(self, timeout=5):
+            assert timeout > 0
+
+        def stop(self):
+            super().stop()
+            if not self.future.done():
+                self.future.set_result(None)
+
+    sessions = FakeSessions()
+    sessions.restore_results = [sessions.client]
+    paths = ServerPaths(tmp_path / "state", tmp_path / "runtime")
+    service = HaloService(
+        paths,
+        session_manager=sessions,
+        listener_factory=TerminatingListener,
+        media_session_factory=FakeMediaSession,
+        restore_retry_initial=0.01,
+        restore_retry_max=0.02,
+    )
+
+    await service.start()
+    try:
+        assert service.status()["account"]["integrations_ready"] is True
+        listeners[0].future.set_exception(RuntimeError("injected listener termination"))
+
+        for _ in range(30):
+            if len(listeners) >= 2 and service._listener is listeners[-1]:
+                break
+            await asyncio.sleep(0.01)
+
+        assert sessions.restore_calls == 1
+        assert len(listeners) == 2
+        assert service._listener is listeners[-1]
+        assert service.status()["account"]["integrations_ready"] is True
+        assert service.status()["account"]["last_error"] is None
+    finally:
+        await service.stop()
+
+
+@pytest.mark.asyncio
+async def test_service_repairs_listener_that_fails_during_async_startup(tmp_path):
+    listeners = []
+
+    class StartupFailingListener(FakeListener):
+        def __init__(self, *args):
+            super().__init__(*args)
+            self.future = concurrent.futures.Future()
+            listeners.append(self)
+
+        def start(self):
+            super().start()
+            if len(listeners) == 1:
+                self.future.set_exception(RuntimeError("injected asynchronous startup failure"))
+            return self.future
+
+        def wait_until_started(self, timeout=5):
+            assert timeout > 0
+            if self.future.done():
+                self.future.result()
+
+        def stop(self):
+            super().stop()
+            if not self.future.done():
+                self.future.set_result(None)
+
+    sessions = FakeSessions()
+    sessions.restore_results = [sessions.client]
+    paths = ServerPaths(tmp_path / "state", tmp_path / "runtime")
+    service = HaloService(
+        paths,
+        session_manager=sessions,
+        listener_factory=StartupFailingListener,
+        media_session_factory=FakeMediaSession,
+        restore_retry_initial=0.01,
+        restore_retry_max=0.02,
+    )
+
+    await service.start()
+    try:
+        for _ in range(30):
+            if len(listeners) >= 2 and service._listener is listeners[-1]:
+                break
+            await asyncio.sleep(0.01)
+
+        assert sessions.restore_calls == 1
+        assert len(listeners) == 2
+        assert listeners[0].stopped is True
+        assert service._listener is listeners[-1]
+        assert service.status()["account"]["integrations_ready"] is True
+        assert service.status()["account"]["last_error"] is None
+    finally:
+        await service.stop()
 
 
 @pytest.mark.asyncio
