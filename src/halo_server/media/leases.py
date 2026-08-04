@@ -39,6 +39,11 @@ DEFAULT_POLICIES: Mapping[LeasePurpose, LeasePolicy] = {
 }
 
 
+def maximum_session_seconds() -> dict[str, float]:
+    """Return the public absolute lifetime limit for every media purpose."""
+    return {purpose.value: policy.maximum_lifetime for purpose, policy in DEFAULT_POLICIES.items()}
+
+
 @dataclass(frozen=True)
 class MediaLease:
     id: str

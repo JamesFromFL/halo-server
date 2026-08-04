@@ -29,7 +29,7 @@ from halo_server.incidents.coordinator import (
     IncidentActionType,
     IncidentCoordinator,
 )
-from halo_server.media.leases import LeasePurpose
+from halo_server.media.leases import LeasePurpose, maximum_session_seconds
 from halo_server.media.ring_media import validate_media_compatibility
 from halo_server.media.ring_speaker import supports_ring_camera_intercom
 from halo_server.media.rtsp import BufferedMediaConsumer, RtspMediaGateway
@@ -449,6 +449,7 @@ class HaloService:
             "incidents": incidents,
             "media": {
                 "control": "lease_controlled",
+                "maximum_session_seconds": maximum_session_seconds(),
                 "gateway": {
                     "enabled": self._rtsp_gateway is not None,
                     "host": (self._rtsp_gateway.host if self._rtsp_gateway is not None else None),

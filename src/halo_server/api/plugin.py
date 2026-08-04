@@ -21,6 +21,7 @@ from halo_server.api.tokens import (
     PluginTokenStore,
     PluginTokenStoreError,
 )
+from halo_server.media.leases import maximum_session_seconds
 
 _log = logging.getLogger(__name__)
 
@@ -246,6 +247,7 @@ class PluginApiServer:
                     "transport": "rtsp" if self._media_provider is not None else None,
                     "on_demand": self._media_provider is not None,
                     "two_way_audio": self._intercom_provider is not None,
+                    "maximum_session_seconds": maximum_session_seconds(),
                     "reason": (
                         None if self._media_provider is not None else "transport_not_implemented"
                     ),

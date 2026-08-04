@@ -303,6 +303,13 @@ async def test_plugin_devices_publish_authenticated_on_demand_media_descriptor(t
         "transport": "rtsp",
         "on_demand": True,
         "two_way_audio": False,
+        "maximum_session_seconds": {
+            "event": 600.0,
+            "homekit_live": 600.0,
+            "scrypted_live": 600.0,
+            "snapshot": 30.0,
+            "intercom": 300.0,
+        },
         "reason": None,
     }
 

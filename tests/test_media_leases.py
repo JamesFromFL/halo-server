@@ -5,6 +5,7 @@ from halo_server.media.leases import (
     LeasePolicy,
     LeasePurpose,
     MediaLeaseCoordinator,
+    maximum_session_seconds,
 )
 
 
@@ -18,6 +19,16 @@ class FakeClock:
 
 def action_types(actions):
     return [action.type for action in actions]
+
+
+def test_default_absolute_session_limits_are_public_and_stable():
+    assert maximum_session_seconds() == {
+        "event": 600.0,
+        "homekit_live": 600.0,
+        "scrypted_live": 600.0,
+        "snapshot": 30.0,
+        "intercom": 300.0,
+    }
 
 
 def test_first_lease_starts_one_upstream_and_additional_leases_share_it():

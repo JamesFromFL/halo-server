@@ -89,7 +89,10 @@ tokens or raw Ring SDK objects.
 Media sessions are event-driven or explicitly leased. Halo Server does not expose permanent
 Ring camera mounts or advertise continuous Ring-to-DVR recording. One upstream Ring session
 is shared by bounded downstream consumers for each camera, and every lease has both an idle
-expiry and an absolute lifetime.
+expiry and an absolute lifetime. The current absolute limits are 10 minutes for event and live
+video, 5 minutes for intercom, and 30 seconds for snapshots. A client must reopen an expired
+session; Halo does not silently roll a continuously held connection into permanent recording.
+The authenticated capabilities API and daemon status publish these limits.
 
 The RTSP URLs are private transport details returned only to an authenticated plugin. Their
 credentials are random, rotate when plugin access is revoked, and are never displayed in
