@@ -33,6 +33,7 @@ AUDIO_CLOCK_RATE = 48_000
 AUDIO_FRAME_DURATION_NS = Gst.SECOND * 20 // 1000
 BUFFER_READ_TIMEOUT = 1.0
 MEDIA_READY_TIMEOUT = 8.0
+MEDIA_READY_POLL_INTERVAL = 0.1
 LEASE_RENEW_INTERVAL = 15.0
 WORKER_STOP_TIMEOUT = 5.0
 REQUIRED_RTSP_ELEMENTS = (
@@ -326,43 +327,79 @@ class _BufferedCameraFactory(GstRtspServer.RTSPMediaFactory):
             ),
         )
         media.connect("unprepared", on_unprepared)
-        try:
-            consumer = self._open_consumer(self._camera_id)
-        except Exception:
-            _log.exception("Could not open RTSP media for camera %s", self._camera_id)
-            stop.set()
-            video_source.emit("end-of-stream")
-            audio_source.emit("end-of-stream")
-            return
-        ready_started = time.monotonic()
-        if not consumer.buffer.wait_until_ready(MEDIA_READY_TIMEOUT):
-            _log.warning(
-                "RTSP media for camera %s did not become decodable within %.1f seconds",
-                self._camera_id,
-                MEDIA_READY_TIMEOUT,
-            )
-            stop.set()
-            consumer.close()
-            video_source.emit("end-of-stream")
-            audio_source.emit("end-of-stream")
-            return
-        snapshot = consumer.buffer.snapshot()
-        _log.info(
-            "RTSP media for camera %s became decodable after %.3f seconds (%d packets, %d bytes)",
-            self._camera_id,
-            time.monotonic() - ready_started,
-            len(snapshot.packets),
-            snapshot.payload_bytes,
-        )
         worker = threading.Thread(
-            target=self._stream_buffer,
-            args=(video_source, audio_source, consumer, stop),
+            target=self._prepare_and_stream,
+            args=(video_source, audio_source, stop),
             name=f"halo-rtsp-{_mount_key(self._camera_id)}",
             daemon=True,
         )
         with self._worker_lock:
             self._workers[worker] = stop
         worker.start()
+
+    def _prepare_and_stream(
+        self,
+        video_source,
+        audio_source,
+        stop: threading.Event,
+    ) -> None:
+        consumer: BufferedMediaConsumer | None = None
+        try:
+            consumer = self._open_consumer(self._camera_id)
+        except Exception:
+            _log.exception("Could not open RTSP media for camera %s", self._camera_id)
+            stop.set()
+        try:
+            if consumer is None or stop.is_set():
+                return
+            ready_started = time.monotonic()
+            deadline = ready_started + MEDIA_READY_TIMEOUT
+            ready = False
+            while not stop.is_set():
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                if consumer.buffer.wait_until_ready(min(MEDIA_READY_POLL_INTERVAL, remaining)):
+                    ready = True
+                    break
+            if not ready:
+                if not stop.is_set():
+                    _log.warning(
+                        "RTSP media for camera %s did not become decodable within %.1f seconds",
+                        self._camera_id,
+                        MEDIA_READY_TIMEOUT,
+                    )
+                return
+            snapshot = consumer.buffer.snapshot()
+            _log.info(
+                "RTSP media for camera %s became decodable after %.3f seconds "
+                "(%d packets, %d bytes)",
+                self._camera_id,
+                time.monotonic() - ready_started,
+                len(snapshot.packets),
+                snapshot.payload_bytes,
+            )
+            self._stream_buffer(video_source, audio_source, consumer, stop)
+        except Exception:
+            _log.exception("RTSP media delivery failed for camera %s", self._camera_id)
+        finally:
+            stop.set()
+            try:
+                video_source.emit("end-of-stream")
+            except Exception:
+                _log.exception("Could not end RTSP video for camera %s", self._camera_id)
+            try:
+                audio_source.emit("end-of-stream")
+            except Exception:
+                _log.exception("Could not end RTSP audio for camera %s", self._camera_id)
+            try:
+                if consumer is not None:
+                    consumer.close()
+            except Exception:
+                _log.exception("Could not close RTSP consumer for camera %s", self._camera_id)
+            finally:
+                with self._worker_lock:
+                    self._workers.pop(threading.current_thread(), None)
 
     def _stream_buffer(
         self,
@@ -381,63 +418,45 @@ class _BufferedCameraFactory(GstRtspServer.RTSPMediaFactory):
         )
         after_sequence: int | None = None
         next_renewal = time.monotonic() + LEASE_RENEW_INTERVAL
-        try:
-            while not stop.is_set():
-                media_read = consumer.buffer.read(
-                    after_sequence=after_sequence,
-                    timeout=BUFFER_READ_TIMEOUT,
-                )
-                discontinuities = {
-                    MediaStreamKind.VIDEO: media_read.resynchronized,
-                    MediaStreamKind.AUDIO: media_read.resynchronized,
-                }
-                for packet in media_read.packets:
-                    source = (
-                        video_source if packet.stream is MediaStreamKind.VIDEO else audio_source
-                    )
-                    mapper = (
-                        video_timestamps
-                        if packet.stream is MediaStreamKind.VIDEO
-                        else audio_timestamps
-                    )
-                    duration = (
-                        VIDEO_FRAME_DURATION_NS
-                        if packet.stream is MediaStreamKind.VIDEO
-                        else AUDIO_FRAME_DURATION_NS
-                    )
-                    pts, timestamp_discontinuity = mapper.map(packet.rtp_timestamp)
-                    buffer = Gst.Buffer.new_wrapped(packet.payload)
-                    buffer.pts = pts
-                    buffer.dts = pts
-                    buffer.duration = duration
-                    if timestamp_discontinuity or discontinuities[packet.stream]:
-                        buffer.set_flags(Gst.BufferFlags.DISCONT)
-                        discontinuities[packet.stream] = False
-                    flow = source.emit("push-buffer", buffer)
-                    if not gst_push_succeeded(flow):
-                        if not stop.is_set():
-                            _log.warning(
-                                "RTSP appsrc rejected %s for camera %s with flow %s",
-                                packet.stream,
-                                self._camera_id,
-                                flow,
-                            )
-                        stop.set()
-                        break
-                    after_sequence = packet.sequence
-                if time.monotonic() >= next_renewal:
-                    if not consumer.renew():
-                        stop.set()
-                        break
-                    next_renewal = time.monotonic() + LEASE_RENEW_INTERVAL
-        except Exception:
-            _log.exception("RTSP media delivery failed for camera %s", self._camera_id)
-        finally:
-            video_source.emit("end-of-stream")
-            audio_source.emit("end-of-stream")
-            consumer.close()
-            with self._worker_lock:
-                self._workers.pop(threading.current_thread(), None)
+        while not stop.is_set():
+            media_read = consumer.buffer.read(
+                after_sequence=after_sequence,
+                timeout=BUFFER_READ_TIMEOUT,
+            )
+            discontinuities = {
+                MediaStreamKind.VIDEO: media_read.resynchronized,
+                MediaStreamKind.AUDIO: media_read.resynchronized,
+            }
+            for packet in media_read.packets:
+                is_video = packet.stream is MediaStreamKind.VIDEO
+                source = video_source if is_video else audio_source
+                mapper = video_timestamps if is_video else audio_timestamps
+                duration = VIDEO_FRAME_DURATION_NS if is_video else AUDIO_FRAME_DURATION_NS
+                pts, timestamp_discontinuity = mapper.map(packet.rtp_timestamp)
+                buffer = Gst.Buffer.new_wrapped(packet.payload)
+                buffer.pts = pts
+                buffer.dts = pts
+                buffer.duration = duration
+                if timestamp_discontinuity or discontinuities[packet.stream]:
+                    buffer.set_flags(Gst.BufferFlags.DISCONT)
+                    discontinuities[packet.stream] = False
+                flow = source.emit("push-buffer", buffer)
+                if not gst_push_succeeded(flow):
+                    if not stop.is_set():
+                        _log.warning(
+                            "RTSP appsrc rejected %s for camera %s with flow %s",
+                            packet.stream,
+                            self._camera_id,
+                            flow,
+                        )
+                    stop.set()
+                    break
+                after_sequence = packet.sequence
+            if time.monotonic() >= next_renewal:
+                if not consumer.renew():
+                    stop.set()
+                    break
+                next_renewal = time.monotonic() + LEASE_RENEW_INTERVAL
 
     def stop_workers(self) -> None:
         with self._worker_lock:
@@ -530,5 +549,6 @@ def _validate_duration(value: float) -> None:
 
 
 _validate_duration(BUFFER_READ_TIMEOUT)
+_validate_duration(MEDIA_READY_POLL_INTERVAL)
 _validate_duration(LEASE_RENEW_INTERVAL)
 _validate_duration(WORKER_STOP_TIMEOUT)

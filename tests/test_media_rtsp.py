@@ -2,7 +2,7 @@ import shutil
 import subprocess
 import time
 from fractions import Fraction
-from threading import Event
+from threading import Event, Thread
 from urllib.parse import urlsplit
 
 import av
@@ -67,6 +67,72 @@ def test_rtsp_mount_does_not_expose_ring_camera_id():
     assert path.startswith("/halo/")
     assert "sensitive" not in path
     assert len(path) == len("/halo/") + 24
+
+
+def test_media_configure_does_not_wait_for_consumer_acquisition():
+    rtsp.Gst.init(None)
+    open_started = Event()
+    allow_open = Event()
+    consumer_closed = Event()
+    callback_returned = Event()
+
+    class FakeSource:
+        def __init__(self):
+            self.signals = []
+
+        def emit(self, signal, *_args):
+            self.signals.append(signal)
+            return rtsp.Gst.FlowReturn.OK
+
+    video_source = FakeSource()
+    audio_source = FakeSource()
+
+    class FakeElement:
+        def get_by_name(self, name):
+            return video_source if name == "vsrc" else audio_source
+
+    class FakeMedia:
+        def __init__(self):
+            self.handlers = {}
+
+        def get_element(self):
+            return FakeElement()
+
+        def connect(self, signal, callback):
+            self.handlers[signal] = callback
+
+    media = FakeMedia()
+
+    def open_consumer(_camera_id):
+        open_started.set()
+        assert allow_open.wait(1)
+        return BufferedMediaConsumer(
+            buffer=object(),
+            renew_callback=lambda: True,
+            close_callback=consumer_closed.set,
+        )
+
+    factory = rtsp._BufferedCameraFactory("42", open_consumer)
+
+    def configure():
+        factory._on_media_configure(None, media)
+        callback_returned.set()
+
+    context_thread = Thread(target=configure)
+    context_thread.start()
+    try:
+        assert open_started.wait(0.5)
+        assert callback_returned.wait(0.2)
+        media.handlers["unprepared"](media)
+    finally:
+        allow_open.set()
+        context_thread.join(timeout=1)
+        factory.stop_workers()
+
+    assert not context_thread.is_alive()
+    assert consumer_closed.wait(0.5)
+    assert video_source.signals == ["end-of-stream"]
+    assert audio_source.signals == ["end-of-stream"]
 
 
 def test_rtsp_gateway_starts_syncs_and_returns_ephemeral_digest_url():
