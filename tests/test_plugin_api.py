@@ -167,7 +167,7 @@ async def test_plugin_devices_preserve_inventory_while_ring_is_unavailable(tmp_p
 
 
 @pytest.mark.asyncio
-async def test_plugin_devices_publish_empty_inventory_after_explicit_logout(tmp_path):
+async def test_plugin_devices_preserve_inventory_after_explicit_logout(tmp_path):
     def signed_out_status():
         return {
             "service": "running",
@@ -188,8 +188,36 @@ async def test_plugin_devices_publish_empty_inventory_after_explicit_logout(tmp_
             response = await client.get(url, headers=_headers(issued.token))
             body = await response.json()
 
+    assert response.status == 503
+    assert body["error"]["code"] == "ring_authentication_required"
+
+
+@pytest.mark.asyncio
+async def test_plugin_devices_publish_authoritative_empty_authenticated_inventory(tmp_path):
+    def empty_account_status():
+        return {
+            "service": "running",
+            "account": {"authenticated": True, "restoring": False, "last_error": None},
+            "events": {"connection": "connected"},
+            "incidents": {},
+            "cameras": [],
+        }
+
+    async with _server(tmp_path, status_provider=empty_account_status) as (
+        server,
+        _tokens,
+        issued,
+        _events,
+    ):
+        url = f"http://127.0.0.1:{server.bound_port}/v1/devices"
+        async with aiohttp.ClientSession() as client:
+            response = await client.get(url, headers=_headers(issued.token))
+            body = await response.json()
+
     assert response.status == 200
     assert body["devices"] == []
+    assert body["states"] == {}
+    assert body["streams"] == {}
 
 
 @pytest.mark.asyncio

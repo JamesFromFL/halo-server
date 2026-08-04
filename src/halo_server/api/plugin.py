@@ -244,12 +244,16 @@ class PluginApiServer:
         account = status.get("account", {})
         if not isinstance(account, dict):
             account = {}
-        if not account.get("authenticated") and (
-            account.get("restoring") or account.get("last_error")
-        ):
+        if not account.get("authenticated"):
+            if account.get("restoring") or account.get("last_error"):
+                return _error_response(
+                    "ring_unavailable",
+                    "Ring device inventory is temporarily unavailable",
+                    status=503,
+                )
             return _error_response(
-                "ring_unavailable",
-                "Ring device inventory is temporarily unavailable",
+                "ring_authentication_required",
+                "Ring sign-in is required before device inventory is available",
                 status=503,
             )
         devices = status.get("cameras", [])
