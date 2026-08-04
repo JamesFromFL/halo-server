@@ -185,24 +185,44 @@ class CameraMediaSession:
     def push_intercom_audio(self, lease_id: str, payload: bytes) -> None:
         """Queue one normalized PCM frame for an active intercom lease."""
         with self._lock:
-            lease = next(
-                (
-                    candidate
-                    for candidate in self._leases.snapshot().leases
-                    if candidate.id == lease_id
-                ),
-                None,
-            )
+            lease = self._current_lease_locked(lease_id)
             if lease is None or lease.purpose is not LeasePurpose.INTERCOM:
                 raise RuntimeError("intercom lease is not active")
-            self._microphone_source.push(payload)
-            if self._microphone_source.snapshot().accepted_frames == 1:
-                _log.info(
-                    "Ring intercom first PCM frame accepted camera_id=%s generation=%d bytes=%d",
-                    self._camera_id,
-                    self._runner_generation,
-                    len(payload),
-                )
+            generation = self._microphone_source.snapshot().intercom_generation
+        self.push_intercom_generation(generation, payload)
+
+    def intercom_generation(self, lease_id: str) -> int | None:
+        """Return the PCM generation for one currently active intercom lease."""
+        with self._lock:
+            lease = self._current_lease_locked(lease_id)
+            if lease is None or lease.purpose is not LeasePurpose.INTERCOM:
+                return None
+            return self._microphone_source.snapshot().intercom_generation
+
+    def push_intercom_generation(self, generation: int, payload: bytes) -> None:
+        """Queue PCM through the short, generation-scoped microphone lock."""
+        if not self._microphone_source.push_intercom(generation, payload):
+            raise RuntimeError("intercom lease is not active")
+        if self._microphone_source.snapshot().accepted_frames == 1:
+            _log.info(
+                "Ring intercom first PCM frame accepted camera_id=%s generation=%d bytes=%d",
+                self._camera_id,
+                self._runner_generation,
+                len(payload),
+            )
+
+    def wait_intercom_ready(self, lease_id: str, timeout: float) -> bool:
+        """Wait until Ring acknowledges the speaker for one active talk lease."""
+        with self._lock:
+            lease = self._current_lease_locked(lease_id)
+            if lease is None or lease.purpose is not LeasePurpose.INTERCOM:
+                return False
+            generation = self._microphone_source.snapshot().intercom_generation
+        return self.wait_intercom_generation_ready(generation, timeout)
+
+    def wait_intercom_generation_ready(self, generation: int, timeout: float) -> bool:
+        """Wait for speaker readiness using an already validated generation."""
+        return self._microphone_source.wait_speaker_ready(generation, timeout)
 
     def snapshot(self) -> MediaSessionSnapshot:
         with self._lock:

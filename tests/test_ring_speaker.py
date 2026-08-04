@@ -48,6 +48,23 @@ def ready_stream():
     return stream, socket
 
 
+class CompatibleCamera:
+    def has_capability(self, capability):
+        return capability == "video"
+
+    async def generate_async_webrtc_stream(self):
+        return None
+
+    async def on_webrtc_candidate(self):
+        return None
+
+    async def close_webrtc_stream(self):
+        return None
+
+    def get_ice_servers(self):
+        return []
+
+
 @pytest.fixture(autouse=True)
 def validated_version(monkeypatch):
     monkeypatch.setattr(
@@ -66,6 +83,28 @@ async def test_speaker_control_latches_activation_for_stream_lifetime():
     assert not await ring_speaker.activate_ring_camera_speaker(device, "halo-session")
 
     assert [message["body"]["stealth_mode"] for message in socket.messages] == [False]
+
+
+def test_intercom_support_requires_video_and_complete_validated_webrtc_contract():
+    assert ring_speaker.supports_ring_camera_intercom(CompatibleCamera()) is True
+
+    camera = CompatibleCamera()
+    camera.close_webrtc_stream = None
+    assert ring_speaker.supports_ring_camera_intercom(camera) is False
+
+    camera = CompatibleCamera()
+    camera.has_capability = lambda _capability: False
+    assert ring_speaker.supports_ring_camera_intercom(camera) is False
+
+
+def test_intercom_support_rejects_unvalidated_dependency(monkeypatch):
+    monkeypatch.setattr(
+        ring_speaker.importlib_metadata,
+        "version",
+        lambda _name: "0.9.15",
+    )
+
+    assert ring_speaker.supports_ring_camera_intercom(CompatibleCamera()) is False
 
 
 @pytest.mark.asyncio

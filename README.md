@@ -19,6 +19,7 @@ Implemented:
 - authenticated, versioned plugin HTTP and WebSocket APIs with event replay
 - revocable Scrypted pairing tokens
 - digest-authenticated, on-demand loopback RTSP delivery
+- per-camera validated two-way audio with bounded speaker-readiness acknowledgement
 - local daemon status, login, logout, and shutdown administration
 - Textual status, login, two-factor, logout, pairing, camera, and recent-event views
 - the proven Halo Ring WebRTC video and audio compatibility layer
@@ -26,7 +27,7 @@ Implemented:
 Not implemented yet:
 
 - camera controls and server settings in the TUI
-- snapshots and two-way audio
+- snapshots
 - TLS-protected remote plugin and media access
 - operating-system service packaging
 

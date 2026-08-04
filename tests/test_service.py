@@ -109,10 +109,16 @@ class FakeMediaSession:
     def renew(self, lease_id):
         return SimpleNamespace(id=lease_id) if lease_id in self.leases else None
 
-    def push_intercom_audio(self, lease_id, payload):
-        if lease_id not in self.leases:
+    def intercom_generation(self, lease_id):
+        return lease_id if lease_id in self.leases else None
+
+    def push_intercom_generation(self, generation, payload):
+        if generation not in self.leases:
             raise RuntimeError("intercom lease is not active")
-        self.intercom_frames.append((lease_id, payload))
+        self.intercom_frames.append((generation, payload))
+
+    def wait_intercom_generation_ready(self, generation, _timeout):
+        return generation in self.leases
 
     def expire(self):
         self.expire_calls += 1
@@ -991,7 +997,27 @@ async def test_rtsp_consumer_can_renew_while_session_waits_to_recover(tmp_path):
 @pytest.mark.asyncio
 async def test_plugin_intercom_is_single_owner_and_releases_bounded_lease(tmp_path):
     sessions = FakeSessions()
-    camera = SimpleNamespace(id=42, name="Front Door")
+
+    class CompatibleCamera:
+        id = 42
+        name = "Front Door"
+
+        def has_capability(self, capability):
+            return capability == "video"
+
+        async def generate_async_webrtc_stream(self):
+            return None
+
+        async def on_webrtc_candidate(self):
+            return None
+
+        async def close_webrtc_stream(self):
+            return None
+
+        def get_ice_servers(self):
+            return []
+
+    camera = CompatibleCamera()
     sessions.client.all_devices = [camera]
     sessions.active_client = sessions.client
     service = _service(tmp_path, sessions)
@@ -1007,6 +1033,7 @@ async def test_plugin_intercom_is_single_owner_and_releases_bounded_lease(tmp_pa
     assert raised.value.code == "intercom_busy"
     assert str(media.acquired[0][0]) == "intercom"
     assert media.intercom_frames == [(media.acquired[0][1], payload)]
+    assert await stream.wait_ready(1) is True
     assert await stream.renew() is True
 
     await stream.close()
@@ -1014,6 +1041,22 @@ async def test_plugin_intercom_is_single_owner_and_releases_bounded_lease(tmp_pa
     assert media.released == [media.acquired[0][1]]
     replacement = await service._open_plugin_intercom("42")
     await replacement.close()
+
+
+@pytest.mark.asyncio
+async def test_plugin_intercom_rejects_camera_without_validated_support(tmp_path):
+    sessions = FakeSessions()
+    camera = SimpleNamespace(id=42, name="Front Door", has_capability=lambda _name: False)
+    sessions.client.all_devices = [camera]
+    sessions.active_client = sessions.client
+    service = _service(tmp_path, sessions)
+    service._media_client = sessions.client
+
+    with pytest.raises(PluginIntercomOpenError) as raised:
+        await service._open_plugin_intercom("42")
+
+    assert raised.value.code == "intercom_unsupported"
+    assert "42" not in service._media_sessions
 
 
 @pytest.mark.asyncio

@@ -24,7 +24,7 @@ from halo_server.api.tokens import (
 
 _log = logging.getLogger(__name__)
 
-PLUGIN_PROTOCOL_VERSION = 1
+PLUGIN_PROTOCOL_VERSION = 2
 PROTOCOL_HEADER = "Halo-Protocol-Version"
 MAX_REQUEST_BYTES = 16 * 1024
 DEFAULT_RATE_LIMIT = 120
@@ -34,12 +34,15 @@ MAX_RATE_LIMIT_CLIENTS = 256
 INTERCOM_FRAME_BYTES = 1920
 INTERCOM_IDLE_TIMEOUT = 15.0
 INTERCOM_RENEW_INTERVAL = 10.0
+INTERCOM_ACTIVATION_TIMEOUT = 15.0
 PLUGIN_IDENTITY_KEY = web.RequestKey("plugin_identity", PluginIdentity)
 PLUGIN_TOKEN_KEY = web.RequestKey("plugin_token", str)
 
 
 class PluginIntercomStream(Protocol):
     async def write(self, payload: bytes) -> None: ...
+
+    async def wait_ready(self, timeout: float) -> bool: ...
 
     async def renew(self) -> bool: ...
 
@@ -283,7 +286,7 @@ class PluginApiServer:
                 descriptor = self._media_provider(device["id"])
                 if descriptor is not None:
                     published = dict(descriptor)
-                    if self._intercom_provider is not None:
+                    if self._intercom_provider is not None and device.get("has_intercom") is True:
                         published["intercom"] = {
                             "codec": "pcm_s16le",
                             "sample_rate": 48_000,
@@ -421,6 +424,30 @@ class PluginApiServer:
                 "Camera identifier is invalid",
                 status=400,
             )
+        status = self._status_provider()
+        cameras = status.get("cameras", [])
+        if not isinstance(cameras, list):
+            cameras = []
+        camera = next(
+            (
+                camera
+                for camera in cameras
+                if isinstance(camera, dict) and camera.get("id") == camera_id
+            ),
+            None,
+        )
+        if camera is None:
+            return _error_response(
+                "camera_unavailable",
+                "Ring camera is unavailable",
+                status=404,
+            )
+        if camera.get("has_intercom") is not True:
+            return _error_response(
+                "intercom_unsupported",
+                "This Ring camera does not support Halo intercom",
+                status=404,
+            )
         _log.info("Halo intercom WebSocket requested camera_id=%s", camera_id)
         try:
             stream = await provider(camera_id)
@@ -440,12 +467,20 @@ class PluginApiServer:
         try:
             await socket.prepare(request)
             prepared = True
+            await socket.send_json(
+                {
+                    "type": "ready",
+                    "protocol_version": PLUGIN_PROTOCOL_VERSION,
+                }
+            )
             _log.info("Halo intercom WebSocket accepted camera_id=%s", camera_id)
             token = request[PLUGIN_TOKEN_KEY]
             next_renewal = time.monotonic() + INTERCOM_RENEW_INTERVAL
+            audio_deadline = asyncio.get_running_loop().time() + INTERCOM_IDLE_TIMEOUT
             while not socket.closed:
                 try:
-                    message = await socket.receive(timeout=INTERCOM_IDLE_TIMEOUT)
+                    async with asyncio.timeout_at(audio_deadline):
+                        message = await socket.receive()
                 except TimeoutError:
                     close_reason = "idle_timeout"
                     await socket.close(code=1008, message=b"intercom audio timed out")
@@ -467,6 +502,7 @@ class PluginApiServer:
                     await socket.close(code=1007, message=b"invalid PCM frame size")
                     break
                 await stream.write(payload)
+                audio_deadline = asyncio.get_running_loop().time() + INTERCOM_IDLE_TIMEOUT
                 frame_count += 1
                 if frame_count == 1:
                     _log.info(
@@ -474,6 +510,16 @@ class PluginApiServer:
                         camera_id,
                         len(payload),
                     )
+                    if not await stream.wait_ready(INTERCOM_ACTIVATION_TIMEOUT):
+                        close_reason = "speaker_activation_failed"
+                        await socket.close(
+                            code=1011,
+                            message=b"camera speaker activation failed",
+                        )
+                        break
+                    await socket.send_json({"type": "active"})
+                    audio_deadline = asyncio.get_running_loop().time() + INTERCOM_IDLE_TIMEOUT
+                    _log.info("Halo intercom active camera_id=%s", camera_id)
 
                 now = time.monotonic()
                 if now < next_renewal:

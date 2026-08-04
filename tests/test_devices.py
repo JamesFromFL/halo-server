@@ -12,7 +12,19 @@ class FakeCamera:
     motion_detection = True
 
     def has_capability(self, capability):
-        return capability == "siren"
+        return capability in {"siren", "video"}
+
+    async def generate_async_webrtc_stream(self):
+        return None
+
+    async def on_webrtc_candidate(self):
+        return None
+
+    async def close_webrtc_stream(self):
+        return None
+
+    def get_ice_servers(self):
+        return []
 
 
 def test_device_summary_is_an_allowlisted_camera_contract():
@@ -29,6 +41,7 @@ def test_device_summary_is_an_allowlisted_camera_contract():
         "motion_detection": True,
         "has_light": False,
         "has_siren": True,
+        "has_intercom": True,
     }
 
 
@@ -64,6 +77,7 @@ def test_device_summary_contains_attribute_failures():
     assert summary.motion_detection is None
     assert summary.has_light is False
     assert summary.has_siren is False
+    assert summary.has_intercom is False
 
 
 def test_device_summary_uses_quiet_fallback_for_sdk_unknown_model():

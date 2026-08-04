@@ -62,7 +62,7 @@ class FakeMicrophoneTrack:
         self.stopped = False
         self.instances.append(self)
 
-    async def stop_capture(self):
+    def stop(self):
         self.stopped = True
 
 
@@ -97,24 +97,6 @@ class FakeDevice:
         pass
 
 
-def test_microphone_pull_uses_native_gstreamer_timeout():
-    class MissingSampleSink:
-        def __init__(self):
-            self.calls = []
-
-        def emit(self, *args):
-            self.calls.append(args)
-            return None
-
-    track = ring_media.MicrophoneTrack()
-    sink = MissingSampleSink()
-
-    assert track._pull_sample_blocking(sink) is None
-    assert sink.calls == [
-        ("try-pull-sample", ring_media.MIC_PULL_TIMEOUT_NS),
-    ]
-
-
 def test_microphone_pcm_buffer_is_fixed_size_and_drops_oldest_frame():
     source = ring_media.MicrophonePcmBuffer(max_frames=2)
     first = b"\x01" * ring_media.MIC_FRAME_BYTES
@@ -146,7 +128,8 @@ def test_microphone_pcm_buffer_gates_intercom_until_speaker_is_ready():
     generation = source.begin_intercom()
     payload = b"\x01\x00" * ring_media.MIC_SAMPLES
 
-    source.push(payload)
+    assert not source.push_intercom(generation + 1, payload)
+    assert source.push_intercom(generation, payload)
 
     assert source.pull() is None
     assert not source.set_speaker_ready(generation + 1, True)
@@ -177,6 +160,26 @@ def test_microphone_pcm_buffer_rearms_speaker_gate_when_transport_clears():
     assert source.pull() is None
     assert source.set_speaker_ready(generation, True)
     assert source.pull() == payload
+
+
+def test_microphone_pcm_buffer_reports_speaker_readiness_and_terminal_failure():
+    source = ring_media.MicrophonePcmBuffer()
+    generation = source.begin_intercom()
+
+    assert source.set_speaker_ready(generation, True)
+    assert source.wait_speaker_ready(generation, 0.1) is True
+
+    source.clear()
+    assert source.set_speaker_failure(generation, "activation_failed")
+    assert source.wait_speaker_ready(generation, 0.1) is False
+    assert source.snapshot().speaker_failure == "activation_failed"
+
+    source.end_intercom()
+    assert source.wait_speaker_ready(generation, 0.1) is False
+
+    for timeout in (0, -1, float("inf"), float("nan"), True):
+        with pytest.raises(ValueError, match="timeout"):
+            source.wait_speaker_ready(generation, timeout)
 
 
 def test_sdp_diagnostics_report_codecs_without_network_or_session_data():
@@ -317,6 +320,135 @@ async def test_intercom_speaker_controller_gates_pcm_and_latches_activation(
 
 
 @pytest.mark.asyncio
+async def test_intercom_speaker_controller_retries_transient_activation_failure(monkeypatch):
+    source = ring_media.MicrophonePcmBuffer()
+    stop = threading.Event()
+    terminal = asyncio.Event()
+    attempts = 0
+
+    async def activate_speaker(_device, _session_id):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise ring_media.RingSpeakerControlError("temporary signaling failure")
+        return True
+
+    class Sender:
+        async def getStats(self):
+            return {}
+
+    monkeypatch.setattr(ring_media, "activate_ring_camera_speaker", activate_speaker)
+    task = asyncio.create_task(
+        ring_media.manage_intercom_speaker(
+            SimpleNamespace(),
+            "halo-session",
+            "camera",
+            "session",
+            source,
+            Sender(),
+            SimpleNamespace(currentDirection="sendrecv"),
+            SimpleNamespace(connectionState="connected"),
+            stop,
+            terminal,
+            activation_timeout=0.25,
+            retry_interval=0.01,
+            peer_ready_timeout=0.01,
+        )
+    )
+    generation = source.begin_intercom()
+    source.push(b"\x01\x00" * ring_media.MIC_SAMPLES)
+
+    assert await asyncio.to_thread(source.wait_speaker_ready, generation, 0.5)
+
+    stop.set()
+    await asyncio.wait_for(task, timeout=0.5)
+    assert attempts == 2
+
+
+@pytest.mark.asyncio
+async def test_intercom_sender_statistics_failure_does_not_block_activation(monkeypatch):
+    source = ring_media.MicrophonePcmBuffer()
+    stop = threading.Event()
+    terminal = asyncio.Event()
+
+    async def activate_speaker(_device, _session_id):
+        return True
+
+    class Sender:
+        async def getStats(self):
+            raise RuntimeError("statistics unavailable")
+
+    monkeypatch.setattr(ring_media, "activate_ring_camera_speaker", activate_speaker)
+    task = asyncio.create_task(
+        ring_media.manage_intercom_speaker(
+            SimpleNamespace(),
+            "halo-session",
+            "camera",
+            "session",
+            source,
+            Sender(),
+            SimpleNamespace(currentDirection="sendrecv"),
+            SimpleNamespace(connectionState="connected"),
+            stop,
+            terminal,
+            activation_timeout=0.1,
+            retry_interval=0.01,
+            peer_ready_timeout=0.01,
+        )
+    )
+    generation = source.begin_intercom()
+    source.push(b"\x01\x00" * ring_media.MIC_SAMPLES)
+
+    assert await asyncio.to_thread(source.wait_speaker_ready, generation, 0.5)
+
+    source.end_intercom()
+    await asyncio.sleep(0.03)
+    stop.set()
+    await asyncio.wait_for(task, timeout=0.5)
+
+
+@pytest.mark.asyncio
+async def test_intercom_speaker_controller_publishes_bounded_activation_failure(monkeypatch):
+    source = ring_media.MicrophonePcmBuffer()
+    stop = threading.Event()
+    terminal = asyncio.Event()
+
+    async def fail_activation(_device, _session_id):
+        raise ring_media.RingSpeakerControlError("camera rejected speaker command")
+
+    class Sender:
+        async def getStats(self):
+            return {}
+
+    monkeypatch.setattr(ring_media, "activate_ring_camera_speaker", fail_activation)
+    task = asyncio.create_task(
+        ring_media.manage_intercom_speaker(
+            SimpleNamespace(),
+            "halo-session",
+            "camera",
+            "session",
+            source,
+            Sender(),
+            SimpleNamespace(currentDirection="sendrecv"),
+            SimpleNamespace(connectionState="connected"),
+            stop,
+            terminal,
+            activation_timeout=0.05,
+            retry_interval=0.005,
+            peer_ready_timeout=0.005,
+        )
+    )
+    generation = source.begin_intercom()
+    source.push(b"\x01\x00" * ring_media.MIC_SAMPLES)
+
+    assert not await asyncio.to_thread(source.wait_speaker_ready, generation, 0.5)
+    assert source.snapshot().speaker_failure == "camera_rejected_speaker_command"
+
+    stop.set()
+    await asyncio.wait_for(task, timeout=0.5)
+
+
+@pytest.mark.asyncio
 async def test_microphone_track_sends_queued_pcm_before_silence():
     source = ring_media.MicrophonePcmBuffer()
     payload = b"\x04\x00" * ring_media.MIC_SAMPLES
@@ -381,27 +513,17 @@ def test_ring_doorbell_close_patch_rejects_changed_contract(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_microphone_capture_uses_one_buffer_leaky_queue(monkeypatch):
-    descriptions = []
-
-    class FakePipeline:
-        def get_by_name(self, _name):
-            return object()
-
-        def set_state(self, _state):
-            return None
-
-    def parse_launch(description):
-        descriptions.append(description)
-        return FakePipeline()
-
-    monkeypatch.setattr(ring_media.Gst, "parse_launch", parse_launch)
+async def test_microphone_track_never_opens_a_server_local_capture_device(monkeypatch):
+    monkeypatch.setattr(
+        ring_media.Gst,
+        "parse_launch",
+        lambda _description: (_ for _ in ()).throw(AssertionError("local capture opened")),
+    )
     track = ring_media.MicrophoneTrack()
 
-    await track.start_capture()
-    await track.stop_capture()
+    frame = await track.recv()
 
-    assert "max-buffers=1 drop=true" in descriptions[0]
+    assert bytes(frame.planes[0]) == bytes(frame.planes[0].buffer_size)
 
 
 @pytest.mark.asyncio

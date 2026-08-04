@@ -524,13 +524,19 @@ def test_intercom_audio_requires_matching_active_lease_and_reaches_receiver_sour
     session.push_intercom_audio(lease.id, payload)
 
     generation = source.snapshot().intercom_generation
+    assert session.intercom_generation(lease.id) == generation
     assert source.pull() is None
     assert source.set_speaker_ready(generation, True)
+    assert session.wait_intercom_ready(lease.id, 0.1) is True
     assert source.pull() == payload
     session.release(lease.id)
     assert "accepted=1 consumed=1 dropped=0 queued=0" in caplog.text
     with pytest.raises(RuntimeError, match="not active"):
         session.push_intercom_audio(lease.id, payload)
+    with pytest.raises(RuntimeError, match="not active"):
+        session.push_intercom_generation(generation, payload)
+    assert session.intercom_generation(lease.id) is None
+    assert session.wait_intercom_ready(lease.id, 0.1) is False
 
 
 def test_releasing_intercom_clears_queued_audio_while_live_stream_continues():

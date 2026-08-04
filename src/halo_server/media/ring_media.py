@@ -16,6 +16,7 @@ import contextlib
 import fractions
 import functools
 import logging
+import math
 import queue
 import threading
 import time
@@ -56,6 +57,9 @@ STARTUP_KEYFRAME_INTERVAL_SECONDS = 0.75
 STARTUP_KEYFRAME_DEADLINE_SECONDS = 5.0
 INTERCOM_SPEAKER_POLL_SECONDS = 0.02
 INTERCOM_PEER_READY_TIMEOUT = 5.0
+INTERCOM_SPEAKER_ACTIVATION_TIMEOUT = 12.0
+INTERCOM_SPEAKER_RETRY_SECONDS = 0.25
+INTERCOM_STATISTICS_TIMEOUT = 1.0
 _DIAGNOSTIC_VALUE_LIMIT = 128
 
 
@@ -74,6 +78,7 @@ class MicrophonePcmSnapshot:
     intercom_active: bool = False
     intercom_generation: int = 0
     speaker_ready: bool = False
+    speaker_failure: str | None = None
 
 
 @dataclass(frozen=True)
@@ -429,7 +434,6 @@ MIC_SAMPLE_RATE = 48000
 MIC_SAMPLES = 960  # 20 ms at 48 kHz — matches aiortc's AUDIO_PTIME
 MIC_FRAME_BYTES = MIC_SAMPLES * 2
 MIC_QUEUE_FRAMES = 10
-MIC_PULL_TIMEOUT_NS = 25 * Gst.MSECOND
 
 
 def gst_push_succeeded(result) -> bool:
@@ -506,16 +510,18 @@ class MicrophonePcmBuffer:
             raise ValueError("microphone queue size must be a positive integer")
         self._frames: deque[bytes] = deque(maxlen=max_frames)
         self._lock = threading.Lock()
+        self._condition = threading.Condition(self._lock)
         self._accepted_frames = 0
         self._consumed_frames = 0
         self._dropped_frames = 0
         self._intercom_active = False
         self._intercom_generation = 0
         self._speaker_ready = False
+        self._speaker_failure: str | None = None
 
     def begin_intercom(self) -> int:
         """Start a new gated intercom generation and clear stale PCM."""
-        with self._lock:
+        with self._condition:
             self._frames.clear()
             self._accepted_frames = 0
             self._consumed_frames = 0
@@ -523,35 +529,85 @@ class MicrophonePcmBuffer:
             self._intercom_generation += 1
             self._intercom_active = True
             self._speaker_ready = False
+            self._speaker_failure = None
+            self._condition.notify_all()
             return self._intercom_generation
 
     def end_intercom(self) -> None:
         """Stop the active intercom generation and discard queued PCM."""
-        with self._lock:
+        with self._condition:
             self._intercom_active = False
             self._speaker_ready = False
+            self._speaker_failure = None
             self._frames.clear()
             self._accepted_frames = 0
             self._consumed_frames = 0
             self._dropped_frames = 0
+            self._condition.notify_all()
 
     def set_speaker_ready(self, generation: int, ready: bool) -> bool:
         """Gate PCM consumption until Ring speaker activation is sent."""
-        with self._lock:
+        with self._condition:
             if not self._intercom_active or generation != self._intercom_generation:
                 return False
             self._speaker_ready = ready
+            if ready:
+                self._speaker_failure = None
+            self._condition.notify_all()
             return True
 
+    def set_speaker_failure(self, generation: int, failure: str) -> bool:
+        """Publish one stable activation failure to readiness waiters."""
+        if not isinstance(failure, str) or not failure:
+            raise ValueError("speaker failure must be a non-empty string")
+        with self._condition:
+            if not self._intercom_active or generation != self._intercom_generation:
+                return False
+            self._speaker_ready = False
+            self._speaker_failure = failure
+            self._condition.notify_all()
+            return True
+
+    def wait_speaker_ready(self, generation: int, timeout: float) -> bool:
+        """Wait for speaker activation without exposing microphone content."""
+        if (
+            isinstance(timeout, bool)
+            or not isinstance(timeout, int | float)
+            or not math.isfinite(timeout)
+            or timeout <= 0
+        ):
+            raise ValueError("speaker readiness timeout must be positive")
+        deadline = time.monotonic() + float(timeout)
+        with self._condition:
+            while (
+                self._intercom_active
+                and generation == self._intercom_generation
+                and not self._speaker_ready
+                and self._speaker_failure is None
+            ):
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return False
+                self._condition.wait(remaining)
+            return bool(
+                self._intercom_active
+                and generation == self._intercom_generation
+                and self._speaker_ready
+            )
+
     def push(self, payload: bytes) -> None:
-        frame = bytes(payload)
-        if len(frame) != MIC_FRAME_BYTES:
-            raise ValueError(f"microphone frame must contain exactly {MIC_FRAME_BYTES} bytes")
+        frame = _microphone_frame(payload)
         with self._lock:
-            if len(self._frames) == self._frames.maxlen:
-                self._dropped_frames += 1
-            self._frames.append(frame)
-            self._accepted_frames += 1
+            self._append_locked(frame)
+
+    def push_intercom(self, generation: int, payload: bytes) -> bool:
+        """Push PCM only while the matching intercom generation is active."""
+        frame = _microphone_frame(payload)
+        with self._lock:
+            if not self._intercom_active or generation != self._intercom_generation:
+                return False
+            self._append_locked(frame)
+            return True
 
     def pull(self) -> bytes | None:
         with self._lock:
@@ -564,9 +620,10 @@ class MicrophonePcmBuffer:
 
     def clear(self, *, reset_statistics: bool = False) -> None:
         """Discard queued PCM and require speaker activation for the next transport."""
-        with self._lock:
+        with self._condition:
             self._frames.clear()
             self._speaker_ready = False
+            self._speaker_failure = None
             if reset_statistics:
                 self._accepted_frames = 0
                 self._consumed_frames = 0
@@ -583,68 +640,33 @@ class MicrophonePcmBuffer:
                 intercom_active=self._intercom_active,
                 intercom_generation=self._intercom_generation,
                 speaker_ready=self._speaker_ready,
+                speaker_failure=self._speaker_failure,
             )
+
+    def _append_locked(self, frame: bytes) -> None:
+        if len(self._frames) == self._frames.maxlen:
+            self._dropped_frames += 1
+        self._frames.append(frame)
+        self._accepted_frames += 1
+
+
+def _microphone_frame(payload: bytes) -> bytes:
+    frame = bytes(payload)
+    if len(frame) != MIC_FRAME_BYTES:
+        raise ValueError(f"microphone frame must contain exactly {MIC_FRAME_BYTES} bytes")
+    return frame
 
 
 class MicrophoneTrack(AudioStreamTrack):
-    """AudioStreamTrack that captures from the system microphone via GStreamer pulsesrc.
-
-    Sends silence (zeroed frames at 48 kHz mono) by default so the Opus encoder
-    always receives valid, consistently-formatted frames.  Call start_capture() /
-    stop_capture() from the asyncio event loop to toggle live mic input.
-    """
+    """AudioStreamTrack fed only by authenticated plugin PCM, or silence."""
 
     kind = "audio"
 
     def __init__(self, pcm_buffer: MicrophonePcmBuffer | None = None) -> None:
         super().__init__()
         self._pcm_buffer = pcm_buffer or MicrophonePcmBuffer()
-        self._active = False
-        self._mic_pipeline: Gst.Pipeline | None = None
-        self._mic_appsink: Gst.Element | None = None
         self._start: float | None = None
         self._timestamp: int = 0
-
-    async def start_capture(self) -> None:
-        """Start the GStreamer pulsesrc pipeline and begin sending mic audio."""
-        if self._active:
-            return
-        pipeline = Gst.parse_launch(
-            "pulsesrc blocksize=1920 "
-            "! audioconvert "
-            "! audioresample "
-            "! capsfilter caps=audio/x-raw,format=S16LE,rate=48000,channels=1,layout=interleaved "
-            "! appsink name=sink emit-signals=false max-buffers=1 drop=true"
-        )
-        self._mic_pipeline = pipeline
-        self._mic_appsink = pipeline.get_by_name("sink")
-        pipeline.set_state(Gst.State.PLAYING)
-        self._active = True
-        _log.debug("Microphone capture started")
-
-    async def stop_capture(self) -> None:
-        """Stop mic capture and revert to silence."""
-        if not self._active:
-            return
-        self._active = False
-        if self._mic_pipeline is not None:
-            self._mic_pipeline.set_state(Gst.State.NULL)
-            self._mic_pipeline = None
-            self._mic_appsink = None
-        _log.debug("Microphone capture stopped")
-
-    def _pull_sample_blocking(self, appsink: Gst.Element) -> bytes | None:
-        """Pull one buffer with a native timeout, intended for run_in_executor."""
-        sample = appsink.emit("try-pull-sample", MIC_PULL_TIMEOUT_NS)
-        if sample is None:
-            return None
-        buf = sample.get_buffer()
-        ok, info = buf.map(Gst.MapFlags.READ)
-        if not ok:
-            return None
-        data = bytes(info.data)
-        buf.unmap(info)
-        return data
 
     async def recv(self) -> AudioFrame:  # type: ignore[override]
         if self.readyState != "live":
@@ -664,20 +686,6 @@ class MicrophoneTrack(AudioStreamTrack):
         frame.sample_rate = MIC_SAMPLE_RATE
         frame.pts = self._timestamp
         frame.time_base = fractions.Fraction(1, MIC_SAMPLE_RATE)
-
-        appsink = self._mic_appsink
-        if self._active and appsink is not None:
-            loop = asyncio.get_running_loop()
-            try:
-                raw = await loop.run_in_executor(None, self._pull_sample_blocking, appsink)
-                if raw:
-                    # Pad or trim to exactly the expected frame size.
-                    needed = MIC_SAMPLES * 2  # S16LE = 2 bytes per sample
-                    raw = raw[:needed].ljust(needed, b"\x00")
-                    frame.planes[0].update(raw)
-                    return frame
-            except Exception as exc:  # noqa: BLE001
-                _log.debug("Mic pull error: %s", exc)
 
         raw = self._pcm_buffer.pull()
         if raw is not None:
@@ -725,52 +733,89 @@ async def manage_intercom_speaker(
     peer_connection,
     stop: threading.Event,
     terminal: asyncio.Event,
+    *,
+    activation_timeout: float = INTERCOM_SPEAKER_ACTIVATION_TIMEOUT,
+    retry_interval: float = INTERCOM_SPEAKER_RETRY_SECONDS,
+    peer_ready_timeout: float = INTERCOM_PEER_READY_TIMEOUT,
 ) -> None:
     """Latch one Ring camera speaker on and gate each intercom generation."""
-    attempted_generation: int | None = None
+    pending_generation: int | None = None
     active_generation: int | None = None
     baseline: AudioSenderSnapshot | None = None
+    baseline_attempted = False
     speaker_latched = False
+    activation_deadline = 0.0
+    next_attempt = 0.0
+    last_failure = "activation_timeout"
     try:
         while not stop.is_set() and not terminal.is_set():
             snapshot = source.snapshot()
-            should_activate = (
+            if snapshot.intercom_active and snapshot.intercom_generation != pending_generation:
+                generation = snapshot.intercom_generation
+                pending_generation = generation
+                active_generation = None
+                baseline = None
+                baseline_attempted = False
+                speaker_latched = False
+                activation_deadline = 0.0
+                next_attempt = 0.0
+                last_failure = "activation_timeout"
+
+            should_activate = bool(
                 snapshot.intercom_active
                 and snapshot.accepted_frames > 0
-                and attempted_generation != snapshot.intercom_generation
+                and not snapshot.speaker_ready
+                and snapshot.speaker_failure is None
+                and pending_generation == snapshot.intercom_generation
             )
-            if should_activate:
+            now = asyncio.get_running_loop().time()
+            if should_activate and activation_deadline == 0:
+                activation_deadline = now + activation_timeout
+            if should_activate and now >= activation_deadline:
                 generation = snapshot.intercom_generation
-                attempted_generation = generation
+                if source.set_speaker_failure(generation, last_failure):
+                    _log.warning(
+                        "Ring intercom speaker activation failed camera_id=%s "
+                        "session=%s generation=%d reason=%s terminal=true",
+                        camera_id,
+                        session_reference,
+                        generation,
+                        last_failure,
+                    )
+            elif should_activate and now >= next_attempt:
+                generation = snapshot.intercom_generation
                 peer_ready = await _wait_for_peer_connection(
                     peer_connection,
                     stop,
                     terminal,
+                    timeout=min(
+                        peer_ready_timeout,
+                        max(INTERCOM_SPEAKER_POLL_SECONDS, activation_deadline - now),
+                    ),
                 )
                 if not peer_ready:
-                    _log.warning(
-                        "Ring intercom speaker activation failed camera_id=%s "
-                        "session=%s generation=%d reason=peer_not_connected",
-                        camera_id,
-                        session_reference,
-                        generation,
-                    )
+                    last_failure = "peer_not_connected"
                 else:
-                    baseline = await audio_sender_snapshot(sender)
-                    try:
-                        command_sent = await activate_ring_camera_speaker(
-                            device,
-                            halo_session_id,
-                        )
-                    except RingSpeakerControlError as exc:
-                        _log.warning(
-                            "Ring intercom speaker activation failed camera_id=%s "
-                            "session=%s generation=%d reason=%s",
+                    if not baseline_attempted:
+                        baseline_attempted = True
+                        baseline = await _safe_audio_sender_snapshot(
+                            sender,
                             camera_id,
                             session_reference,
-                            generation,
-                            _diagnostic_value(exc),
                         )
+                    try:
+                        remaining = activation_deadline - asyncio.get_running_loop().time()
+                        if remaining <= 0:
+                            raise TimeoutError
+                        async with asyncio.timeout(remaining):
+                            command_sent = await activate_ring_camera_speaker(
+                                device,
+                                halo_session_id,
+                            )
+                    except TimeoutError:
+                        last_failure = "activation_timeout"
+                    except RingSpeakerControlError as exc:
+                        last_failure = _diagnostic_value(exc)
                     else:
                         speaker_latched = True
                         current = source.snapshot()
@@ -789,6 +834,7 @@ async def manage_intercom_speaker(
                                 command_sent,
                                 _safe_direction(getattr(transceiver, "currentDirection", None)),
                             )
+                next_attempt = asyncio.get_running_loop().time() + retry_interval
 
             snapshot = source.snapshot()
             if active_generation is not None and (
@@ -804,6 +850,9 @@ async def manage_intercom_speaker(
                 )
                 active_generation = None
                 baseline = None
+                baseline_attempted = False
+            if not snapshot.intercom_active:
+                pending_generation = None
             await asyncio.sleep(INTERCOM_SPEAKER_POLL_SECONDS)
     finally:
         if active_generation is not None:
@@ -825,7 +874,17 @@ async def _log_intercom_rtp_summary(
     baseline: AudioSenderSnapshot | None,
     speaker_latched: bool,
 ) -> None:
-    final = await audio_sender_snapshot(sender)
+    final = await _safe_audio_sender_snapshot(sender, camera_id, session_reference)
+    if final is None:
+        _log.info(
+            "Ring intercom RTP summary camera_id=%s session=%s generation=%d "
+            "statistics=unavailable speaker_latched=%s",
+            camera_id,
+            session_reference,
+            generation,
+            speaker_latched,
+        )
+        return
     start = baseline or AudioSenderSnapshot()
     _log.info(
         "Ring intercom RTP summary camera_id=%s session=%s generation=%d "
@@ -849,9 +908,11 @@ async def _wait_for_peer_connection(
     peer_connection,
     stop: threading.Event,
     terminal: asyncio.Event,
+    *,
+    timeout: float = INTERCOM_PEER_READY_TIMEOUT,
 ) -> bool:
     try:
-        async with asyncio.timeout(INTERCOM_PEER_READY_TIMEOUT):
+        async with asyncio.timeout(timeout):
             while not stop.is_set() and not terminal.is_set():
                 state = getattr(peer_connection, "connectionState", None)
                 if state == "connected":
@@ -862,6 +923,24 @@ async def _wait_for_peer_connection(
     except TimeoutError:
         return False
     return False
+
+
+async def _safe_audio_sender_snapshot(
+    sender,
+    camera_id: str,
+    session_reference: str,
+) -> AudioSenderSnapshot | None:
+    try:
+        async with asyncio.timeout(INTERCOM_STATISTICS_TIMEOUT):
+            return await audio_sender_snapshot(sender)
+    except Exception as exc:
+        _log.debug(
+            "Ring intercom RTP statistics unavailable camera_id=%s session=%s reason=%s",
+            camera_id,
+            session_reference,
+            _diagnostic_value(exc),
+        )
+        return None
 
 
 def _optional_int(value, attribute: str) -> int | None:
@@ -1205,7 +1284,7 @@ class RingStreamReceiver:
             )
             if mic_track is not None:
                 with contextlib.suppress(Exception):
-                    await mic_track.stop_capture()
+                    mic_track.stop()
 
             pending = [task for task in tasks if not task.done()]
             for task in pending:

@@ -18,6 +18,7 @@ from halo_server import __version__
 from halo_server.api.admin import AdminProtocolError, AdminServer
 from halo_server.api.events import EventJournal
 from halo_server.api.plugin import (
+    PLUGIN_PROTOCOL_VERSION,
     PluginApiServer,
     PluginIntercomOpenError,
     PluginIntercomStream,
@@ -29,6 +30,7 @@ from halo_server.incidents.coordinator import (
     IncidentCoordinator,
 )
 from halo_server.media.leases import LeasePurpose
+from halo_server.media.ring_speaker import supports_ring_camera_intercom
 from halo_server.media.rtsp import BufferedMediaConsumer, RtspMediaGateway
 from halo_server.media.session import CameraMediaSession, MediaSessionState
 from halo_server.paths import ServerPaths
@@ -57,21 +59,28 @@ class _ServiceIntercomStream(PluginIntercomStream):
         service: HaloService,
         camera_id: str,
         lease_id: str,
+        intercom_generation: int,
         session: CameraMediaSession,
     ) -> None:
         self._service = service
         self._camera_id = camera_id
         self._lease_id = lease_id
+        self._intercom_generation = intercom_generation
         self._session = session
         self._closed = False
 
     async def write(self, payload: bytes) -> None:
         if self._closed:
             raise RuntimeError("intercom stream is closed")
-        await asyncio.to_thread(
-            self._session.push_intercom_audio,
-            self._lease_id,
-            payload,
+        self._session.push_intercom_generation(self._intercom_generation, payload)
+
+    async def wait_ready(self, timeout: float) -> bool:
+        if self._closed:
+            return False
+        return await asyncio.to_thread(
+            self._session.wait_intercom_generation_ready,
+            self._intercom_generation,
+            timeout,
         )
 
     async def renew(self) -> bool:
@@ -485,7 +494,7 @@ class HaloService:
             clients = []
             error = "Plugin credentials could not be read safely"
         return {
-            "protocol_version": 1,
+            "protocol_version": PLUGIN_PROTOCOL_VERSION,
             "event_epoch": self._plugin_events.epoch,
             "latest_event_sequence": self._plugin_events.latest_sequence,
             "clients": clients,
@@ -846,7 +855,18 @@ class HaloService:
         client = self._media_client
         if client is None or client is not self._sessions.active_client:
             return None
-        device = next(
+        device = self._find_media_device(camera_id)
+        if device is None:
+            return None
+        session = self._media_session_factory(client, device)
+        self._media_sessions[camera_id] = session
+        return session
+
+    def _find_media_device(self, camera_id: str):
+        client = self._media_client
+        if client is None or client is not self._sessions.active_client:
+            return None
+        return next(
             (
                 candidate
                 for candidate in client.all_devices
@@ -854,11 +874,6 @@ class HaloService:
             ),
             None,
         )
-        if device is None:
-            return None
-        session = self._media_session_factory(client, device)
-        self._media_sessions[camera_id] = session
-        return session
 
     def _reconcile_media_state(self) -> None:
         for camera_id, session in self._media_sessions.items():
@@ -992,6 +1007,19 @@ class HaloService:
                     "Another intercom session is already active for this camera",
                     status=409,
                 )
+            device = self._find_media_device(camera_id)
+            if device is None:
+                raise PluginIntercomOpenError(
+                    "camera_unavailable",
+                    "Ring camera is unavailable",
+                    status=404,
+                )
+            if not supports_ring_camera_intercom(device):
+                raise PluginIntercomOpenError(
+                    "intercom_unsupported",
+                    "This Ring camera does not support Halo intercom",
+                    status=404,
+                )
             session = self._media_sessions.get(camera_id)
             if session is None:
                 session = self._create_media_session(camera_id)
@@ -1002,13 +1030,21 @@ class HaloService:
                     status=404,
                 )
             lease_id = f"intercom-{uuid.uuid4().hex}"
+            lease_acquired = False
             try:
                 await asyncio.to_thread(
                     session.acquire,
                     LeasePurpose.INTERCOM,
                     lease_id=lease_id,
                 )
+                lease_acquired = True
+                intercom_generation = session.intercom_generation(lease_id)
+                if intercom_generation is None:
+                    raise RuntimeError("intercom lease did not become active")
             except Exception as exc:
+                if lease_acquired:
+                    with contextlib.suppress(Exception):
+                        await asyncio.to_thread(session.release, lease_id)
                 _log.exception("Could not start intercom for Ring camera %s", camera_id)
                 raise PluginIntercomOpenError(
                     "intercom_start_failed",
@@ -1017,7 +1053,13 @@ class HaloService:
                 ) from exc
             self._intercom_leases[camera_id] = lease_id
             _log.info("Halo intercom service lease active camera_id=%s", camera_id)
-            return _ServiceIntercomStream(self, camera_id, lease_id, session)
+            return _ServiceIntercomStream(
+                self,
+                camera_id,
+                lease_id,
+                intercom_generation,
+                session,
+            )
 
     async def _renew_plugin_intercom(
         self,

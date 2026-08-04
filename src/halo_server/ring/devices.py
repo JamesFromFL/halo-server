@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from typing import Any
 
+from halo_server.media.ring_speaker import supports_ring_camera_intercom
+
 CAMERA_FAMILIES = frozenset({"doorbots", "stickup_cams", "authorized_doorbots"})
 SDK_MODEL_FALLBACKS = {
     "stickup_cam_mini_v3": "Unknown Stickup Cam",
@@ -25,6 +27,7 @@ class DeviceSummary:
     motion_detection: bool | None
     has_light: bool
     has_siren: bool
+    has_intercom: bool
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -49,6 +52,7 @@ def summarize_device(device: Any) -> DeviceSummary | None:
         motion_detection=_bool_attr(device, "motion_detection"),
         has_light=_capability(device, "light"),
         has_siren=_capability(device, "siren"),
+        has_intercom=supports_ring_camera_intercom(device),
     )
 
 

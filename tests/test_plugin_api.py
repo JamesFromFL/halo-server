@@ -5,9 +5,11 @@ from contextlib import asynccontextmanager
 import aiohttp
 import pytest
 
+from halo_server.api import plugin as plugin_api
 from halo_server.api.events import EventJournal
 from halo_server.api.plugin import (
     INTERCOM_FRAME_BYTES,
+    PLUGIN_PROTOCOL_VERSION,
     PROTOCOL_HEADER,
     PluginApiServer,
 )
@@ -32,6 +34,7 @@ def _status():
                 "motion_detection": True,
                 "has_light": False,
                 "has_siren": False,
+                "has_intercom": True,
             }
         ],
     }
@@ -68,21 +71,27 @@ async def _server(
 
 def _headers(token):
     return {
-        PROTOCOL_HEADER: "1",
+        PROTOCOL_HEADER: str(PLUGIN_PROTOCOL_VERSION),
         "Authorization": f"Bearer {token}",
     }
 
 
 class FakeIntercomStream:
-    def __init__(self):
+    def __init__(self, *, ready=True):
         self.frames = []
         self.renewals = 0
+        self.ready = ready
+        self.ready_timeouts = []
         self.closed = asyncio.Event()
         self.received = asyncio.Event()
 
     async def write(self, payload):
         self.frames.append(payload)
         self.received.set()
+
+    async def wait_ready(self, timeout):
+        self.ready_timeouts.append(timeout)
+        return self.ready
 
     async def renew(self):
         self.renewals += 1
@@ -101,7 +110,17 @@ async def test_plugin_api_requires_version_and_authentication(tmp_path):
             assert response.status == 426
             assert (await response.json())["error"]["code"] == "unsupported_version"
 
-            response = await client.get(url, headers={PROTOCOL_HEADER: "1"})
+            old_headers = _headers(issued.token)
+            old_headers[PROTOCOL_HEADER] = "1"
+            response = await client.get(url, headers=old_headers)
+            assert response.status == 426
+            assert (await response.json())["error"]["code"] == "unsupported_version"
+            assert response.headers[PROTOCOL_HEADER] == str(PLUGIN_PROTOCOL_VERSION)
+
+            response = await client.get(
+                url,
+                headers={PROTOCOL_HEADER: str(PLUGIN_PROTOCOL_VERSION)},
+            )
             assert response.status == 401
 
             response = await client.get(url, headers=_headers(issued.token))
@@ -111,7 +130,7 @@ async def test_plugin_api_requires_version_and_authentication(tmp_path):
         assert body["ring_authenticated"] is True
         assert body["event_connection"] == "connected"
         assert response.headers["Cache-Control"] == "no-store"
-        assert response.headers[PROTOCOL_HEADER] == "1"
+        assert response.headers[PROTOCOL_HEADER] == str(PLUGIN_PROTOCOL_VERSION)
 
 
 @pytest.mark.asyncio
@@ -330,9 +349,11 @@ async def test_intercom_descriptor_and_socket_accept_only_fixed_pcm_frames(tmp_p
             f"http://127.0.0.1:{server.bound_port}/v1/intercom/42",
             headers=_headers(issued.token),
         )
+        ready = await socket.receive_json()
         payload = b"\x01\x00" * (INTERCOM_FRAME_BYTES // 2)
         await socket.send_bytes(payload)
         await asyncio.wait_for(intercom.received.wait(), timeout=1)
+        active = await socket.receive_json()
         await socket.close()
         await asyncio.wait_for(intercom.closed.wait(), timeout=1)
 
@@ -345,6 +366,9 @@ async def test_intercom_descriptor_and_socket_accept_only_fixed_pcm_frames(tmp_p
     assert "intercom" in capabilities["capabilities"]
     assert capabilities["media"]["two_way_audio"] is True
     assert intercom.frames == [payload]
+    assert ready == {"type": "ready", "protocol_version": PLUGIN_PROTOCOL_VERSION}
+    assert active == {"type": "active"}
+    assert intercom.ready_timeouts == [15.0]
     assert "Halo intercom WebSocket accepted camera_id=42" in caplog.text
     assert "Halo intercom first PCM frame received camera_id=42 bytes=1920" in caplog.text
     assert (
@@ -372,6 +396,7 @@ async def test_intercom_socket_rejects_non_binary_audio_and_releases_stream(tmp_
             f"http://127.0.0.1:{server.bound_port}/v1/intercom/42",
             headers=_headers(issued.token),
         )
+        assert (await socket.receive_json())["type"] == "ready"
         await socket.send_str("not audio")
         message = await socket.receive()
         await asyncio.wait_for(intercom.closed.wait(), timeout=1)
@@ -379,6 +404,153 @@ async def test_intercom_socket_rejects_non_binary_audio_and_releases_stream(tmp_
     assert message.type is aiohttp.WSMsgType.CLOSE
     assert message.data == 1003
     assert intercom.frames == []
+
+
+@pytest.mark.asyncio
+async def test_intercom_socket_closes_when_camera_speaker_does_not_activate(tmp_path):
+    intercom = FakeIntercomStream(ready=False)
+
+    async def open_intercom(_camera_id):
+        return intercom
+
+    async with (
+        _server(tmp_path, intercom_provider=open_intercom) as (
+            server,
+            _tokens,
+            issued,
+            _events,
+        ),
+        aiohttp.ClientSession() as client,
+    ):
+        socket = await client.ws_connect(
+            f"http://127.0.0.1:{server.bound_port}/v1/intercom/42",
+            headers=_headers(issued.token),
+        )
+        await socket.receive_json()
+        await socket.send_bytes(b"\x00" * INTERCOM_FRAME_BYTES)
+        message = await socket.receive()
+        await asyncio.wait_for(intercom.closed.wait(), timeout=1)
+
+    assert message.type is aiohttp.WSMsgType.CLOSE
+    assert message.data == 1011
+    assert intercom.frames == [b"\x00" * INTERCOM_FRAME_BYTES]
+
+
+@pytest.mark.asyncio
+async def test_intercom_ping_traffic_does_not_extend_audio_idle_deadline(tmp_path, monkeypatch):
+    monkeypatch.setattr(plugin_api, "INTERCOM_IDLE_TIMEOUT", 0.05)
+    intercom = FakeIntercomStream()
+
+    async def open_intercom(_camera_id):
+        return intercom
+
+    async with (
+        _server(tmp_path, intercom_provider=open_intercom) as (
+            server,
+            _tokens,
+            issued,
+            _events,
+        ),
+        aiohttp.ClientSession() as client,
+    ):
+        socket = await client.ws_connect(
+            f"http://127.0.0.1:{server.bound_port}/v1/intercom/42",
+            headers=_headers(issued.token),
+        )
+        await socket.receive_json()
+
+        async def send_pings():
+            while True:
+                await socket.ping()
+                await asyncio.sleep(0.01)
+
+        pings = asyncio.create_task(send_pings())
+        try:
+            message = await socket.receive(timeout=1)
+        finally:
+            pings.cancel()
+            await asyncio.gather(pings, return_exceptions=True)
+        await asyncio.wait_for(intercom.closed.wait(), timeout=1)
+
+    assert message.type is aiohttp.WSMsgType.CLOSE
+    assert message.data == 1008
+    assert intercom.frames == []
+
+
+@pytest.mark.asyncio
+async def test_intercom_is_not_published_or_opened_for_unsupported_camera(tmp_path):
+    status = _status()
+    status["cameras"][0]["has_intercom"] = False
+    provider_calls = 0
+
+    async def open_intercom(_camera_id):
+        nonlocal provider_calls
+        provider_calls += 1
+        return FakeIntercomStream()
+
+    descriptor = {
+        "id": "main",
+        "name": "Halo Stream",
+        "url": "rtsp://halo:temporary@127.0.0.1:18554/halo/opaque",
+        "container": "rtsp",
+        "prebuffer": 10_000,
+        "video": {"codec": "h264"},
+        "audio": {"codec": "opus"},
+    }
+    async with (
+        _server(
+            tmp_path,
+            status_provider=lambda: status,
+            media_provider=lambda _camera_id: descriptor,
+            intercom_provider=open_intercom,
+        ) as (server, _tokens, issued, _events),
+        aiohttp.ClientSession() as client,
+    ):
+        devices = await (
+            await client.get(
+                f"http://127.0.0.1:{server.bound_port}/v1/devices",
+                headers=_headers(issued.token),
+            )
+        ).json()
+        response = await client.get(
+            f"http://127.0.0.1:{server.bound_port}/v1/intercom/42",
+            headers=_headers(issued.token),
+        )
+        error = await response.json()
+
+    assert "intercom" not in devices["streams"]["42"]
+    assert response.status == 404
+    assert error["error"]["code"] == "intercom_unsupported"
+    assert provider_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_intercom_unknown_camera_is_reported_as_unavailable(tmp_path):
+    provider_calls = 0
+
+    async def open_intercom(_camera_id):
+        nonlocal provider_calls
+        provider_calls += 1
+        return FakeIntercomStream()
+
+    async with (
+        _server(tmp_path, intercom_provider=open_intercom) as (
+            server,
+            _tokens,
+            issued,
+            _events,
+        ),
+        aiohttp.ClientSession() as client,
+    ):
+        response = await client.get(
+            f"http://127.0.0.1:{server.bound_port}/v1/intercom/missing",
+            headers=_headers(issued.token),
+        )
+        error = await response.json()
+
+    assert response.status == 404
+    assert error["error"]["code"] == "camera_unavailable"
+    assert provider_calls == 0
 
 
 @pytest.mark.asyncio
@@ -403,7 +575,7 @@ async def test_plugin_api_http_errors_keep_versioned_json_contract(
             body = await response.json()
 
     assert response.status == status
-    assert response.headers[PROTOCOL_HEADER] == "1"
+    assert response.headers[PROTOCOL_HEADER] == str(PLUGIN_PROTOCOL_VERSION)
     assert response.headers["Cache-Control"] == "no-store"
     assert body["error"]["code"] == code
 

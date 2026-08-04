@@ -58,7 +58,7 @@ class FakeAdminClient:
         status = _status()
         status["integrations"] = {
             "clients": list(self.clients),
-            "protocol_version": 1,
+            "protocol_version": 2,
             "error": None,
         }
         return status

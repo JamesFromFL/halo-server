@@ -16,6 +16,26 @@ class RingSpeakerControlError(RuntimeError):
     """Raised when Halo cannot control a Ring WebRTC camera speaker."""
 
 
+def supports_ring_camera_intercom(device) -> bool:
+    """Return whether one camera exposes Halo's validated speaker contract."""
+    if _ring_doorbell_version() not in RING_DOORBELL_SPEAKER_VERSIONS:
+        return False
+    try:
+        if not device.has_capability("video"):
+            return False
+        return all(
+            callable(getattr(device, attribute, None))
+            for attribute in (
+                "generate_async_webrtc_stream",
+                "on_webrtc_candidate",
+                "close_webrtc_stream",
+                "get_ice_servers",
+            )
+        )
+    except Exception:
+        return False
+
+
 async def activate_ring_camera_speaker(
     device,
     halo_session_id: str,
