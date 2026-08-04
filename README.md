@@ -52,8 +52,8 @@ before binding the RTSP gateway. A missing system plugin therefore fails startup
 element name instead of producing a camera stream that fails later.
 
 ```bash
-uv venv --system-site-packages
-uv sync --all-groups
+uv venv --python /usr/bin/python3 --system-site-packages
+uv sync --frozen --all-groups
 uv run halo-server daemon
 ```
 
@@ -99,11 +99,17 @@ it. Do not configure these URLs as permanent DVR inputs.
 ## Development
 
 ```bash
-uv run pytest
-uv run ruff check src tests
-uv run ruff format --check src tests
-uv build
+uv lock --check
+uv run --frozen pytest
+uv run --frozen ruff check --no-cache src tests
+uv run --frozen ruff format --check --no-cache src tests
+uv run --frozen pip-audit --local --progress-spinner=off
+uv build --out-dir dist
 ```
+
+The project requires uv 0.11.24. CI installs the wheel into a clean environment and verifies
+Git commit metadata plus SHA-256 checksums inside the build runner. Publishing and deployment
+remain separate, explicitly authorized release steps.
 
 ## License
 

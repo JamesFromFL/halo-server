@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      VIRTUAL_ENV: ${{ github.workspace }}/.venv
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install GStreamer runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            python3-gi \
+            gir1.2-gst-rtsp-server-1.0 \
+            gstreamer1.0-plugins-base \
+            gstreamer1.0-plugins-good \
+            gstreamer1.0-plugins-bad
+      - name: Install uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.24"
+          enable-cache: true
+      - name: Sync locked environment
+        run: |
+          uv lock --check
+          uv venv --python /usr/bin/python3 --system-site-packages "$VIRTUAL_ENV"
+          uv sync --active --frozen --all-groups
+      - run: .venv/bin/ruff check --no-cache src tests
+      - run: .venv/bin/ruff format --check --no-cache src tests
+      - run: .venv/bin/pytest -q -p no:cacheprovider
+      - run: .venv/bin/pip-audit --local --progress-spinner=off
+      - name: Build artifacts
+        run: uv build --out-dir dist
+      - name: Smoke test wheel
+        run: |
+          uv venv --python /usr/bin/python3 --system-site-packages .artifact-venv
+          uv pip install --python .artifact-venv/bin/python dist/*.whl
+          .artifact-venv/bin/halo-server --version
+          .artifact-venv/bin/python -c \
+            "from halo_server.media.ring_media import validate_media_compatibility; validate_media_compatibility()"
+      - name: Verify artifact identity
+        run: |
+          printf 'commit=%s\n' "$GITHUB_SHA" > dist/BUILD-INFO
+          sha256sum dist/*.whl dist/*.tar.gz > dist/SHA256SUMS
+          cat dist/BUILD-INFO dist/SHA256SUMS
