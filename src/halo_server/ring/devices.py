@@ -2,15 +2,22 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import asdict, dataclass
 from typing import Any
 
 from halo_server.media.ring_speaker import supports_ring_camera_intercom
 
 CAMERA_FAMILIES = frozenset({"doorbots", "stickup_cams", "authorized_doorbots"})
+MAX_DEVICE_ID_UNITS = 128
+MAX_DEVICE_NAME_UNITS = 256
+MAX_DEVICE_KIND_UNITS = 128
+MAX_DEVICE_MODEL_UNITS = 128
 SDK_MODEL_FALLBACKS = {
     "stickup_cam_mini_v3": "Unknown Stickup Cam",
 }
+
+_log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -41,12 +48,16 @@ def summarize_device(device: Any) -> DeviceSummary | None:
     device_id = _identifier_attr(device, "id")
     if device_id is None:
         return None
+    kind = _text_attr(device, "kind", maximum_units=MAX_DEVICE_KIND_UNITS)
     return DeviceSummary(
         id=device_id,
-        name=_text_attr(device, "name"),
+        name=_text_attr(device, "name", maximum_units=MAX_DEVICE_NAME_UNITS),
         family=family,
-        kind=(kind := _text_attr(device, "kind")),
-        model=SDK_MODEL_FALLBACKS.get(kind, _text_attr(device, "model")),
+        kind=kind,
+        model=SDK_MODEL_FALLBACKS.get(
+            kind,
+            _text_attr(device, "model", maximum_units=MAX_DEVICE_MODEL_UNITS),
+        ),
         online=_bool_attr(device, "subscribed"),
         battery_percent=_battery_attr(device),
         motion_detection=_bool_attr(device, "motion_detection"),
@@ -57,7 +68,16 @@ def summarize_device(device: Any) -> DeviceSummary | None:
 
 
 def summarize_cameras(devices: list[Any]) -> list[dict[str, Any]]:
-    summaries = [summary for device in devices if (summary := summarize_device(device))]
+    unique: dict[str, DeviceSummary] = {}
+    for device in devices:
+        summary = summarize_device(device)
+        if summary is None:
+            continue
+        if summary.id in unique:
+            _log.warning("Ignoring duplicate Ring camera identifier id=%s", summary.id)
+            continue
+        unique[summary.id] = summary
+    summaries = list(unique.values())
     summaries.sort(key=lambda summary: (summary.name.casefold(), summary.id))
     return [summary.as_dict() for summary in summaries]
 
@@ -74,12 +94,28 @@ def _identifier_attr(device: Any, name: str) -> str | None:
     if isinstance(value, bool) or not isinstance(value, (int, str)):
         return None
     normalized = str(value).strip()
-    return normalized or None
+    try:
+        encoded = normalized.encode("utf-16-le")
+    except UnicodeEncodeError:
+        return None
+    if not normalized or len(encoded) // 2 > MAX_DEVICE_ID_UNITS:
+        return None
+    return normalized
 
 
-def _text_attr(device: Any, name: str) -> str:
+def _text_attr(
+    device: Any,
+    name: str,
+    *,
+    maximum_units: int | None = None,
+) -> str:
     value = _safe_attr(device, name)
-    return value if isinstance(value, str) else ""
+    if not isinstance(value, str):
+        return ""
+    if maximum_units is None:
+        return value
+    encoded = value.encode("utf-16-le", errors="replace")
+    return encoded[: maximum_units * 2].decode("utf-16-le", errors="ignore")
 
 
 def _bool_attr(device: Any, name: str) -> bool | None:

@@ -105,3 +105,37 @@ def test_camera_summaries_are_sorted_and_plain_json_data():
     summaries = summarize_cameras([first, second])
 
     assert [camera["name"] for camera in summaries] == ["Back Yard", "Front Door"]
+
+
+def test_device_summary_bounds_strings_to_the_plugin_contract():
+    camera = FakeCamera()
+    camera.name = "\U0001f4f7" * 300
+    camera.kind = "k" * 200
+    camera.model = "m" * 200
+
+    summary = summarize_device(camera)
+
+    assert len(summary.name.encode("utf-16-le")) // 2 <= 256
+    assert len(summary.kind.encode("utf-16-le")) // 2 <= 128
+    assert len(summary.model.encode("utf-16-le")) // 2 <= 128
+
+
+def test_device_summary_omits_identity_outside_the_plugin_contract():
+    camera = FakeCamera()
+    camera.id = "x" * 129
+
+    assert summarize_device(camera) is None
+
+    camera.id = "camera-\ud800"
+    assert summarize_device(camera) is None
+
+
+def test_camera_summaries_ignore_duplicate_ring_ids():
+    first = FakeCamera()
+    duplicate = FakeCamera()
+    duplicate.name = "Duplicate Front Door"
+
+    summaries = summarize_cameras([first, duplicate])
+
+    assert len(summaries) == 1
+    assert summaries[0]["id"] == "42"
