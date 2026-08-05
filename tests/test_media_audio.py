@@ -5,8 +5,8 @@ from halo_server.media.audio import (
     OPUS_FRAME_SAMPLES,
     AudioNormalizationError,
     NormalizedOpusEncoder,
+    opus_frame_duration_ms,
 )
-from halo_server.media.profiles import opus_frame_duration_ms
 
 
 def test_normalizer_downmixes_stereo_to_fixed_20ms_mono_opus():
@@ -64,3 +64,16 @@ def test_normalizer_rejects_mid_session_format_change():
 
     with pytest.raises(AudioNormalizationError, match="changed"):
         encoder.encode(np.zeros(320, dtype="<i2").tobytes(), 1, 16_000)
+
+
+@pytest.mark.parametrize(
+    ("packet", "expected"),
+    [
+        (b"\xbb\x03", 20.0),
+        (b"\x58", 60.0),
+        (b"\xfc", 20.0),
+        (b"", None),
+    ],
+)
+def test_opus_frame_duration_from_toc(packet, expected):
+    assert opus_frame_duration_ms(packet) == expected

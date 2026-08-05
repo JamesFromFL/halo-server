@@ -24,6 +24,18 @@ class NormalizedOpusPacket:
     rtp_timestamp: int
 
 
+def opus_frame_duration_ms(packet: bytes) -> float | None:
+    """Return one Opus frame duration from its RFC 6716 TOC byte."""
+    if not packet:
+        return None
+    config = packet[0] >> 3
+    if config < 12:
+        return (10.0, 20.0, 40.0, 60.0)[config % 4]
+    if config < 16:
+        return (10.0, 20.0)[config % 2]
+    return (2.5, 5.0, 10.0, 20.0)[config % 4]
+
+
 class NormalizedOpusEncoder:
     """Downmix and resample S16LE PCM before fixed-duration Opus encoding."""
 
@@ -97,6 +109,10 @@ class NormalizedOpusEncoder:
                 for encoded in encoded_packets:
                     payload_bytes = bytes(encoded)
                     if payload_bytes:
+                        if opus_frame_duration_ms(payload_bytes) != OPUS_FRAME_DURATION_MS:
+                            raise AudioNormalizationError(
+                                "Opus encoder produced an unexpected frame duration"
+                            )
                         packets.append(
                             NormalizedOpusPacket(
                                 payload=payload_bytes,
