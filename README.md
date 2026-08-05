@@ -17,6 +17,7 @@ Implemented:
 - H.264 passthrough and mono 48 kHz Opus normalization for Scrypted/HomeKit
 - camera inventory with an allowlisted public schema
 - authenticated, versioned plugin HTTP and WebSocket APIs with event replay
+- a server-owned protocol-v2 schema and fixture corpus shipped in the wheel
 - revocable Scrypted pairing tokens
 - digest-authenticated, on-demand loopback RTSP delivery
 - per-camera validated two-way audio with bounded speaker-readiness acknowledgement
@@ -113,6 +114,10 @@ uv build --out-dir dist
 The project requires uv 0.11.24. CI installs the wheel into a clean environment and verifies
 Git commit metadata plus SHA-256 checksums inside the build runner. Publishing and deployment
 remain separate, explicitly authorized release steps.
+
+Halo Server owns the canonical plugin wire contract under
+`src/halo_server/api/protocol/v2`. Plugin repositories vendor exact copies with source-commit
+and SHA-256 provenance. Breaking wire changes require a new protocol version.
 
 ## License
 

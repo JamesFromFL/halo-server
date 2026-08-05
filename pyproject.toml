@@ -29,6 +29,7 @@ packages = ["src/halo_server"]
 
 [dependency-groups]
 dev = [
+    "jsonschema>=4.23,<5",
     "pytest>=9.1.1",
     "pytest-asyncio>=0.24",
     "ruff>=0.9",

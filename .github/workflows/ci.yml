@@ -47,6 +47,8 @@ jobs:
           .artifact-venv/bin/halo-server --version
           .artifact-venv/bin/python -c \
             "from halo_server.media.ring_media import validate_media_compatibility; validate_media_compatibility()"
+          .artifact-venv/bin/python -c \
+            "from importlib.resources import files; assert files('halo_server.api').joinpath('protocol/v2/schema.json').is_file()"
       - name: Verify artifact identity
         run: |
           printf 'commit=%s\n' "$GITHUB_SHA" > dist/BUILD-INFO

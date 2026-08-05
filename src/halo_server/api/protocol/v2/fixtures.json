@@ -1,0 +1,300 @@
+{
+  "protocol_version": 2,
+  "schema_id": "urn:halo:plugin-protocol:v2",
+  "valid_cases": [
+    {
+      "name": "health",
+      "parser": "schema_only",
+      "value": {
+        "server_version": "0.1.0",
+        "protocol_version": 2,
+        "service": "running",
+        "ring_authenticated": true,
+        "event_connection": "connected",
+        "event_epoch": "fixture-epoch",
+        "latest_event_sequence": 4
+      }
+    },
+    {
+      "name": "capabilities",
+      "parser": "schema_only",
+      "value": {
+        "protocol_version": 2,
+        "capabilities": [
+          "devices",
+          "events",
+          "motion",
+          "doorbell",
+          "battery",
+          "online",
+          "intercom"
+        ],
+        "media": {
+          "available": true,
+          "transport": "rtsp",
+          "on_demand": true,
+          "two_way_audio": true,
+          "maximum_session_seconds": {
+            "event": 600,
+            "homekit_live": 600,
+            "scrypted_live": 600,
+            "snapshot": 30,
+            "intercom": 300
+          },
+          "reason": null
+        },
+        "event_epoch": "fixture-epoch",
+        "latest_event_sequence": 4
+      }
+    },
+    {
+      "name": "device_snapshot",
+      "parser": "device_snapshot",
+      "value": {
+        "event_epoch": "fixture-epoch",
+        "latest_event_sequence": 4,
+        "devices": [
+          {
+            "id": "42",
+            "name": "Front Door",
+            "family": "doorbots",
+            "kind": "lpd_v4",
+            "model": "Doorbell Pro",
+            "online": true,
+            "battery_percent": 90,
+            "motion_detection": true,
+            "has_light": false,
+            "has_siren": false,
+            "has_intercom": true
+          }
+        ],
+        "states": {
+          "42": {
+            "motion_detected": true
+          }
+        },
+        "streams": {
+          "42": {
+            "id": "main",
+            "name": "Halo Stream",
+            "url": "rtsp://halo:fixture-secret@127.0.0.1:18554/halo/fixture",
+            "container": "rtsp",
+            "prebuffer": 10000,
+            "video": {
+              "codec": "h264"
+            },
+            "audio": {
+              "codec": "opus"
+            },
+            "intercom": {
+              "codec": "pcm_s16le",
+              "sample_rate": 48000,
+              "channels": 1,
+              "frame_duration_ms": 20
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "event_hello",
+      "parser": "event_message",
+      "value": {
+        "type": "hello",
+        "protocol_version": 2,
+        "event_epoch": "fixture-epoch",
+        "latest_event_sequence": 4
+      }
+    },
+    {
+      "name": "event_heartbeat",
+      "parser": "event_message",
+      "value": {
+        "type": "heartbeat",
+        "event_epoch": "fixture-epoch",
+        "latest_event_sequence": 4
+      }
+    },
+    {
+      "name": "event_envelope",
+      "parser": "event_message",
+      "value": {
+        "type": "event",
+        "event": {
+          "epoch": "fixture-epoch",
+          "sequence": 4,
+          "emitted_at": 1722800000.5,
+          "type": "motion_on",
+          "camera_id": "42",
+          "payload": {
+            "event_id": "fixture-event"
+          }
+        }
+      }
+    },
+    {
+      "name": "resync_required",
+      "parser": "event_message",
+      "value": {
+        "type": "resync_required"
+      }
+    },
+    {
+      "name": "intercom_ready",
+      "parser": "intercom_control",
+      "value": {
+        "type": "ready",
+        "protocol_version": 2
+      }
+    },
+    {
+      "name": "intercom_active",
+      "parser": "intercom_control",
+      "value": {
+        "type": "active"
+      }
+    },
+    {
+      "name": "error_response",
+      "parser": "schema_only",
+      "value": {
+        "error": {
+          "code": "ring_unavailable",
+          "message": "Ring device inventory is temporarily unavailable"
+        }
+      }
+    }
+  ],
+  "invalid_cases": [
+    {
+      "name": "device_snapshot_missing_state",
+      "parser": "device_snapshot",
+      "schema_valid": true,
+      "value": {
+        "event_epoch": "fixture-epoch",
+        "latest_event_sequence": 4,
+        "devices": [
+          {
+            "id": "42",
+            "name": "Front Door",
+            "family": "doorbots",
+            "kind": "lpd_v4",
+            "model": "Doorbell Pro",
+            "online": true,
+            "battery_percent": 90,
+            "motion_detection": true,
+            "has_light": false,
+            "has_siren": false,
+            "has_intercom": true
+          }
+        ],
+        "states": {},
+        "streams": {}
+      }
+    },
+    {
+      "name": "device_snapshot_insecure_stream",
+      "parser": "device_snapshot",
+      "value": {
+        "event_epoch": "fixture-epoch",
+        "latest_event_sequence": 4,
+        "devices": [
+          {
+            "id": "42",
+            "name": "Front Door",
+            "family": "doorbots",
+            "kind": "lpd_v4",
+            "model": "Doorbell Pro",
+            "online": true,
+            "battery_percent": 90,
+            "motion_detection": true,
+            "has_light": false,
+            "has_siren": false,
+            "has_intercom": true
+          }
+        ],
+        "states": {
+          "42": {
+            "motion_detected": false
+          }
+        },
+        "streams": {
+          "42": {
+            "id": "main",
+            "name": "Halo Stream",
+            "url": "http://example.test/camera",
+            "container": "rtsp",
+            "prebuffer": 10000,
+            "video": {
+              "codec": "h264"
+            },
+            "audio": {
+              "codec": "opus"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "event_hello_wrong_protocol",
+      "parser": "event_message",
+      "value": {
+        "type": "hello",
+        "protocol_version": 1,
+        "event_epoch": "fixture-epoch",
+        "latest_event_sequence": 4
+      }
+    },
+    {
+      "name": "event_negative_sequence",
+      "parser": "event_message",
+      "value": {
+        "type": "heartbeat",
+        "event_epoch": "fixture-epoch",
+        "latest_event_sequence": -1
+      }
+    },
+    {
+      "name": "event_payload_is_not_object",
+      "parser": "event_message",
+      "value": {
+        "type": "event",
+        "event": {
+          "epoch": "fixture-epoch",
+          "sequence": 4,
+          "emitted_at": 1722800000.5,
+          "type": "motion_on",
+          "camera_id": "42",
+          "payload": []
+        }
+      }
+    },
+    {
+      "name": "intercom_wrong_protocol",
+      "parser": "intercom_control",
+      "value": {
+        "type": "ready",
+        "protocol_version": 1
+      }
+    },
+    {
+      "name": "intercom_active_extra_field",
+      "parser": "intercom_control",
+      "value": {
+        "type": "active",
+        "unexpected": true
+      }
+    },
+    {
+      "name": "error_response_exposes_extra_data",
+      "parser": "schema_only",
+      "value": {
+        "error": {
+          "code": "internal_error",
+          "message": "Request failed",
+          "detail": "must not cross the boundary"
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,509 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:halo:plugin-protocol:v2",
+  "title": "Halo Plugin Protocol v2",
+  "description": "Canonical JSON payload contract owned by Halo Server.",
+  "x-halo-owner": "halo-server",
+  "x-halo-protocol-version": 2,
+  "oneOf": [
+    { "$ref": "#/$defs/health" },
+    { "$ref": "#/$defs/capabilities" },
+    { "$ref": "#/$defs/deviceSnapshot" },
+    { "$ref": "#/$defs/eventHello" },
+    { "$ref": "#/$defs/eventHeartbeat" },
+    { "$ref": "#/$defs/eventEnvelope" },
+    { "$ref": "#/$defs/resyncRequired" },
+    { "$ref": "#/$defs/intercomReady" },
+    { "$ref": "#/$defs/intercomActive" },
+    { "$ref": "#/$defs/errorResponse" }
+  ],
+  "$defs": {
+    "protocolVersion": {
+      "type": "integer",
+      "const": 2
+    },
+    "sequence": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "epoch": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "nullableBoolean": {
+      "type": ["boolean", "null"]
+    },
+    "device": {
+      "type": "object",
+      "required": [
+        "id",
+        "name",
+        "family",
+        "kind",
+        "model",
+        "online",
+        "battery_percent",
+        "motion_detection",
+        "has_light",
+        "has_siren",
+        "has_intercom"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "family": {
+          "enum": ["doorbots", "stickup_cams", "authorized_doorbots"]
+        },
+        "kind": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "model": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "online": {
+          "$ref": "#/$defs/nullableBoolean"
+        },
+        "battery_percent": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100
+            },
+            { "type": "null" }
+          ]
+        },
+        "motion_detection": {
+          "$ref": "#/$defs/nullableBoolean"
+        },
+        "has_light": {
+          "type": "boolean"
+        },
+        "has_siren": {
+          "type": "boolean"
+        },
+        "has_intercom": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "deviceState": {
+      "type": "object",
+      "required": ["motion_detected"],
+      "properties": {
+        "motion_detected": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "intercomDescriptor": {
+      "type": "object",
+      "required": [
+        "codec",
+        "sample_rate",
+        "channels",
+        "frame_duration_ms"
+      ],
+      "properties": {
+        "codec": {
+          "const": "pcm_s16le"
+        },
+        "sample_rate": {
+          "const": 48000
+        },
+        "channels": {
+          "const": 1
+        },
+        "frame_duration_ms": {
+          "const": 20
+        }
+      },
+      "additionalProperties": false
+    },
+    "stream": {
+      "type": "object",
+      "required": [
+        "id",
+        "name",
+        "url",
+        "container",
+        "prebuffer",
+        "video",
+        "audio"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "url": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048,
+          "pattern": "^rtsp://[^\\s]+$"
+        },
+        "container": {
+          "const": "rtsp"
+        },
+        "prebuffer": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 30000
+        },
+        "video": {
+          "type": "object",
+          "required": ["codec"],
+          "properties": {
+            "codec": {
+              "const": "h264"
+            }
+          },
+          "additionalProperties": false
+        },
+        "audio": {
+          "type": "object",
+          "required": ["codec"],
+          "properties": {
+            "codec": {
+              "const": "opus"
+            }
+          },
+          "additionalProperties": false
+        },
+        "intercom": {
+          "$ref": "#/$defs/intercomDescriptor"
+        }
+      },
+      "additionalProperties": false
+    },
+    "deviceSnapshot": {
+      "type": "object",
+      "required": [
+        "event_epoch",
+        "latest_event_sequence",
+        "devices",
+        "states",
+        "streams"
+      ],
+      "properties": {
+        "event_epoch": {
+          "$ref": "#/$defs/epoch"
+        },
+        "latest_event_sequence": {
+          "$ref": "#/$defs/sequence"
+        },
+        "devices": {
+          "type": "array",
+          "maxItems": 256,
+          "items": {
+            "$ref": "#/$defs/device"
+          }
+        },
+        "states": {
+          "type": "object",
+          "maxProperties": 256,
+          "propertyNames": {
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/deviceState"
+          }
+        },
+        "streams": {
+          "type": "object",
+          "maxProperties": 256,
+          "propertyNames": {
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/stream"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "mediaLimits": {
+      "type": "object",
+      "required": [
+        "event",
+        "homekit_live",
+        "scrypted_live",
+        "snapshot",
+        "intercom"
+      ],
+      "properties": {
+        "event": { "type": "number", "exclusiveMinimum": 0 },
+        "homekit_live": { "type": "number", "exclusiveMinimum": 0 },
+        "scrypted_live": { "type": "number", "exclusiveMinimum": 0 },
+        "snapshot": { "type": "number", "exclusiveMinimum": 0 },
+        "intercom": { "type": "number", "exclusiveMinimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "health": {
+      "type": "object",
+      "required": [
+        "server_version",
+        "protocol_version",
+        "service",
+        "ring_authenticated",
+        "event_connection",
+        "event_epoch",
+        "latest_event_sequence"
+      ],
+      "properties": {
+        "server_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "protocol_version": {
+          "$ref": "#/$defs/protocolVersion"
+        },
+        "service": {
+          "enum": ["running", "stopped"]
+        },
+        "ring_authenticated": {
+          "type": "boolean"
+        },
+        "event_connection": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "event_epoch": {
+          "$ref": "#/$defs/epoch"
+        },
+        "latest_event_sequence": {
+          "$ref": "#/$defs/sequence"
+        }
+      },
+      "additionalProperties": false
+    },
+    "capabilities": {
+      "type": "object",
+      "required": [
+        "protocol_version",
+        "capabilities",
+        "media",
+        "event_epoch",
+        "latest_event_sequence"
+      ],
+      "properties": {
+        "protocol_version": {
+          "$ref": "#/$defs/protocolVersion"
+        },
+        "capabilities": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "devices",
+              "events",
+              "motion",
+              "doorbell",
+              "battery",
+              "online",
+              "intercom"
+            ]
+          }
+        },
+        "media": {
+          "type": "object",
+          "required": [
+            "available",
+            "transport",
+            "on_demand",
+            "two_way_audio",
+            "maximum_session_seconds",
+            "reason"
+          ],
+          "properties": {
+            "available": { "type": "boolean" },
+            "transport": {
+              "enum": ["rtsp", null]
+            },
+            "on_demand": { "type": "boolean" },
+            "two_way_audio": { "type": "boolean" },
+            "maximum_session_seconds": {
+              "$ref": "#/$defs/mediaLimits"
+            },
+            "reason": {
+              "type": ["string", "null"],
+              "maxLength": 128
+            }
+          },
+          "additionalProperties": false
+        },
+        "event_epoch": {
+          "$ref": "#/$defs/epoch"
+        },
+        "latest_event_sequence": {
+          "$ref": "#/$defs/sequence"
+        }
+      },
+      "additionalProperties": false
+    },
+    "event": {
+      "type": "object",
+      "required": [
+        "epoch",
+        "sequence",
+        "emitted_at",
+        "type",
+        "camera_id",
+        "payload"
+      ],
+      "properties": {
+        "epoch": {
+          "$ref": "#/$defs/epoch"
+        },
+        "sequence": {
+          "$ref": "#/$defs/sequence"
+        },
+        "emitted_at": {
+          "type": "number",
+          "minimum": 0
+        },
+        "type": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "camera_id": {
+          "oneOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            { "type": "null" }
+          ]
+        },
+        "payload": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": false
+    },
+    "eventHello": {
+      "type": "object",
+      "required": [
+        "type",
+        "protocol_version",
+        "event_epoch",
+        "latest_event_sequence"
+      ],
+      "properties": {
+        "type": { "const": "hello" },
+        "protocol_version": {
+          "$ref": "#/$defs/protocolVersion"
+        },
+        "event_epoch": {
+          "$ref": "#/$defs/epoch"
+        },
+        "latest_event_sequence": {
+          "$ref": "#/$defs/sequence"
+        }
+      },
+      "additionalProperties": false
+    },
+    "eventHeartbeat": {
+      "type": "object",
+      "required": ["type", "event_epoch", "latest_event_sequence"],
+      "properties": {
+        "type": { "const": "heartbeat" },
+        "event_epoch": {
+          "$ref": "#/$defs/epoch"
+        },
+        "latest_event_sequence": {
+          "$ref": "#/$defs/sequence"
+        }
+      },
+      "additionalProperties": false
+    },
+    "eventEnvelope": {
+      "type": "object",
+      "required": ["type", "event"],
+      "properties": {
+        "type": { "const": "event" },
+        "event": {
+          "$ref": "#/$defs/event"
+        }
+      },
+      "additionalProperties": false
+    },
+    "resyncRequired": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "const": "resync_required" }
+      },
+      "additionalProperties": false
+    },
+    "intercomReady": {
+      "type": "object",
+      "required": ["type", "protocol_version"],
+      "properties": {
+        "type": { "const": "ready" },
+        "protocol_version": {
+          "$ref": "#/$defs/protocolVersion"
+        }
+      },
+      "additionalProperties": false
+    },
+    "intercomActive": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "const": "active" }
+      },
+      "additionalProperties": false
+    },
+    "errorResponse": {
+      "type": "object",
+      "required": ["error"],
+      "properties": {
+        "error": {
+          "type": "object",
+          "required": ["code", "message"],
+          "properties": {
+            "code": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            },
+            "message": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}
