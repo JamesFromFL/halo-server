@@ -77,10 +77,11 @@ def _headers(token):
 
 
 class FakeIntercomStream:
-    def __init__(self, *, ready=True):
+    def __init__(self, *, ready=True, close_error=None):
         self.frames = []
         self.renewals = 0
         self.ready = ready
+        self.close_error = close_error
         self.ready_timeouts = []
         self.closed = asyncio.Event()
         self.received = asyncio.Event()
@@ -99,6 +100,8 @@ class FakeIntercomStream:
 
     async def close(self):
         self.closed.set()
+        if self.close_error is not None:
+            raise self.close_error
 
 
 @pytest.mark.asyncio
@@ -441,6 +444,35 @@ async def test_intercom_socket_closes_when_camera_speaker_does_not_activate(tmp_
     assert message.type is aiohttp.WSMsgType.CLOSE
     assert message.data == 1011
     assert intercom.frames == [b"\x00" * INTERCOM_FRAME_BYTES]
+
+
+@pytest.mark.asyncio
+async def test_intercom_socket_logs_stream_cleanup_failure(tmp_path, caplog):
+    caplog.set_level(logging.ERROR)
+    intercom = FakeIntercomStream(close_error=RuntimeError("release failed"))
+
+    async def open_intercom(_camera_id):
+        return intercom
+
+    async with (
+        _server(tmp_path, intercom_provider=open_intercom) as (
+            server,
+            _tokens,
+            issued,
+            _events,
+        ),
+        aiohttp.ClientSession() as client,
+    ):
+        socket = await client.ws_connect(
+            f"http://127.0.0.1:{server.bound_port}/v1/intercom/42",
+            headers=_headers(issued.token),
+        )
+        await socket.receive_json()
+        await socket.close()
+        await asyncio.wait_for(intercom.closed.wait(), timeout=1)
+
+    assert "Halo intercom stream cleanup failed camera_id=42" in caplog.text
+    assert "release failed" in caplog.text
 
 
 @pytest.mark.asyncio

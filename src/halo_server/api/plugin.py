@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import ipaddress
 import logging
 import ssl
@@ -590,8 +589,14 @@ class PluginApiServer:
             if not socket.closed:
                 await socket.close(code=1011, message=b"intercom stream failed")
         finally:
-            with contextlib.suppress(Exception):
+            try:
                 await stream.close()
+            except Exception:
+                close_reason = "cleanup_failed"
+                _log.exception(
+                    "Halo intercom stream cleanup failed camera_id=%s",
+                    camera_id,
+                )
             _log.info(
                 "Halo intercom WebSocket closed camera_id=%s reason=%s frames=%d",
                 camera_id,
