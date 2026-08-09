@@ -1,5 +1,6 @@
 import pytest
 
+from halo_server import cli
 from halo_server.cli import _paths_from_args, build_parser, main
 
 
@@ -33,6 +34,22 @@ def test_cli_path_overrides_are_absolute(tmp_path, monkeypatch):
 def test_cli_without_command_prints_help(capsys):
     assert main([]) == 0
     assert "daemon" in capsys.readouterr().out
+
+
+def test_cli_rejects_unsupported_native_platform(monkeypatch, capsys):
+    monkeypatch.setattr(cli.sys, "platform", "win32")
+
+    with pytest.raises(SystemExit) as raised:
+        main(["status"])
+
+    assert raised.value.code == 2
+    assert "native Windows is not supported" in capsys.readouterr().err
+
+
+def test_cli_allows_macos_native_runtime(monkeypatch):
+    monkeypatch.setattr(cli.sys, "platform", "darwin")
+
+    cli._require_native_platform(build_parser())
 
 
 @pytest.mark.parametrize(

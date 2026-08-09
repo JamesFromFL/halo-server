@@ -14,7 +14,7 @@ jobs:
     env:
       VIRTUAL_ENV: ${{ github.workspace }}/.venv
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: Install GStreamer runtime
         run: |
           sudo apt-get update
@@ -48,7 +48,7 @@ jobs:
           .artifact-venv/bin/python -c \
             "from halo_server.media.ring_media import validate_media_compatibility; validate_media_compatibility()"
           .artifact-venv/bin/python -c \
-            "from importlib.resources import files; assert files('halo_server.api').joinpath('protocol/v2/schema.json').is_file()"
+            "from importlib.resources import files; root = files('halo_server.api'); assert all(root.joinpath(f'protocol/{version}/schema.json').is_file() for version in ('v2', 'v3'))"
       - name: Verify artifact identity
         run: |
           printf 'commit=%s\n' "$GITHUB_SHA" > dist/BUILD-INFO

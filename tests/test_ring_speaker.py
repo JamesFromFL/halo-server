@@ -97,6 +97,17 @@ def test_intercom_support_requires_video_and_complete_validated_webrtc_contract(
     assert ring_speaker.supports_ring_camera_intercom(camera) is False
 
 
+def test_intercom_support_accepts_validated_kind_missing_from_sdk_video_allowlist():
+    camera = CompatibleCamera()
+    camera.kind = "stickup_cam_mini_v3"
+    camera.has_capability = lambda _capability: False
+
+    assert ring_speaker.supports_ring_camera_intercom(camera) is True
+
+    camera.close_webrtc_stream = None
+    assert ring_speaker.supports_ring_camera_intercom(camera) is False
+
+
 def test_intercom_support_rejects_unvalidated_dependency(monkeypatch):
     monkeypatch.setattr(
         ring_speaker.importlib_metadata,

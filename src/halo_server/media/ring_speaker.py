@@ -7,6 +7,7 @@ import json
 from importlib import metadata as importlib_metadata
 
 RING_DOORBELL_SPEAKER_VERSIONS = frozenset({"0.9.14"})
+VALIDATED_INTERCOM_VIDEO_KINDS = frozenset({"stickup_cam_mini_v3"})
 DEFAULT_SPEAKER_TIMEOUT = 5.0
 _SESSION_POLL_SECONDS = 0.01
 _SPEAKER_STATE_ATTRIBUTE = "_halo_camera_speaker_activated"
@@ -21,7 +22,8 @@ def supports_ring_camera_intercom(device) -> bool:
     if _ring_doorbell_version() not in RING_DOORBELL_SPEAKER_VERSIONS:
         return False
     try:
-        if not device.has_capability("video"):
+        kind = getattr(device, "kind", None)
+        if kind not in VALIDATED_INTERCOM_VIDEO_KINDS and not device.has_capability("video"):
             return False
         return all(
             callable(getattr(device, attribute, None))

@@ -29,6 +29,36 @@ def test_store_saves_private_versioned_credentials(tmp_path):
     assert list(path.parent.glob("*.tmp")) == []
 
 
+def test_store_atomically_migrates_v1_credentials_on_load(tmp_path):
+    path = tmp_path / "credentials.json"
+    path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "revision": 7,
+                "ring_token": {"refresh_token": "legacy"},
+                "account_email": "person@example.com",
+            }
+        ),
+        encoding="utf-8",
+    )
+    path.chmod(0o600)
+
+    credentials = CredentialStore(path).load()
+
+    assert credentials.ring_token == {"refresh_token": "legacy"}
+    assert credentials.account_email == "person@example.com"
+    assert credentials.event_credentials is None
+    assert credentials.revision == 8
+    assert json.loads(path.read_text(encoding="utf-8")) == {
+        "version": FILE_STORE_VERSION,
+        "revision": 8,
+        "ring_token": {"refresh_token": "legacy"},
+        "account_email": "person@example.com",
+        "event_credentials": None,
+    }
+
+
 def test_store_rejects_symlink_and_excessive_permissions(tmp_path):
     target = tmp_path / "target.json"
     target.write_text("{}", encoding="utf-8")
@@ -118,13 +148,15 @@ def test_clear_is_one_atomic_revision(tmp_path):
     store = CredentialStore(path)
     store.save_token({"refresh_token": "active"})
     store.save_account_email("person@example.com")
+    store.save_event_credentials({"gcm": {"android_id": "push-device"}})
 
     store.clear()
 
     credentials = store.load()
-    assert credentials.revision == 3
+    assert credentials.revision == 4
     assert credentials.ring_token is None
     assert credentials.account_email is None
+    assert credentials.event_credentials is None
 
 
 def test_save_session_is_one_atomic_revision(tmp_path):
@@ -160,3 +192,58 @@ def test_mutable_tokens_are_copied_on_save_and_load(tmp_path):
     assert loaded == {"refresh_token": "active"}
     loaded["refresh_token"] = "also changed"
     assert store.load_token() == {"refresh_token": "active"}
+
+
+def test_event_credentials_are_deep_copied_and_cleared_on_account_change(tmp_path):
+    store = CredentialStore(tmp_path / "credentials.json")
+    store.save_session({"refresh_token": "active"}, "first@example.com")
+    event_credentials = {"gcm": {"android_id": "push-device"}}
+    store.save_event_credentials(event_credentials)
+    event_credentials["gcm"]["android_id"] = "mutated"
+
+    loaded = store.load_event_credentials()
+    assert loaded == {"gcm": {"android_id": "push-device"}}
+    loaded["gcm"]["android_id"] = "also-mutated"
+    assert store.load_event_credentials() == {"gcm": {"android_id": "push-device"}}
+
+    store.save_session({"refresh_token": "replacement"}, "second@example.com")
+    assert store.load_event_credentials() is None
+
+
+@pytest.mark.parametrize(
+    "invalid",
+    [None, [], {"invalid": object()}, {"invalid": float("nan")}],
+)
+def test_store_rejects_invalid_event_credentials_without_changing_revision(tmp_path, invalid):
+    store = CredentialStore(tmp_path / "credentials.json")
+    store.save_session({"refresh_token": "active"}, "person@example.com")
+    before = store.load()
+
+    with pytest.raises(CredentialStoreError, match="JSON object"):
+        store.save_event_credentials(invalid)
+
+    after = store.load()
+    assert after == before
+
+
+@pytest.mark.parametrize("event_credentials", [[], {"gcm": {"value": float("nan")}}])
+def test_store_rejects_invalid_v2_event_credentials_without_replacing_file(
+    tmp_path,
+    event_credentials,
+):
+    path = tmp_path / "credentials.json"
+    payload = {
+        "version": FILE_STORE_VERSION,
+        "revision": 2,
+        "ring_token": {"refresh_token": "active"},
+        "account_email": "person@example.com",
+        "event_credentials": event_credentials,
+    }
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    path.chmod(0o600)
+    original = path.read_bytes()
+
+    with pytest.raises(CredentialStoreError, match="invalid format"):
+        CredentialStore(path).load()
+
+    assert path.read_bytes() == original

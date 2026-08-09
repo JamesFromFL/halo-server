@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import asdict, dataclass
 from typing import Any
 
@@ -15,6 +16,11 @@ MAX_DEVICE_KIND_UNITS = 128
 MAX_DEVICE_MODEL_UNITS = 128
 SDK_MODEL_FALLBACKS = {
     "stickup_cam_mini_v3": "Unknown Stickup Cam",
+}
+# The observed mini_v3 is Halo's 2K Indoor Cam Plus media override; Ring's
+# public product contract includes a siren, but its internal-kind map is private.
+INFERRED_KIND_CAPABILITY_FALLBACKS = {
+    "stickup_cam_mini_v3": frozenset({"siren"}),
 }
 
 _log = logging.getLogger(__name__)
@@ -33,7 +39,9 @@ class DeviceSummary:
     battery_percent: int | None
     motion_detection: bool | None
     has_light: bool
+    light_on: bool | None
     has_siren: bool
+    siren_on: bool | None
     has_intercom: bool
 
     def as_dict(self) -> dict[str, Any]:
@@ -49,20 +57,24 @@ def summarize_device(device: Any) -> DeviceSummary | None:
     if device_id is None:
         return None
     kind = _text_attr(device, "kind", maximum_units=MAX_DEVICE_KIND_UNITS)
+    model = SDK_MODEL_FALLBACKS.get(kind)
+    if model is None:
+        model = _text_attr(device, "model", maximum_units=MAX_DEVICE_MODEL_UNITS)
+    has_light = has_ring_camera_capability(device, "light")
+    has_siren = has_ring_camera_capability(device, "siren")
     return DeviceSummary(
         id=device_id,
         name=_text_attr(device, "name", maximum_units=MAX_DEVICE_NAME_UNITS),
         family=family,
         kind=kind,
-        model=SDK_MODEL_FALLBACKS.get(
-            kind,
-            _text_attr(device, "model", maximum_units=MAX_DEVICE_MODEL_UNITS),
-        ),
+        model=model,
         online=_bool_attr(device, "subscribed"),
         battery_percent=_battery_attr(device),
         motion_detection=_bool_attr(device, "motion_detection"),
-        has_light=_capability(device, "light"),
-        has_siren=_capability(device, "siren"),
+        has_light=has_light,
+        light_on=_bool_attr(device, "light") if has_light else None,
+        has_siren=has_siren,
+        siren_on=_siren_on_attr(device) if has_siren else None,
         has_intercom=supports_ring_camera_intercom(device),
     )
 
@@ -80,6 +92,25 @@ def summarize_cameras(devices: list[Any]) -> list[dict[str, Any]]:
     summaries = list(unique.values())
     summaries.sort(key=lambda summary: (summary.name.casefold(), summary.id))
     return [summary.as_dict() for summary in summaries]
+
+
+def supports_ring_camera_snapshot(device: Any) -> bool:
+    """Return whether one allowlisted Ring camera supports still images."""
+    family = _text_attr(device, "family")
+    if family not in CAMERA_FAMILIES:
+        return False
+    kind = _text_attr(device, "kind", maximum_units=MAX_DEVICE_KIND_UNITS)
+    return callable(_safe_attr(device, "async_get_snapshot")) and (
+        kind in SDK_MODEL_FALLBACKS or _capability(device, "video")
+    )
+
+
+def has_ring_camera_capability(device: Any, capability: str) -> bool:
+    """Return one SDK capability plus Halo's exact-kind compatibility overrides."""
+    kind = _text_attr(device, "kind", maximum_units=MAX_DEVICE_KIND_UNITS)
+    return capability in INFERRED_KIND_CAPABILITY_FALLBACKS.get(kind, frozenset()) or _capability(
+        device, capability
+    )
 
 
 def _safe_attr(device: Any, name: str) -> Any:
@@ -124,6 +155,8 @@ def _bool_attr(device: Any, name: str) -> bool | None:
 
 
 def _battery_attr(device: Any) -> int | None:
+    if not has_ring_camera_capability(device, "battery"):
+        return None
     value = _safe_attr(device, "battery_life")
     if isinstance(value, bool):
         return None
@@ -132,6 +165,15 @@ def _battery_attr(device: Any) -> int | None:
     except (TypeError, ValueError):
         return None
     return max(0, min(percentage, 100))
+
+
+def _siren_on_attr(device: Any) -> bool | None:
+    value = _safe_attr(device, "siren")
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    return value > 0
 
 
 def _capability(device: Any, capability: str) -> bool:

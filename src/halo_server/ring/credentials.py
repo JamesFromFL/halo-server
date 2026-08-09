@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import copy
 import fcntl
 import json
 import os
@@ -15,7 +16,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-FILE_STORE_VERSION = 1
+FILE_STORE_VERSION = 2
+_LEGACY_FILE_STORE_VERSION = 1
 _UNCHANGED = object()
 _path_locks_guard = threading.Lock()
 _path_locks: dict[Path, threading.RLock] = {}
@@ -29,10 +31,24 @@ class CredentialSupersededError(CredentialStoreError):
     """Raised when another process changed credentials before this writer."""
 
 
+def _validated_json_object(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise CredentialStoreError("Ring event credentials must be a JSON object")
+    try:
+        encoded = json.dumps(value, allow_nan=False, separators=(",", ":"))
+        normalized = json.loads(encoded)
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise CredentialStoreError("Ring event credentials must be a JSON object") from exc
+    if not isinstance(normalized, dict):
+        raise CredentialStoreError("Ring event credentials must be a JSON object")
+    return normalized
+
+
 @dataclass(frozen=True)
 class StoredCredentials:
     ring_token: dict[str, Any] | None
     account_email: str | None
+    event_credentials: dict[str, Any] | None
     revision: int
 
 
@@ -54,12 +70,19 @@ class CredentialStore:
 
     def load(self) -> StoredCredentials:
         with self._transaction():
-            payload = self._read_locked()
+            payload, needs_migration = self._read_locked()
+            if needs_migration:
+                payload["revision"] += 1
+                self._write_locked(payload)
             self._revision = payload["revision"]
             token = payload["ring_token"]
+            event_credentials = payload["event_credentials"]
             return StoredCredentials(
                 ring_token=dict(token) if token is not None else None,
                 account_email=payload["account_email"],
+                event_credentials=(
+                    copy.deepcopy(event_credentials) if event_credentials is not None else None
+                ),
                 revision=payload["revision"],
             )
 
@@ -68,6 +91,9 @@ class CredentialStore:
 
     def load_account_email(self) -> str | None:
         return self.load().account_email
+
+    def load_event_credentials(self) -> dict[str, Any] | None:
+        return self.load().event_credentials
 
     def save_token(self, token: dict[str, Any]) -> None:
         if not isinstance(token, dict):
@@ -87,6 +113,10 @@ class CredentialStore:
             raise CredentialStoreError("Ring account email must be a string")
         self._update(ring_token=dict(token), account_email=email)
 
+    def save_event_credentials(self, credentials: dict[str, Any]) -> None:
+        """Atomically store the FCM registration used for Ring push events."""
+        self._update(event_credentials=_validated_json_object(credentials))
+
     def clear_token(self) -> None:
         self._update(ring_token=None)
 
@@ -95,12 +125,12 @@ class CredentialStore:
 
     def clear(self) -> None:
         """Atomically tombstone all stored Ring credentials."""
-        self._update(ring_token=None, account_email=None)
+        self._update(ring_token=None, account_email=None, event_credentials=None)
 
     def assert_revision(self, expected: int) -> None:
         """Reject a decision based on credentials changed by another process."""
         with self._transaction():
-            actual = self._read_locked()["revision"]
+            actual = self._read_locked()[0]["revision"]
             if actual != expected:
                 raise CredentialSupersededError(
                     "Ring credentials changed in another process; refusing stale state"
@@ -111,9 +141,10 @@ class CredentialStore:
         *,
         ring_token: dict[str, Any] | None | object = _UNCHANGED,
         account_email: str | None | object = _UNCHANGED,
+        event_credentials: dict[str, Any] | None | object = _UNCHANGED,
     ) -> None:
         with self._transaction():
-            payload = self._read_locked()
+            payload, _ = self._read_locked()
             if self._revision is not None and payload["revision"] != self._revision:
                 raise CredentialSupersededError(
                     "Ring credentials changed in another process; refusing a stale update"
@@ -121,7 +152,11 @@ class CredentialStore:
             if ring_token is not _UNCHANGED:
                 payload["ring_token"] = ring_token
             if account_email is not _UNCHANGED:
+                if payload["account_email"] != account_email:
+                    payload["event_credentials"] = None
                 payload["account_email"] = account_email
+            if event_credentials is not _UNCHANGED:
+                payload["event_credentials"] = event_credentials
             payload["revision"] += 1
             self._write_locked(payload)
             self._revision = payload["revision"]
@@ -163,14 +198,18 @@ class CredentialStore:
                     os.close(descriptor)
                 raise
 
-    def _read_locked(self) -> dict[str, Any]:
+    def _read_locked(self) -> tuple[dict[str, Any], bool]:
         if not self.path.exists() and not self.path.is_symlink():
-            return {
-                "version": FILE_STORE_VERSION,
-                "revision": 0,
-                "ring_token": None,
-                "account_email": None,
-            }
+            return (
+                {
+                    "version": FILE_STORE_VERSION,
+                    "revision": 0,
+                    "ring_token": None,
+                    "account_email": None,
+                    "event_credentials": None,
+                },
+                False,
+            )
 
         open_flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
         open_flags |= getattr(os, "O_NOFOLLOW", 0)
@@ -194,9 +233,10 @@ class CredentialStore:
                 with contextlib.suppress(OSError):
                     os.close(descriptor)
 
+        version = payload.get("version") if isinstance(payload, dict) else None
         if (
             not isinstance(payload, dict)
-            or payload.get("version") != FILE_STORE_VERSION
+            or version not in {_LEGACY_FILE_STORE_VERSION, FILE_STORE_VERSION}
             or type(payload.get("revision")) is not int
             or payload["revision"] < 0
             or (
@@ -207,14 +247,31 @@ class CredentialStore:
                 payload.get("account_email") is not None
                 and not isinstance(payload.get("account_email"), str)
             )
+            or (
+                version == FILE_STORE_VERSION
+                and payload.get("event_credentials") is not None
+                and not isinstance(payload.get("event_credentials"), dict)
+            )
         ):
             raise CredentialStoreError("Stored Ring credential file has an invalid format")
-        return {
-            "version": FILE_STORE_VERSION,
-            "revision": payload["revision"],
-            "ring_token": payload.get("ring_token"),
-            "account_email": payload.get("account_email"),
-        }
+        event_credentials = payload.get("event_credentials")
+        if version == FILE_STORE_VERSION and event_credentials is not None:
+            try:
+                event_credentials = _validated_json_object(event_credentials)
+            except CredentialStoreError as exc:
+                raise CredentialStoreError(
+                    "Stored Ring credential file has an invalid format"
+                ) from exc
+        return (
+            {
+                "version": FILE_STORE_VERSION,
+                "revision": payload["revision"],
+                "ring_token": payload.get("ring_token"),
+                "account_email": payload.get("account_email"),
+                "event_credentials": (event_credentials if version == FILE_STORE_VERSION else None),
+            },
+            version == _LEGACY_FILE_STORE_VERSION,
+        )
 
     def _write_locked(self, payload: dict[str, Any]) -> None:
         tmp_path: Path | None = None

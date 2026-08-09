@@ -12,7 +12,7 @@ class FakeCamera:
     motion_detection = True
 
     def has_capability(self, capability):
-        return capability in {"siren", "video"}
+        return capability in {"battery", "siren", "video"}
 
     async def generate_async_webrtc_stream(self):
         return None
@@ -40,7 +40,9 @@ def test_device_summary_is_an_allowlisted_camera_contract():
         "battery_percent": 89,
         "motion_detection": True,
         "has_light": False,
+        "light_on": None,
         "has_siren": True,
+        "siren_on": None,
         "has_intercom": True,
     }
 
@@ -76,22 +78,99 @@ def test_device_summary_contains_attribute_failures():
     assert summary.battery_percent is None
     assert summary.motion_detection is None
     assert summary.has_light is False
+    assert summary.light_on is None
     assert summary.has_siren is False
+    assert summary.siren_on is None
     assert summary.has_intercom is False
 
 
+def test_device_summary_ignores_stray_battery_value_without_sdk_capability():
+    class WiredCamera(FakeCamera):
+        battery_life = "100"
+
+        def has_capability(self, capability):
+            return capability in {"siren", "video"}
+
+    summary = summarize_device(WiredCamera())
+
+    assert summary.battery_percent is None
+
+
 def test_device_summary_uses_quiet_fallback_for_sdk_unknown_model():
+    model_accesses = []
+
     class NewCamera(FakeCamera):
         kind = "stickup_cam_mini_v3"
 
         @property
         def model(self):
+            model_accesses.append(True)
             raise AssertionError("noisy SDK model accessor must not run")
 
     summary = summarize_device(NewCamera())
 
     assert summary.kind == "stickup_cam_mini_v3"
     assert summary.model == "Unknown Stickup Cam"
+    assert model_accesses == []
+
+
+def test_unknown_future_kind_does_not_infer_controls_from_raw_status_fields():
+    class FutureCamera(FakeCamera):
+        kind = "future_camera_kind"
+        led_status = "on"
+        siren_status = {"seconds_remaining": 30}
+
+        def has_capability(self, _capability):
+            return False
+
+    summary = summarize_device(FutureCamera())
+
+    assert summary.battery_percent is None
+    assert summary.has_light is False
+    assert summary.light_on is None
+    assert summary.has_siren is False
+    assert summary.siren_on is None
+
+
+def test_device_summary_publishes_supported_light_and_siren_state():
+    camera = FakeCamera()
+    camera.light = True
+    camera.siren = 30
+
+    def capabilities(capability):
+        return capability in {"battery", "light", "siren", "video"}
+
+    camera.has_capability = capabilities
+
+    summary = summarize_device(camera)
+
+    assert summary.has_light is True
+    assert summary.light_on is True
+    assert summary.has_siren is True
+    assert summary.siren_on is True
+
+    camera.light = False
+    camera.siren = 0
+    summary = summarize_device(camera)
+
+    assert summary.light_on is False
+    assert summary.siren_on is False
+
+
+def test_device_summary_contains_invalid_supported_control_state():
+    camera = FakeCamera()
+    camera.light = "on"
+    camera.siren = float("nan")
+
+    def capabilities(capability):
+        return capability in {"battery", "light", "siren", "video"}
+
+    camera.has_capability = capabilities
+
+    summary = summarize_device(camera)
+
+    assert summary.light_on is None
+    assert summary.siren_on is None
 
 
 def test_camera_summaries_are_sorted_and_plain_json_data():

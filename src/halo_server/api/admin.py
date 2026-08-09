@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import ctypes
 import json
 import logging
 import os
 import socket
 import stat
 import struct
+import sys
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
@@ -134,16 +136,50 @@ def _validate_request(request: Any) -> tuple[str | int, str, dict[str, Any]]:
 
 def _require_owner_peer(writer: asyncio.StreamWriter) -> None:
     peer_socket = writer.get_extra_info("socket")
-    if peer_socket is None or not hasattr(socket, "SO_PEERCRED"):
+    peer_uid = _peer_uid(peer_socket) if peer_socket is not None else None
+    if peer_uid is None:
         raise AdminProtocolError("peer_rejected", "Cannot verify admin client identity")
-    credentials = peer_socket.getsockopt(
-        socket.SOL_SOCKET,
-        socket.SO_PEERCRED,
-        struct.calcsize("3i"),
-    )
-    _pid, peer_uid, _gid = struct.unpack("3i", credentials)
     if peer_uid != os.getuid():
         raise AdminProtocolError("peer_rejected", "Admin client is not the daemon owner")
+
+
+def _peer_uid(peer_socket) -> int | None:
+    """Return a verified Unix-domain peer uid on Linux or macOS."""
+    if hasattr(socket, "SO_PEERCRED"):
+        try:
+            credentials = peer_socket.getsockopt(
+                socket.SOL_SOCKET,
+                socket.SO_PEERCRED,
+                struct.calcsize("3i"),
+            )
+            _pid, peer_uid, _gid = struct.unpack("3i", credentials)
+            return peer_uid
+        except (OSError, struct.error):
+            pass
+    if sys.platform == "darwin":
+        try:
+            return _darwin_peer_uid(peer_socket.fileno())
+        except (AttributeError, OSError, TypeError, ValueError):
+            return None
+    return None
+
+
+def _darwin_peer_uid(descriptor: int) -> int:
+    """Read a Unix-domain peer uid through macOS libc ``getpeereid``."""
+    libc = ctypes.CDLL(None, use_errno=True)
+    getpeereid = libc.getpeereid
+    getpeereid.argtypes = [
+        ctypes.c_int,
+        ctypes.POINTER(ctypes.c_uint),
+        ctypes.POINTER(ctypes.c_uint),
+    ]
+    getpeereid.restype = ctypes.c_int
+    peer_uid = ctypes.c_uint()
+    peer_gid = ctypes.c_uint()
+    if getpeereid(descriptor, ctypes.byref(peer_uid), ctypes.byref(peer_gid)) != 0:
+        error_number = ctypes.get_errno()
+        raise OSError(error_number, os.strerror(error_number))
+    return peer_uid.value
 
 
 async def _remove_stale_socket(path: Path) -> None:

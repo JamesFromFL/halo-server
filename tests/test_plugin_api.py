@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import logging
 from contextlib import asynccontextmanager
 
@@ -12,8 +13,10 @@ from halo_server.api.plugin import (
     PLUGIN_PROTOCOL_VERSION,
     PROTOCOL_HEADER,
     PluginApiServer,
+    PluginCameraOperationError,
 )
 from halo_server.api.tokens import PluginTokenStore
+from halo_server.ring.snapshots import MAX_SNAPSHOT_BYTES
 
 
 def _status():
@@ -33,7 +36,9 @@ def _status():
                 "battery_percent": 90,
                 "motion_detection": True,
                 "has_light": False,
+                "light_on": None,
                 "has_siren": False,
+                "siren_on": None,
                 "has_intercom": True,
             }
         ],
@@ -47,6 +52,8 @@ async def _server(
     rate_limit=120,
     media_provider=None,
     intercom_provider=None,
+    control_provider=None,
+    snapshot_provider=None,
     status_provider=_status,
 ):
     tokens = PluginTokenStore(tmp_path / "integrations")
@@ -60,6 +67,8 @@ async def _server(
         status_provider=status_provider,
         media_provider=media_provider,
         intercom_provider=intercom_provider,
+        control_provider=control_provider,
+        snapshot_provider=snapshot_provider,
         rate_limit=rate_limit,
     )
     await server.start()
@@ -318,6 +327,515 @@ async def test_plugin_devices_publish_authenticated_on_demand_media_descriptor(t
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("with_snapshot", "with_controls", "optional_capabilities"),
+    [
+        (False, False, []),
+        (True, False, ["snapshot"]),
+        (False, True, ["light", "siren"]),
+        (True, True, ["snapshot", "light", "siren"]),
+    ],
+)
+async def test_plugin_capabilities_advertise_only_configured_providers(
+    tmp_path,
+    with_snapshot,
+    with_controls,
+    optional_capabilities,
+):
+    async def snapshot(_camera_id, _fresh):
+        return b"unused"
+
+    async def control(_camera_id, _name, _on):
+        return None
+
+    async with (
+        _server(
+            tmp_path,
+            snapshot_provider=snapshot if with_snapshot else None,
+            control_provider=control if with_controls else None,
+        ) as (server, _tokens, issued, _events),
+        aiohttp.ClientSession() as client,
+    ):
+        response = await client.get(
+            f"http://127.0.0.1:{server.bound_port}/v1/capabilities",
+            headers=_headers(issued.token),
+        )
+        capabilities = await response.json()
+
+    assert response.status == 200
+    assert capabilities["protocol_version"] == PLUGIN_PROTOCOL_VERSION
+    assert capabilities["capabilities"] == [
+        "devices",
+        "events",
+        "motion",
+        "doorbell",
+        "battery",
+        "online",
+        *optional_capabilities,
+    ]
+
+
+@pytest.mark.asyncio
+async def test_camera_light_and_siren_controls_accept_only_capable_devices(tmp_path):
+    status = _status()
+    status["cameras"][0]["has_light"] = True
+    status["cameras"][0]["has_siren"] = True
+    calls = []
+
+    async def control(camera_id, name, on):
+        calls.append((camera_id, name, on))
+
+    async with (
+        _server(
+            tmp_path,
+            status_provider=lambda: status,
+            control_provider=control,
+        ) as (server, _tokens, issued, _events),
+        aiohttp.ClientSession() as client,
+    ):
+        light = await client.put(
+            f"http://127.0.0.1:{server.bound_port}/v1/devices/42/light",
+            headers=_headers(issued.token),
+            json={"on": True},
+        )
+        siren = await client.put(
+            f"http://127.0.0.1:{server.bound_port}/v1/devices/42/siren",
+            headers=_headers(issued.token),
+            json={"on": False},
+        )
+
+        assert light.status == 204
+        assert await light.read() == b""
+        assert light.headers["Cache-Control"] == "no-store"
+        assert light.headers[PROTOCOL_HEADER] == str(PLUGIN_PROTOCOL_VERSION)
+        assert siren.status == 204
+
+    assert calls == [("42", "light", True), ("42", "siren", False)]
+
+
+@pytest.mark.asyncio
+async def test_camera_control_rejects_non_exact_json_bodies_without_provider_call(tmp_path):
+    status = _status()
+    status["cameras"][0]["has_light"] = True
+    calls = []
+
+    async def control(*args):
+        calls.append(args)
+
+    async with (
+        _server(
+            tmp_path,
+            status_provider=lambda: status,
+            control_provider=control,
+        ) as (server, _tokens, issued, _events),
+        aiohttp.ClientSession() as client,
+    ):
+        url = f"http://127.0.0.1:{server.bound_port}/v1/devices/42/light"
+        responses = [
+            await client.put(url, headers=_headers(issued.token), json={}),
+            await client.put(url, headers=_headers(issued.token), json={"on": 1}),
+            await client.put(
+                url,
+                headers=_headers(issued.token),
+                json={"on": True, "extra": False},
+            ),
+            await client.put(url, headers=_headers(issued.token), json=[True]),
+            await client.put(
+                url,
+                headers={**_headers(issued.token), "Content-Type": "application/json"},
+                data=b"{",
+            ),
+            await client.put(
+                url,
+                headers={**_headers(issued.token), "Content-Type": "application/json"},
+                data=b'{"on":true,"on":false}',
+            ),
+            await client.put(
+                url,
+                headers={**_headers(issued.token), "Content-Type": "text/plain"},
+                data=b'{"on":true}',
+            ),
+        ]
+        bodies = [await response.json() for response in responses]
+
+    assert [response.status for response in responses] == [400] * len(responses)
+    assert {body["error"]["code"] for body in bodies} == {"bad_request"}
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_camera_control_rejects_unknown_and_unsupported_devices(tmp_path):
+    calls = []
+
+    async def control(*args):
+        calls.append(args)
+
+    async with (
+        _server(tmp_path, control_provider=control) as (server, _tokens, issued, _events),
+        aiohttp.ClientSession() as client,
+    ):
+        unsupported = await client.put(
+            f"http://127.0.0.1:{server.bound_port}/v1/devices/42/light",
+            headers=_headers(issued.token),
+            json={"on": True},
+        )
+        missing = await client.put(
+            f"http://127.0.0.1:{server.bound_port}/v1/devices/missing/siren",
+            headers=_headers(issued.token),
+            json={"on": True},
+        )
+        unsupported_body = await unsupported.json()
+        missing_body = await missing.json()
+
+    assert unsupported.status == 404
+    assert unsupported_body["error"]["code"] == "light_unsupported"
+    assert missing.status == 404
+    assert missing_body["error"]["code"] == "camera_unavailable"
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_camera_control_authentication_precedes_body_and_provider(tmp_path):
+    calls = []
+
+    async def control(*args):
+        calls.append(args)
+
+    async with (
+        _server(tmp_path, control_provider=control) as (server, _tokens, issued, _events),
+        aiohttp.ClientSession() as client,
+    ):
+        url = f"http://127.0.0.1:{server.bound_port}/v1/devices/42/light"
+        unauthorized = await client.put(
+            url,
+            headers={PROTOCOL_HEADER: str(PLUGIN_PROTOCOL_VERSION)},
+            data=b"not-json",
+        )
+        old_version = await client.put(
+            url,
+            headers={**_headers(issued.token), PROTOCOL_HEADER: "1"},
+            json={"on": True},
+        )
+
+    assert unauthorized.status == 401
+    assert old_version.status == 426
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_camera_control_returns_stable_provider_error(tmp_path):
+    status = _status()
+    status["cameras"][0]["has_siren"] = True
+
+    async def fail_control(*_args):
+        raise PluginCameraOperationError(
+            "control_failed",
+            "Ring camera control could not be completed",
+            status=502,
+        )
+
+    async with (
+        _server(
+            tmp_path,
+            status_provider=lambda: status,
+            control_provider=fail_control,
+        ) as (server, _tokens, issued, _events),
+        aiohttp.ClientSession() as client,
+    ):
+        response = await client.put(
+            f"http://127.0.0.1:{server.bound_port}/v1/devices/42/siren",
+            headers=_headers(issued.token),
+            json={"on": True},
+        )
+        body = await response.json()
+
+    assert response.status == 502
+    assert body["error"]["code"] == "control_failed"
+
+
+@pytest.mark.asyncio
+async def test_camera_control_timeout_cancels_provider(tmp_path, monkeypatch):
+    monkeypatch.setattr(plugin_api, "CAMERA_CONTROL_TIMEOUT_SECONDS", 0.01)
+    status = _status()
+    status["cameras"][0]["has_light"] = True
+    cancelled = asyncio.Event()
+
+    async def control(*_args):
+        try:
+            await asyncio.sleep(10)
+        finally:
+            cancelled.set()
+
+    async with (
+        _server(
+            tmp_path,
+            status_provider=lambda: status,
+            control_provider=control,
+        ) as (server, _tokens, issued, _events),
+        aiohttp.ClientSession() as client,
+    ):
+        response = await client.put(
+            f"http://127.0.0.1:{server.bound_port}/v1/devices/42/light",
+            headers=_headers(issued.token),
+            json={"on": True},
+        )
+        body = await response.json()
+
+    assert response.status == 504
+    assert body["error"]["code"] == "control_timeout"
+    assert cancelled.is_set()
+
+
+@pytest.mark.asyncio
+async def test_camera_operations_are_unavailable_without_injected_providers(tmp_path):
+    async with (
+        _server(tmp_path) as (server, _tokens, issued, _events),
+        aiohttp.ClientSession() as client,
+    ):
+        light = await client.put(
+            f"http://127.0.0.1:{server.bound_port}/v1/devices/42/light",
+            headers=_headers(issued.token),
+            json={"on": True},
+        )
+        snapshot = await client.get(
+            f"http://127.0.0.1:{server.bound_port}/v1/devices/42/snapshot",
+            headers=_headers(issued.token),
+        )
+        light_body = await light.json()
+        snapshot_body = await snapshot.json()
+
+    assert light.status == snapshot.status == 404
+    assert light_body["error"]["code"] == "control_unavailable"
+    assert snapshot_body["error"]["code"] == "snapshot_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_snapshot_defaults_to_cached_and_fresh_is_explicit(tmp_path):
+    image = b"\xff\xd8halo-jpeg\xff\xd9"
+    calls = []
+    status = _status()
+    status["cameras"][0]["has_intercom"] = False
+
+    async def snapshot(camera_id, fresh):
+        calls.append((camera_id, fresh))
+        return image
+
+    async with (
+        _server(
+            tmp_path,
+            snapshot_provider=snapshot,
+            status_provider=lambda: status,
+        ) as (server, _tokens, issued, _events),
+        aiohttp.ClientSession() as client,
+    ):
+        cached = await client.get(
+            f"http://127.0.0.1:{server.bound_port}/v1/devices/42/snapshot",
+            headers=_headers(issued.token),
+        )
+        cached_body = await cached.read()
+        fresh = await client.get(
+            f"http://127.0.0.1:{server.bound_port}/v1/devices/42/snapshot?fresh=1",
+            headers=_headers(issued.token),
+        )
+        fresh_body = await fresh.read()
+
+    assert cached.status == fresh.status == 200
+    assert cached_body == fresh_body == image
+    assert cached.headers["Content-Type"] == "image/jpeg"
+    assert cached.headers["Cache-Control"] == "no-store"
+    assert cached.headers[PROTOCOL_HEADER] == str(PLUGIN_PROTOCOL_VERSION)
+    assert calls == [("42", False), ("42", True)]
+
+
+@pytest.mark.asyncio
+async def test_snapshot_security_and_methods_cannot_wake_camera(tmp_path):
+    calls = []
+
+    async def snapshot(*args):
+        calls.append(args)
+        return b"\xff\xd8jpeg\xff\xd9"
+
+    async with (
+        _server(tmp_path, snapshot_provider=snapshot) as (server, _tokens, issued, _events),
+        aiohttp.ClientSession() as client,
+    ):
+        response = await client.head(
+            f"http://127.0.0.1:{server.bound_port}/v1/devices/42/snapshot?fresh=1",
+            headers=_headers(issued.token),
+        )
+        unauthorized = await client.get(
+            f"http://127.0.0.1:{server.bound_port}/v1/devices/42/snapshot?fresh=1",
+            headers={PROTOCOL_HEADER: str(PLUGIN_PROTOCOL_VERSION)},
+        )
+        old_version = await client.get(
+            f"http://127.0.0.1:{server.bound_port}/v1/devices/42/snapshot?fresh=1",
+            headers={**_headers(issued.token), PROTOCOL_HEADER: "1"},
+        )
+        wrong_method = await client.post(
+            f"http://127.0.0.1:{server.bound_port}/v1/devices/42/snapshot?fresh=1",
+            headers=_headers(issued.token),
+        )
+
+    assert response.status == 405
+    assert unauthorized.status == 401
+    assert old_version.status == 426
+    assert wrong_method.status == 405
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_snapshot_rejects_invalid_query_unknown_camera_and_signed_out_state(tmp_path):
+    calls = []
+
+    async def snapshot(*args):
+        calls.append(args)
+        return b"\xff\xd8jpeg\xff\xd9"
+
+    signed_out = _status()
+    signed_out["account"]["authenticated"] = False
+    async with (
+        _server(tmp_path, snapshot_provider=snapshot) as (server, _tokens, issued, _events),
+        aiohttp.ClientSession() as client,
+    ):
+        base = f"http://127.0.0.1:{server.bound_port}/v1/devices"
+        invalid = await client.get(
+            f"{base}/42/snapshot?fresh=true",
+            headers=_headers(issued.token),
+        )
+        repeated = await client.get(
+            f"{base}/42/snapshot?fresh=0&fresh=1",
+            headers=_headers(issued.token),
+        )
+        extra = await client.get(
+            f"{base}/42/snapshot?extra=1",
+            headers=_headers(issued.token),
+        )
+        missing = await client.get(
+            f"{base}/missing/snapshot",
+            headers=_headers(issued.token),
+        )
+    async with (
+        _server(
+            tmp_path / "signed-out",
+            snapshot_provider=snapshot,
+            status_provider=lambda: signed_out,
+        ) as (server, _tokens, issued, _events),
+        aiohttp.ClientSession() as client,
+    ):
+        unavailable = await client.get(
+            f"http://127.0.0.1:{server.bound_port}/v1/devices/42/snapshot",
+            headers=_headers(issued.token),
+        )
+
+    assert [invalid.status, repeated.status, extra.status] == [400, 400, 400]
+    assert missing.status == 404
+    assert unavailable.status == 503
+    assert calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "image",
+    [
+        None,
+        bytearray(b"\xff\xd8jpeg\xff\xd9"),
+        b"",
+        b"not-a-jpeg",
+        b"\xff\xd8missing-end",
+        b"\xff\xd8" + b"x" * MAX_SNAPSHOT_BYTES + b"\xff\xd9",
+    ],
+)
+async def test_snapshot_rejects_empty_malformed_and_oversize_images(tmp_path, image):
+    async def snapshot(_camera_id, _fresh):
+        return image
+
+    async with (
+        _server(tmp_path, snapshot_provider=snapshot) as (server, _tokens, issued, _events),
+        aiohttp.ClientSession() as client,
+    ):
+        response = await client.get(
+            f"http://127.0.0.1:{server.bound_port}/v1/devices/42/snapshot",
+            headers=_headers(issued.token),
+        )
+        body = await response.json()
+
+    assert response.status == 502
+    assert body["error"]["code"] == "snapshot_invalid"
+
+
+@pytest.mark.asyncio
+async def test_snapshot_timeout_cancels_provider(tmp_path, monkeypatch):
+    monkeypatch.setattr(plugin_api, "SNAPSHOT_TIMEOUT_SECONDS", 0.01)
+    cancelled = asyncio.Event()
+
+    async def snapshot(_camera_id, _fresh):
+        try:
+            await asyncio.sleep(10)
+        finally:
+            cancelled.set()
+
+    async with (
+        _server(tmp_path, snapshot_provider=snapshot) as (server, _tokens, issued, _events),
+        aiohttp.ClientSession() as client,
+    ):
+        response = await client.get(
+            f"http://127.0.0.1:{server.bound_port}/v1/devices/42/snapshot",
+            headers=_headers(issued.token),
+        )
+        body = await response.json()
+
+    assert response.status == 504
+    assert body["error"]["code"] == "snapshot_timeout"
+    assert cancelled.is_set()
+
+
+@pytest.mark.asyncio
+async def test_snapshot_returns_stable_provider_error(tmp_path):
+    async def snapshot(_camera_id, _fresh):
+        raise PluginCameraOperationError(
+            "snapshot_failed",
+            "Ring snapshot could not be completed",
+            status=502,
+        )
+
+    async with (
+        _server(tmp_path, snapshot_provider=snapshot) as (server, _tokens, issued, _events),
+        aiohttp.ClientSession() as client,
+    ):
+        response = await client.get(
+            f"http://127.0.0.1:{server.bound_port}/v1/devices/42/snapshot",
+            headers=_headers(issued.token),
+        )
+        body = await response.json()
+
+    assert response.status == 502
+    assert body["error"]["code"] == "snapshot_failed"
+
+
+@pytest.mark.asyncio
+async def test_snapshot_contains_unexpected_provider_error(tmp_path, caplog):
+    caplog.set_level(logging.ERROR, logger="halo_server.api.plugin")
+
+    async def snapshot(_camera_id, _fresh):
+        raise RuntimeError("private upstream snapshot detail")
+
+    async with (
+        _server(tmp_path, snapshot_provider=snapshot) as (server, _tokens, issued, _events),
+        aiohttp.ClientSession() as client,
+    ):
+        response = await client.get(
+            f"http://127.0.0.1:{server.bound_port}/v1/devices/42/snapshot",
+            headers=_headers(issued.token),
+        )
+        body = await response.json()
+
+    assert response.status == 500
+    assert body["error"]["code"] == "internal_error"
+    assert "private upstream snapshot detail" not in str(body)
+    assert "private upstream snapshot detail" in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_intercom_descriptor_and_socket_accept_only_fixed_pcm_frames(tmp_path, caplog):
     caplog.set_level(logging.INFO)
     descriptor = {
@@ -384,6 +902,39 @@ async def test_intercom_descriptor_and_socket_accept_only_fixed_pcm_frames(tmp_p
     assert (
         "Halo intercom WebSocket closed camera_id=42 reason=client_closed frames=1" in caplog.text
     )
+
+
+@pytest.mark.asyncio
+async def test_intercom_socket_refuses_compression_and_accepts_incompressible_pcm(tmp_path):
+    intercom = FakeIntercomStream()
+
+    async def open_intercom(_camera_id):
+        return intercom
+
+    async with (
+        _server(tmp_path, intercom_provider=open_intercom) as (
+            server,
+            _tokens,
+            issued,
+            _events,
+        ),
+        aiohttp.ClientSession() as client,
+    ):
+        socket = await client.ws_connect(
+            f"http://127.0.0.1:{server.bound_port}/v1/intercom/42",
+            headers=_headers(issued.token),
+            compress=15,
+        )
+        assert socket.compress == 0
+        await socket.receive_json()
+        payload = hashlib.shake_256(b"halo-intercom-pcm").digest(INTERCOM_FRAME_BYTES)
+        await socket.send_bytes(payload)
+        await asyncio.wait_for(intercom.received.wait(), timeout=1)
+        assert (await socket.receive_json())["type"] == "active"
+        await socket.close()
+        await asyncio.wait_for(intercom.closed.wait(), timeout=1)
+
+    assert intercom.frames == [payload]
 
 
 @pytest.mark.asyncio

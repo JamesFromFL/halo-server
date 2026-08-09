@@ -11,7 +11,7 @@ import pytest
 
 from halo_server.media import rtsp
 from halo_server.media.audio import NormalizedOpusEncoder
-from halo_server.media.buffer import EncodedMediaBuffer
+from halo_server.media.buffer import EncodedMediaBuffer, h264_nal_types
 from halo_server.media.rtsp import (
     BufferedMediaConsumer,
     RtspMediaGateway,
@@ -38,6 +38,12 @@ def test_rtsp_launch_parses_with_installed_gstreamer():
     Gst.init(None)
     pipeline = Gst.parse_launch(_passthrough_launch())
     pipeline.set_state(Gst.State.NULL)
+
+
+def test_rtsp_factory_requires_interleaved_tcp_transport():
+    factory = rtsp._BufferedCameraFactory("42", lambda _camera_id: None)
+
+    assert factory.get_protocols() == rtsp.GstRtsp.RTSPLowerTrans.TCP
 
 
 def test_rtsp_gateway_requires_loopback_and_valid_port():
@@ -208,8 +214,6 @@ def test_rtsp_gateway_is_consumable_as_h264_and_opus():
             ffmpeg,
             "-v",
             "info",
-            "-rtsp_transport",
-            "tcp",
             "-i",
             descriptor["url"],
             "-t",
@@ -307,7 +311,133 @@ def test_rtsp_gateway_waits_for_cold_camera_keyframe():
     assert closed.wait(2)
 
 
-def _h264_packets() -> list[bytes]:
+def test_rtsp_gateway_replays_decoder_boundary_for_late_client():
+    ffmpeg = shutil.which("ffmpeg")
+    if ffmpeg is None:
+        pytest.skip("ffmpeg is unavailable")
+    try:
+        video_packets = _h264_packets(frame_count=180, keyframe_interval=300)
+    except Exception as exc:
+        pytest.skip(f"test H.264 encoder is unavailable: {exc}")
+
+    buffer = EncodedMediaBuffer()
+    opened_consumers = []
+
+    def open_consumer(_camera_id):
+        consumer = BufferedMediaConsumer(
+            buffer=buffer,
+            renew_callback=lambda: True,
+            close_callback=lambda: None,
+        )
+        opened_consumers.append(consumer)
+        return consumer
+
+    gateway = RtspMediaGateway(
+        host="127.0.0.1",
+        port=0,
+        password="temporary-secret",
+        open_consumer=open_consumer,
+    )
+    producer_stop = Event()
+    first_client = None
+    producer = None
+    try:
+        gateway.start(["42"])
+        descriptor = gateway.stream_descriptor("42")
+        first_client = subprocess.Popen(
+            [
+                ffmpeg,
+                "-v",
+                "error",
+                "-rtsp_transport",
+                "tcp",
+                "-i",
+                descriptor["url"],
+                "-t",
+                "5",
+                "-map",
+                "0:v:0",
+                "-map",
+                "0:a:0",
+                "-c",
+                "copy",
+                "-f",
+                "null",
+                "-",
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+
+        def feed_media():
+            audio_encoder = NormalizedOpusEncoder()
+            silence = np.zeros(960, dtype="<i2").tobytes()
+            started = time.monotonic()
+            for index, payload in enumerate(video_packets):
+                delay = started + index / 30 - time.monotonic()
+                if producer_stop.wait(max(0.0, delay)):
+                    return
+                buffer.append_video(payload, index * 3_000)
+                for _audio_frame in range(2):
+                    for packet in audio_encoder.encode(silence, 1, 48_000):
+                        buffer.append_audio(packet.payload, packet.rtp_timestamp)
+
+        producer = Thread(target=feed_media, daemon=True)
+        producer.start()
+
+        deadline = time.monotonic() + 5
+        while len(opened_consumers) < 1 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert len(opened_consumers) == 1
+        time.sleep(1.5)
+
+        late_client = subprocess.run(
+            [
+                ffmpeg,
+                "-v",
+                "error",
+                "-rtsp_transport",
+                "tcp",
+                "-i",
+                descriptor["url"],
+                "-t",
+                "0.5",
+                "-map",
+                "0:v:0",
+                "-an",
+                "-c:v",
+                "copy",
+                "-f",
+                "h264",
+                "-",
+            ],
+            capture_output=True,
+            check=False,
+            timeout=8,
+        )
+    finally:
+        producer_stop.set()
+        if producer is not None:
+            producer.join(timeout=2)
+        if first_client is not None:
+            first_client.terminate()
+            try:
+                first_client.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                first_client.kill()
+                first_client.wait(timeout=3)
+        gateway.stop()
+
+    assert late_client.returncode == 0, late_client.stderr.decode(errors="replace")
+    assert len(opened_consumers) == 2
+    assert 5 in h264_nal_types(late_client.stdout)
+
+
+def _h264_packets(
+    *,
+    frame_count: int = 90,
+    keyframe_interval: int = 30,
+) -> list[bytes]:
     encoder = av.CodecContext.create("libx264", "w")
     encoder.width = 320
     encoder.height = 240
@@ -317,11 +447,11 @@ def _h264_packets() -> list[bytes]:
     encoder.options = {
         "preset": "ultrafast",
         "tune": "zerolatency",
-        "x264-params": "keyint=30:min-keyint=30:scenecut=0",
+        "x264-params": (f"keyint={keyframe_interval}:min-keyint={keyframe_interval}:scenecut=0"),
     }
     encoder.open()
     packets = []
-    for index in range(90):
+    for index in range(frame_count):
         pixels = np.full((240, 320, 3), index % 255, dtype=np.uint8)
         frame = av.VideoFrame.from_ndarray(pixels, format="rgb24")
         frame.pts = index

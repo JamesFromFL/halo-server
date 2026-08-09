@@ -7,7 +7,7 @@ import pytest
 from ring_doorbell import AuthenticationError, Requires2FAError
 
 from halo_server.api.admin import AdminProtocolError
-from halo_server.api.plugin import PluginIntercomOpenError
+from halo_server.api.plugin import PluginCameraOperationError, PluginIntercomOpenError
 from halo_server.media.session import MediaSessionState
 from halo_server.paths import ServerPaths
 from halo_server.ring.credentials import CredentialStoreError
@@ -16,12 +16,65 @@ from halo_server.ring.events import (
     NormalizedRingEvent,
     RingEventType,
 )
-from halo_server.service import HaloService
+from halo_server.service import SIREN_ON_DURATION_SECONDS, HaloService
 
 
 class FakeClient:
     is_authenticated = True
     all_devices = []
+
+
+class FakeAccessoryDevice:
+    id = 42
+    family = "stickup_cams"
+    kind = "stickup_cam_mini"
+
+    def __init__(self, capabilities=("light", "siren", "video")):
+        self.capabilities = set(capabilities)
+        self.light_values = []
+        self.siren_values = []
+
+    def has_capability(self, capability):
+        return capability in self.capabilities
+
+    async def async_set_light(self, value):
+        self.light_values.append(value)
+
+    async def async_set_siren(self, value):
+        self.siren_values.append(value)
+
+    async def async_get_snapshot(self, **_kwargs):
+        return b"\xff\xd8fresh\xff\xd9"
+
+
+class FakeAccessoryClient:
+    is_authenticated = True
+
+    def __init__(self, device, *, snapshot=b"\xff\xd8cached\xff\xd9"):
+        self.all_devices = [device]
+        self.snapshot = snapshot
+        self.snapshot_calls = []
+        self.submissions = 0
+
+    def submit(self, coroutine):
+        self.submissions += 1
+        future = concurrent.futures.Future()
+        try:
+            coroutine.send(None)
+        except StopIteration as completed:
+            future.set_result(completed.value)
+        except BaseException as exc:
+            future.set_exception(exc)
+        else:
+            future.set_exception(RuntimeError("fake coroutine unexpectedly suspended"))
+            coroutine.close()
+        return future
+
+    def submit_snapshot_for_device(self, device, *, fresh=False):
+        self.snapshot_calls.append((device, fresh))
+        future = concurrent.futures.Future()
+        future.set_result(self.snapshot)
+        return future
 
 
 class FakeSessions:
@@ -299,6 +352,51 @@ async def test_logout_stops_listener_and_clears_incident_state(tmp_path):
     assert result["account"]["authenticated"] is False
     assert result["events"]["connection"] is EventConnectionState.OFFLINE
     assert result["incidents"] == {}
+
+
+@pytest.mark.asyncio
+async def test_service_passes_session_owned_credentials_to_event_listener(tmp_path):
+    persisted = []
+
+    class CredentialAwareSessions(FakeSessions):
+        def prepare_event_listener_credentials(self, client):
+            assert client is self.active_client
+            return {"gcm": {"android_id": "persisted"}}, persisted.append
+
+    class CredentialAwareListener(FakeListener):
+        def __init__(
+            self,
+            client,
+            on_event,
+            on_state,
+            *,
+            credentials,
+            credentials_updated_callback,
+        ):
+            super().__init__(client, on_event, on_state)
+            self.credentials = credentials
+            self.credentials_updated_callback = credentials_updated_callback
+
+    sessions = CredentialAwareSessions()
+    service = HaloService(
+        ServerPaths(tmp_path / "state", tmp_path / "runtime"),
+        session_manager=sessions,
+        listener_factory=CredentialAwareListener,
+        media_session_factory=FakeMediaSession,
+    )
+
+    await asyncio.wait_for(
+        service.handle_admin(
+            "login",
+            {"email": "person@example.com", "password": "secret"},
+        ),
+        timeout=1,
+    )
+
+    listener = service._listener
+    assert listener.credentials == {"gcm": {"android_id": "persisted"}}
+    listener.credentials_updated_callback({"gcm": {"android_id": "updated"}})
+    assert persisted == [{"gcm": {"android_id": "updated"}}]
 
 
 @pytest.mark.asyncio
@@ -587,6 +685,26 @@ async def test_plugin_pair_list_and_revoke_never_list_token(tmp_path):
     )
     assert revoked["revoked"] is True
     assert service._plugin_tokens.verify(pairing["token"]) is None
+
+
+def test_service_injects_camera_operation_providers_into_plugin_api(tmp_path):
+    captured = {}
+
+    def plugin_api_factory(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(host=kwargs["host"], bound_port=None)
+
+    service = HaloService(
+        ServerPaths(tmp_path / "state", tmp_path / "runtime"),
+        session_manager=FakeSessions(),
+        listener_factory=FakeListener,
+        media_session_factory=FakeMediaSession,
+        plugin_host="127.0.0.1",
+        plugin_api_factory=plugin_api_factory,
+    )
+
+    assert captured["control_provider"].__self__ is service
+    assert captured["snapshot_provider"].__self__ is service
 
 
 def test_only_downstream_incident_actions_enter_plugin_event_journal(tmp_path):
@@ -1208,6 +1326,393 @@ async def test_rtsp_consumer_can_renew_while_session_waits_to_recover(tmp_path):
 
     assert await asyncio.to_thread(consumer.renew) is True
     await asyncio.to_thread(consumer.close)
+
+
+@pytest.mark.asyncio
+async def test_plugin_camera_controls_use_sdk_methods_and_bounded_siren_duration(tmp_path):
+    sessions = FakeSessions()
+    device = FakeAccessoryDevice()
+    client = FakeAccessoryClient(device)
+    sessions.active_client = client
+    service = _service(tmp_path, sessions)
+    service._media_client = client
+    service._account_integrations_ready = True
+
+    await service._set_plugin_camera_control("42", "light", True)
+    await service._set_plugin_camera_control("42", "light", False)
+    await service._set_plugin_camera_control("42", "siren", True)
+    await service._set_plugin_camera_control("42", "siren", False)
+
+    assert device.light_values == [True, False]
+    assert device.siren_values == [SIREN_ON_DURATION_SECONDS, 0]
+    assert SIREN_ON_DURATION_SECONDS == 30
+    assert client.submissions == 4
+    assert service._camera_control_lock("42") is not service._camera_media_lock("42")
+
+
+@pytest.mark.asyncio
+async def test_mini_v3_exact_kind_override_dispatches_sdk_siren_setter(tmp_path):
+    sessions = FakeSessions()
+    device = FakeAccessoryDevice(capabilities=("video",))
+    device.kind = "stickup_cam_mini_v3"
+    client = FakeAccessoryClient(device)
+    sessions.active_client = client
+    service = _service(tmp_path, sessions)
+    service._media_client = client
+    service._account_integrations_ready = True
+
+    await service._set_plugin_camera_control("42", "siren", True)
+
+    assert device.has_capability("siren") is False
+    assert device.siren_values == [30]
+
+
+@pytest.mark.asyncio
+async def test_plugin_camera_control_rechecks_sdk_capability_and_contains_failure(tmp_path):
+    sessions = FakeSessions()
+
+    class FailingDevice(FakeAccessoryDevice):
+        async def async_set_light(self, _value):
+            raise RuntimeError("private Ring failure detail")
+
+    unsupported = FakeAccessoryDevice(capabilities=("video",))
+    client = FakeAccessoryClient(unsupported)
+    sessions.active_client = client
+    service = _service(tmp_path, sessions)
+    service._media_client = client
+    service._account_integrations_ready = True
+
+    with pytest.raises(PluginCameraOperationError) as raised:
+        await service._set_plugin_camera_control("42", "light", True)
+    assert raised.value.code == "light_unsupported"
+    assert client.submissions == 0
+
+    failing = FailingDevice()
+    failing_client = FakeAccessoryClient(failing)
+    sessions.active_client = failing_client
+    service._media_client = failing_client
+    with pytest.raises(PluginCameraOperationError) as raised:
+        await service._set_plugin_camera_control("42", "light", True)
+    assert raised.value.code == "control_failed"
+    assert "private Ring failure detail" not in str(raised.value)
+
+
+@pytest.mark.asyncio
+async def test_plugin_camera_controls_complete_in_request_order_per_camera(tmp_path):
+    sessions = FakeSessions()
+    started = asyncio.Event()
+    release = asyncio.Event()
+    order = []
+
+    class OrderedDevice(FakeAccessoryDevice):
+        async def async_set_light(self, value):
+            order.append(("start", value))
+            if value:
+                started.set()
+                await release.wait()
+            order.append(("end", value))
+
+    class LoopClient(FakeAccessoryClient):
+        def __init__(self, device, loop):
+            super().__init__(device)
+            self.loop = loop
+
+        def submit(self, coroutine):
+            return asyncio.run_coroutine_threadsafe(coroutine, self.loop)
+
+    device = OrderedDevice()
+    client = LoopClient(device, asyncio.get_running_loop())
+    sessions.active_client = client
+    service = _service(tmp_path, sessions)
+    service._media_client = client
+    service._account_integrations_ready = True
+
+    first = asyncio.create_task(service._set_plugin_camera_control("42", "light", True))
+    await asyncio.wait_for(started.wait(), timeout=1)
+    second = asyncio.create_task(service._set_plugin_camera_control("42", "light", False))
+    await asyncio.sleep(0)
+
+    assert order == [("start", True)]
+    assert second.done() is False
+
+    release.set()
+    await asyncio.gather(first, second)
+
+    assert order == [
+        ("start", True),
+        ("end", True),
+        ("start", False),
+        ("end", False),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_hung_camera_control_times_out_without_blocking_snapshot(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setattr("halo_server.service.RING_CONTROL_TIMEOUT_SECONDS", 0.02)
+    sessions = FakeSessions()
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    class HungDevice(FakeAccessoryDevice):
+        async def async_set_light(self, _value):
+            started.set()
+            try:
+                await asyncio.Future()
+            finally:
+                cancelled.set()
+
+    class LoopClient(FakeAccessoryClient):
+        def __init__(self, device, loop):
+            super().__init__(device)
+            self.loop = loop
+
+        def submit(self, coroutine):
+            return asyncio.run_coroutine_threadsafe(coroutine, self.loop)
+
+    device = HungDevice()
+    client = LoopClient(device, asyncio.get_running_loop())
+    sessions.active_client = client
+    service = _service(tmp_path, sessions)
+    service._media_client = client
+    service._account_integrations_ready = True
+
+    control = asyncio.create_task(service._set_plugin_camera_control("42", "light", True))
+    await asyncio.wait_for(started.wait(), timeout=1)
+
+    assert await asyncio.wait_for(service._get_plugin_snapshot("42", False), timeout=1) == (
+        b"\xff\xd8cached\xff\xd9"
+    )
+    with pytest.raises(PluginCameraOperationError) as raised:
+        await control
+
+    assert raised.value.code == "control_timeout"
+    assert cancelled.is_set()
+    assert service._session_change_lock.locked() is False
+
+
+@pytest.mark.asyncio
+async def test_logout_is_not_blocked_by_inflight_camera_control(tmp_path):
+    sessions = FakeSessions()
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    class DelayedDevice(FakeAccessoryDevice):
+        async def async_set_light(self, value):
+            started.set()
+            await release.wait()
+            self.light_values.append(value)
+
+    class LoopClient(FakeAccessoryClient):
+        def __init__(self, device, loop):
+            super().__init__(device)
+            self.loop = loop
+
+        def submit(self, coroutine):
+            return asyncio.run_coroutine_threadsafe(coroutine, self.loop)
+
+    device = DelayedDevice()
+    client = LoopClient(device, asyncio.get_running_loop())
+    sessions.active_client = client
+    service = _service(tmp_path, sessions)
+    service._media_client = client
+    service._account_integrations_ready = True
+
+    control = asyncio.create_task(service._set_plugin_camera_control("42", "light", True))
+    await asyncio.wait_for(started.wait(), timeout=1)
+    logout = asyncio.create_task(service.handle_admin("logout", {}))
+    await asyncio.wait_for(logout, timeout=1)
+
+    assert sessions.active_client is None
+    assert control.done() is False
+
+    release.set()
+    with pytest.raises(PluginCameraOperationError) as raised:
+        await control
+
+    assert raised.value.code == "ring_unavailable"
+    assert device.light_values == [True]
+
+
+@pytest.mark.asyncio
+async def test_plugin_snapshot_support_is_independent_of_intercom(tmp_path):
+    sessions = FakeSessions()
+    device = FakeAccessoryDevice(capabilities=("video",))
+    client = FakeAccessoryClient(device)
+    sessions.active_client = client
+    service = _service(tmp_path, sessions)
+    service._media_client = client
+    service._account_integrations_ready = True
+
+    cached = await service._get_plugin_snapshot("42", False)
+    fresh = await service._get_plugin_snapshot("42", True)
+
+    assert cached == fresh == b"\xff\xd8cached\xff\xd9"
+    assert client.snapshot_calls == [(device, False), (device, True)]
+    with pytest.raises(PluginIntercomOpenError) as raised:
+        await service._open_plugin_intercom("42")
+    assert raised.value.code == "intercom_unsupported"
+
+
+@pytest.mark.asyncio
+async def test_plugin_snapshot_rejects_unknown_capability_and_inactive_session(tmp_path):
+    sessions = FakeSessions()
+    device = FakeAccessoryDevice(capabilities=())
+    client = FakeAccessoryClient(device)
+    sessions.active_client = client
+    service = _service(tmp_path, sessions)
+    service._media_client = client
+    service._account_integrations_ready = True
+
+    with pytest.raises(PluginCameraOperationError) as raised:
+        await service._get_plugin_snapshot("42", False)
+    assert raised.value.code == "snapshot_unsupported"
+    assert client.snapshot_calls == []
+
+    service._account_integrations_ready = False
+    with pytest.raises(PluginCameraOperationError) as raised:
+        await service._get_plugin_snapshot("42", False)
+    assert raised.value.code == "ring_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_plugin_snapshot_contains_submission_and_empty_result_failures(tmp_path):
+    sessions = FakeSessions()
+    device = FakeAccessoryDevice(capabilities=("video",))
+    client = FakeAccessoryClient(device)
+    sessions.active_client = client
+    service = _service(tmp_path, sessions)
+    service._media_client = client
+    service._account_integrations_ready = True
+
+    with pytest.raises(PluginCameraOperationError) as raised:
+        await service._get_plugin_snapshot("missing", False)
+    assert raised.value.code == "camera_unavailable"
+
+    client.submit_snapshot_for_device = None
+    with pytest.raises(PluginCameraOperationError) as raised:
+        await service._get_plugin_snapshot("42", False)
+    assert raised.value.code == "snapshot_unavailable"
+
+    class FailingSnapshotClient(FakeAccessoryClient):
+        def submit_snapshot_for_device(self, _device, *, fresh=False):
+            future = concurrent.futures.Future()
+            future.set_exception(RuntimeError("private snapshot failure"))
+            return future
+
+    failing = FailingSnapshotClient(device)
+    sessions.active_client = failing
+    service._media_client = failing
+    with pytest.raises(PluginCameraOperationError) as raised:
+        await service._get_plugin_snapshot("42", False)
+    assert raised.value.code == "snapshot_failed"
+    assert "private snapshot failure" not in str(raised.value)
+
+    empty = FakeAccessoryClient(device, snapshot=None)
+    sessions.active_client = empty
+    service._media_client = empty
+    with pytest.raises(PluginCameraOperationError) as raised:
+        await service._get_plugin_snapshot("42", False)
+    assert raised.value.code == "snapshot_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_plugin_snapshot_cancellation_cancels_ring_loop_future(tmp_path):
+    sessions = FakeSessions()
+    device = FakeAccessoryDevice(capabilities=("video",))
+
+    class PendingSnapshotClient(FakeAccessoryClient):
+        def submit_snapshot_for_device(self, _device, *, fresh=False):
+            self.snapshot_calls.append((_device, fresh))
+            self.future = concurrent.futures.Future()
+            return self.future
+
+    client = PendingSnapshotClient(device)
+    sessions.active_client = client
+    service = _service(tmp_path, sessions)
+    service._media_client = client
+    service._account_integrations_ready = True
+
+    task = asyncio.create_task(service._get_plugin_snapshot("42", True))
+    await asyncio.sleep(0)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert client.future.cancelled() is True
+    assert service._session_change_lock.locked() is False
+
+
+@pytest.mark.asyncio
+async def test_plugin_snapshots_submit_concurrently_across_cameras(tmp_path):
+    sessions = FakeSessions()
+    first = FakeAccessoryDevice(capabilities=("video",))
+    second = FakeAccessoryDevice(capabilities=("video",))
+    second.id = 43
+
+    class MultiSnapshotClient(FakeAccessoryClient):
+        def __init__(self):
+            super().__init__(first)
+            self.all_devices = [first, second]
+            self.futures = {}
+
+        def submit_snapshot_for_device(self, device, *, fresh=False):
+            self.snapshot_calls.append((device, fresh))
+            future = concurrent.futures.Future()
+            self.futures[str(device.id)] = future
+            return future
+
+    client = MultiSnapshotClient()
+    sessions.active_client = client
+    service = _service(tmp_path, sessions)
+    service._media_client = client
+    service._account_integrations_ready = True
+
+    first_task = asyncio.create_task(service._get_plugin_snapshot("42", False))
+    second_task = asyncio.create_task(service._get_plugin_snapshot("43", False))
+    for _ in range(10):
+        if len(client.futures) == 2:
+            break
+        await asyncio.sleep(0)
+
+    assert set(client.futures) == {"42", "43"}
+    assert service._session_change_lock.locked() is False
+
+    client.futures["42"].set_result(b"\xff\xd8first\xff\xd9")
+    client.futures["43"].set_result(b"\xff\xd8second\xff\xd9")
+
+    assert await asyncio.gather(first_task, second_task) == [
+        b"\xff\xd8first\xff\xd9",
+        b"\xff\xd8second\xff\xd9",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_inflight_snapshot_cannot_publish_after_logout(tmp_path):
+    sessions = FakeSessions()
+    device = FakeAccessoryDevice(capabilities=("video",))
+
+    class PendingSnapshotClient(FakeAccessoryClient):
+        def submit_snapshot_for_device(self, _device, *, fresh=False):
+            self.future = concurrent.futures.Future()
+            return self.future
+
+    client = PendingSnapshotClient(device)
+    sessions.active_client = client
+    service = _service(tmp_path, sessions)
+    service._media_client = client
+    service._account_integrations_ready = True
+
+    snapshot = asyncio.create_task(service._get_plugin_snapshot("42", False))
+    await asyncio.sleep(0)
+    await service.handle_admin("logout", {})
+    client.future.set_result(b"\xff\xd8old-account\xff\xd9")
+
+    with pytest.raises(PluginCameraOperationError) as raised:
+        await snapshot
+    assert raised.value.code == "ring_unavailable"
 
 
 @pytest.mark.asyncio

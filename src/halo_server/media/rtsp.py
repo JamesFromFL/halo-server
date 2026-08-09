@@ -306,7 +306,13 @@ class _BufferedCameraFactory(GstRtspServer.RTSPMediaFactory):
         self._workers: dict[threading.Thread, threading.Event] = {}
         self._worker_lock = threading.Lock()
         self.set_launch(_passthrough_launch())
-        self.set_shared(True)
+        # Scrypted's direct RTSP parser prefers UDP unless the server rejects it.
+        # Large Ring IDR frames span hundreds of FU-A packets, where even one
+        # missing or reordered UDP packet makes the decoder boundary unusable.
+        self.set_protocols(GstRtsp.RTSPLowerTrans.TCP)
+        # Each client must replay its own decoder boundary from the shared buffer.
+        # CameraMediaSession still shares one Ring upstream across these consumers.
+        self.set_shared(False)
         self.connect("media-configure", self._on_media_configure)
 
     def _on_media_configure(self, _factory, media) -> None:

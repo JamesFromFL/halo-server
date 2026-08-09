@@ -1,9 +1,12 @@
 import json
 import logging
+import os
 import stat
+import struct
 
 import pytest
 
+from halo_server.api import admin
 from halo_server.api.admin import ADMIN_PROTOCOL_VERSION, AdminProtocolError, AdminServer
 from halo_server.tui.client import AdminClient, AdminClientError
 
@@ -40,6 +43,83 @@ async def test_admin_socket_and_runtime_directory_are_owner_only(tmp_path):
         assert stat.S_IMODE(socket_path.stat().st_mode) == 0o600
     finally:
         await server.stop()
+
+
+def test_peer_uid_uses_linux_peer_credentials(monkeypatch):
+    monkeypatch.setattr(admin.socket, "SO_PEERCRED", 17, raising=False)
+
+    class FakeSocket:
+        def getsockopt(self, level, option, size):
+            assert level == admin.socket.SOL_SOCKET
+            assert option == admin.socket.SO_PEERCRED
+            assert size == struct.calcsize("3i")
+            return struct.pack("3i", 123, os.getuid(), 456)
+
+    assert admin._peer_uid(FakeSocket()) == os.getuid()
+
+
+def test_peer_uid_uses_macos_getpeereid(monkeypatch):
+    class FakeSocket:
+        def fileno(self):
+            return 42
+
+    monkeypatch.delattr(admin.socket, "SO_PEERCRED", raising=False)
+    monkeypatch.setattr(admin.sys, "platform", "darwin")
+    monkeypatch.setattr(admin, "_darwin_peer_uid", lambda descriptor: descriptor + 1)
+
+    assert admin._peer_uid(FakeSocket()) == 43
+
+
+def test_peer_uid_rejects_unverified_platform(monkeypatch):
+    monkeypatch.delattr(admin.socket, "SO_PEERCRED", raising=False)
+    monkeypatch.setattr(admin.sys, "platform", "win32")
+
+    assert admin._peer_uid(object()) is None
+
+
+def test_admin_peer_check_rejects_unverifiable_identity(monkeypatch):
+    class FakeWriter:
+        def get_extra_info(self, _name):
+            return object()
+
+    monkeypatch.setattr(admin, "_peer_uid", lambda _socket: None)
+
+    with pytest.raises(AdminProtocolError, match="Cannot verify") as raised:
+        admin._require_owner_peer(FakeWriter())
+
+    assert raised.value.code == "peer_rejected"
+
+
+def test_admin_peer_check_rejects_different_owner(monkeypatch):
+    class FakeWriter:
+        def get_extra_info(self, _name):
+            return object()
+
+    monkeypatch.setattr(admin, "_peer_uid", lambda _socket: os.getuid() + 1)
+
+    with pytest.raises(AdminProtocolError, match="not the daemon owner") as raised:
+        admin._require_owner_peer(FakeWriter())
+
+    assert raised.value.code == "peer_rejected"
+
+
+def test_darwin_peer_uid_reads_libc_credentials(monkeypatch):
+    class FakeGetPeerEid:
+        argtypes = None
+        restype = None
+
+        def __call__(self, descriptor, uid, gid):
+            assert descriptor == 17
+            uid._obj.value = 501
+            gid._obj.value = 20
+            return 0
+
+    class FakeLibC:
+        getpeereid = FakeGetPeerEid()
+
+    monkeypatch.setattr(admin.ctypes, "CDLL", lambda *_args, **_kwargs: FakeLibC())
+
+    assert admin._darwin_peer_uid(17) == 501
 
 
 @pytest.mark.asyncio

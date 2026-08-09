@@ -18,8 +18,10 @@ from halo_server import __version__
 from halo_server.api.admin import AdminProtocolError, AdminServer
 from halo_server.api.events import EventJournal
 from halo_server.api.plugin import (
+    CAMERA_CONTROL_TIMEOUT_SECONDS,
     PLUGIN_PROTOCOL_VERSION,
     PluginApiServer,
+    PluginCameraOperationError,
     PluginIntercomOpenError,
     PluginIntercomStream,
 )
@@ -37,7 +39,11 @@ from halo_server.media.session import CameraMediaSession, MediaSessionState
 from halo_server.paths import ServerPaths
 from halo_server.ring.client import RingSessionManager, SessionSupersededError
 from halo_server.ring.credentials import CredentialStore, CredentialStoreError
-from halo_server.ring.devices import summarize_cameras
+from halo_server.ring.devices import (
+    has_ring_camera_capability,
+    summarize_cameras,
+    supports_ring_camera_snapshot,
+)
 from halo_server.ring.events import (
     EventConnectionState,
     EventListener,
@@ -53,6 +59,8 @@ GATEWAY_CALL_TIMEOUT = 10.0
 RESTORE_RETRY_INITIAL_SECONDS = 5.0
 RESTORE_RETRY_MAX_SECONDS = 300.0
 INVENTORY_REFRESH_INTERVAL_SECONDS = 60.0
+SIREN_ON_DURATION_SECONDS = 30
+RING_CONTROL_TIMEOUT_SECONDS = CAMERA_CONTROL_TIMEOUT_SECONDS - 1.0
 
 
 class _ServiceIntercomStream(PluginIntercomStream):
@@ -154,6 +162,8 @@ class HaloService:
                     self._rtsp_gateway.stream_descriptor if self._rtsp_gateway is not None else None
                 ),
                 intercom_provider=self._open_plugin_intercom,
+                control_provider=self._set_plugin_camera_control,
+                snapshot_provider=self._get_plugin_snapshot,
             )
             if plugin_host is not None
             else None
@@ -161,6 +171,7 @@ class HaloService:
         self._admin = AdminServer(paths.admin_socket, self.handle_admin)
         self._session_change_lock = asyncio.Lock()
         self._camera_media_locks: dict[str, asyncio.Lock] = {}
+        self._camera_control_locks: dict[str, asyncio.Lock] = {}
         self._media_epoch = 0
         self._listener: EventListener | None = None
         self._listener_generation = 0
@@ -622,11 +633,28 @@ class HaloService:
         self._listener = None
         if previous is not None:
             await asyncio.to_thread(previous.stop)
-        listener = self._listener_factory(
+        listener_args = (
             client,
             lambda event: self._receive_event(generation, event),
             lambda state: self._receive_event_state(generation, state),
         )
+        prepare_credentials = getattr(
+            self._sessions,
+            "prepare_event_listener_credentials",
+            None,
+        )
+        if callable(prepare_credentials):
+            credentials, credentials_updated_callback = await asyncio.to_thread(
+                prepare_credentials,
+                client,
+            )
+            listener = self._listener_factory(
+                *listener_args,
+                credentials=credentials,
+                credentials_updated_callback=credentials_updated_callback,
+            )
+        else:
+            listener = self._listener_factory(*listener_args)
         try:
             future = listener.start()
             wait_until_started = getattr(listener, "wait_until_started", None)
@@ -1234,6 +1262,174 @@ class HaloService:
             await asyncio.to_thread(session.release, lease_id)
             _log.info("Halo intercom service lease released camera_id=%s", camera_id)
 
+    async def _set_plugin_camera_control(
+        self,
+        camera_id: str,
+        control: str,
+        on: bool,
+    ) -> None:
+        async with self._camera_control_lock(camera_id):
+            async with self._session_change_lock:
+                client, device = self._active_ring_camera(camera_id)
+                epoch = self._media_epoch
+                if control not in {"light", "siren"} or not has_ring_camera_capability(
+                    device, control
+                ):
+                    raise PluginCameraOperationError(
+                        f"{control}_unsupported",
+                        "This Ring camera does not support that control",
+                        status=404,
+                    )
+                method_name = "async_set_light" if control == "light" else "async_set_siren"
+                setter = getattr(device, method_name, None)
+                if not callable(setter):
+                    raise PluginCameraOperationError(
+                        f"{control}_unsupported",
+                        "This Ring camera does not support that control",
+                        status=404,
+                    )
+                value = on if control == "light" else SIREN_ON_DURATION_SECONDS if on else 0
+                try:
+                    future = _submit_ring_coroutine(client, setter(value))
+                except Exception as exc:
+                    _log.exception(
+                        "Ring camera control submission failed camera_id=%s control=%s",
+                        camera_id,
+                        control,
+                    )
+                    raise PluginCameraOperationError(
+                        "control_failed",
+                        "Ring camera control could not be completed",
+                        status=502,
+                    ) from exc
+            try:
+                async with asyncio.timeout(RING_CONTROL_TIMEOUT_SECONDS):
+                    await _await_concurrent_future(future)
+            except TimeoutError as exc:
+                raise PluginCameraOperationError(
+                    "control_timeout",
+                    "Ring camera control request timed out",
+                    status=504,
+                ) from exc
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                _log.exception(
+                    "Ring camera control failed camera_id=%s control=%s",
+                    camera_id,
+                    control,
+                )
+                raise PluginCameraOperationError(
+                    "control_failed",
+                    "Ring camera control could not be completed",
+                    status=502,
+                ) from exc
+            async with self._session_change_lock:
+                if (
+                    epoch != self._media_epoch
+                    or self._sessions.active_client is not client
+                    or self._media_client is not client
+                    or not self._account_integrations_ready
+                ):
+                    raise PluginCameraOperationError(
+                        "ring_unavailable",
+                        "Ring camera operations are temporarily unavailable",
+                        status=503,
+                    )
+
+    async def _get_plugin_snapshot(self, camera_id: str, fresh: bool) -> bytes:
+        async with self._session_change_lock:
+            client, device = self._active_ring_camera(camera_id)
+            epoch = self._media_epoch
+            if not supports_ring_camera_snapshot(device):
+                raise PluginCameraOperationError(
+                    "snapshot_unsupported",
+                    "This Ring camera does not support snapshots",
+                    status=404,
+                )
+            submit = getattr(client, "submit_snapshot_for_device", None)
+            if not callable(submit):
+                raise PluginCameraOperationError(
+                    "snapshot_unavailable",
+                    "Ring snapshots are unavailable",
+                    status=503,
+                )
+            try:
+                future = submit(device, fresh=fresh)
+            except Exception as exc:
+                _log.exception("Ring snapshot submission failed camera_id=%s", camera_id)
+                raise PluginCameraOperationError(
+                    "snapshot_failed",
+                    "Ring snapshot could not be completed",
+                    status=502,
+                ) from exc
+        try:
+            snapshot = await _await_concurrent_future(future)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            _log.exception("Ring snapshot failed camera_id=%s fresh=%s", camera_id, fresh)
+            raise PluginCameraOperationError(
+                "snapshot_failed",
+                "Ring snapshot could not be completed",
+                status=502,
+            ) from exc
+        async with self._session_change_lock:
+            if (
+                epoch != self._media_epoch
+                or self._sessions.active_client is not client
+                or self._media_client is not client
+                or not self._account_integrations_ready
+            ):
+                raise PluginCameraOperationError(
+                    "ring_unavailable",
+                    "Ring camera operations are temporarily unavailable",
+                    status=503,
+                )
+        if not snapshot:
+            raise PluginCameraOperationError(
+                "snapshot_unavailable",
+                "Ring did not return a snapshot image",
+                status=502,
+            )
+        return bytes(snapshot)
+
+    def _active_ring_camera(self, camera_id: str):
+        client = self._sessions.active_client
+        if (
+            client is None
+            or not client.is_authenticated
+            or client is not self._media_client
+            or not self._account_integrations_ready
+        ):
+            raise PluginCameraOperationError(
+                "ring_unavailable",
+                "Ring camera operations are temporarily unavailable",
+                status=503,
+            )
+        device = next(
+            (
+                candidate
+                for candidate in client.all_devices
+                if str(getattr(candidate, "id", "")) == camera_id
+            ),
+            None,
+        )
+        if device is None:
+            raise PluginCameraOperationError(
+                "camera_unavailable",
+                "Ring camera is unavailable",
+                status=404,
+            )
+        return client, device
+
+    def _camera_control_lock(self, camera_id: str) -> asyncio.Lock:
+        lock = self._camera_control_locks.get(camera_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._camera_control_locks[camera_id] = lock
+        return lock
+
     def _camera_media_lock(self, camera_id: str) -> asyncio.Lock:
         lock = self._camera_media_locks.get(camera_id)
         if lock is None:
@@ -1267,6 +1463,25 @@ class HaloService:
 
 def _event_lease_id(incident_generation: int) -> str:
     return f"incident-{incident_generation}"
+
+
+def _submit_ring_coroutine(
+    client,
+    coroutine: Coroutine[Any, Any, Any],
+) -> concurrent.futures.Future:
+    try:
+        return client.submit(coroutine)
+    except BaseException:
+        coroutine.close()
+        raise
+
+
+async def _await_concurrent_future(future: concurrent.futures.Future) -> Any:
+    try:
+        return await asyncio.wrap_future(future)
+    except asyncio.CancelledError:
+        future.cancel()
+        raise
 
 
 def _require_only(params: dict[str, Any], allowed: set[str]) -> None:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import ipaddress
+import json
 import logging
 import ssl
 import time
@@ -21,10 +22,11 @@ from halo_server.api.tokens import (
     PluginTokenStoreError,
 )
 from halo_server.media.leases import maximum_session_seconds
+from halo_server.ring.snapshots import validated_snapshot_bytes
 
 _log = logging.getLogger(__name__)
 
-PLUGIN_PROTOCOL_VERSION = 2
+PLUGIN_PROTOCOL_VERSION = 3
 PROTOCOL_HEADER = "Halo-Protocol-Version"
 MAX_REQUEST_BYTES = 16 * 1024
 DEFAULT_RATE_LIMIT = 120
@@ -37,6 +39,8 @@ INTERCOM_FRAME_BYTES = 1920
 INTERCOM_IDLE_TIMEOUT = 15.0
 INTERCOM_RENEW_INTERVAL = 10.0
 INTERCOM_ACTIVATION_TIMEOUT = 15.0
+SNAPSHOT_TIMEOUT_SECONDS = 8.0
+CAMERA_CONTROL_TIMEOUT_SECONDS = 8.0
 PLUGIN_IDENTITY_KEY = web.RequestKey("plugin_identity", PluginIdentity)
 PLUGIN_TOKEN_KEY = web.RequestKey("plugin_token", str)
 
@@ -60,6 +64,15 @@ class PluginIntercomOpenError(RuntimeError):
         self.status = status
 
 
+class PluginCameraOperationError(RuntimeError):
+    """Stable failure returned by a camera operation provider."""
+
+    def __init__(self, code: str, message: str, *, status: int) -> None:
+        super().__init__(message)
+        self.code = code
+        self.status = status
+
+
 class PluginApiServer:
     """Expose capability-limited Halo state to authenticated plugin clients."""
 
@@ -73,6 +86,8 @@ class PluginApiServer:
         status_provider: Callable[[], dict[str, Any]],
         media_provider: Callable[[str], dict[str, Any] | None] | None = None,
         intercom_provider: (Callable[[str], Awaitable[PluginIntercomStream]] | None) = None,
+        control_provider: (Callable[[str, str, bool], Awaitable[None]] | None) = None,
+        snapshot_provider: (Callable[[str, bool], Awaitable[bytes]] | None) = None,
         ssl_context: ssl.SSLContext | None = None,
         rate_limit: int = DEFAULT_RATE_LIMIT,
     ) -> None:
@@ -90,6 +105,8 @@ class PluginApiServer:
         self._status_provider = status_provider
         self._media_provider = media_provider
         self._intercom_provider = intercom_provider
+        self._control_provider = control_provider
+        self._snapshot_provider = snapshot_provider
         self._ssl_context = ssl_context
         self._rate_limit = rate_limit
         self._requests: dict[str, deque[float]] = defaultdict(deque)
@@ -110,6 +127,13 @@ class PluginApiServer:
                 web.get("/v1/health", self._health),
                 web.get("/v1/capabilities", self._capabilities),
                 web.get("/v1/devices", self._devices),
+                web.get(
+                    "/v1/devices/{camera_id}/snapshot",
+                    self._snapshot,
+                    allow_head=False,
+                ),
+                web.put("/v1/devices/{camera_id}/light", self._set_light),
+                web.put("/v1/devices/{camera_id}/siren", self._set_siren),
                 web.get("/v1/events", self._event_socket),
                 web.get("/v1/intercom/{camera_id}", self._intercom_socket),
             ]
@@ -229,18 +253,24 @@ class PluginApiServer:
         )
 
     async def _capabilities(self, _request: web.Request) -> web.Response:
+        capabilities = [
+            "devices",
+            "events",
+            "motion",
+            "doorbell",
+            "battery",
+            "online",
+        ]
+        if self._intercom_provider is not None:
+            capabilities.append("intercom")
+        if self._snapshot_provider is not None:
+            capabilities.append("snapshot")
+        if self._control_provider is not None:
+            capabilities.extend(("light", "siren"))
         return web.json_response(
             {
                 "protocol_version": PLUGIN_PROTOCOL_VERSION,
-                "capabilities": [
-                    "devices",
-                    "events",
-                    "motion",
-                    "doorbell",
-                    "battery",
-                    "online",
-                ]
-                + (["intercom"] if self._intercom_provider is not None else []),
+                "capabilities": capabilities,
                 "media": {
                     "available": self._media_provider is not None,
                     "transport": "rtsp" if self._media_provider is not None else None,
@@ -317,6 +347,153 @@ class PluginApiServer:
                 "streams": streams,
             }
         )
+
+    async def _snapshot(self, request: web.Request) -> web.Response:
+        provider = self._snapshot_provider
+        if provider is None:
+            return _error_response(
+                "snapshot_unavailable",
+                "Halo Server snapshots are unavailable",
+                status=404,
+            )
+        camera_id = request.match_info.get("camera_id", "")
+        validation = self._camera_operation_target(camera_id, capability=None)
+        if isinstance(validation, web.Response):
+            return validation
+        if set(request.query) - {"fresh"} or len(request.query.getall("fresh", [])) > 1:
+            return _error_response(
+                "bad_request",
+                "Snapshot query is invalid",
+                status=400,
+            )
+        fresh_raw = request.query.get("fresh", "0")
+        if fresh_raw not in {"0", "1"}:
+            return _error_response(
+                "bad_request",
+                "Snapshot freshness must be 0 or 1",
+                status=400,
+            )
+        try:
+            async with asyncio.timeout(SNAPSHOT_TIMEOUT_SECONDS):
+                image = await provider(camera_id, fresh_raw == "1")
+        except TimeoutError:
+            return _error_response(
+                "snapshot_timeout",
+                "Ring snapshot request timed out",
+                status=504,
+            )
+        except PluginCameraOperationError as exc:
+            return _error_response(exc.code, str(exc), status=exc.status)
+        if (image := validated_snapshot_bytes(image)) is None:
+            return _error_response(
+                "snapshot_invalid",
+                "Ring returned an invalid snapshot image",
+                status=502,
+            )
+        return web.Response(body=image, content_type="image/jpeg")
+
+    async def _set_light(self, request: web.Request) -> web.Response:
+        return await self._set_camera_control(request, "light", "has_light")
+
+    async def _set_siren(self, request: web.Request) -> web.Response:
+        return await self._set_camera_control(request, "siren", "has_siren")
+
+    async def _set_camera_control(
+        self,
+        request: web.Request,
+        control: str,
+        capability: str,
+    ) -> web.Response:
+        provider = self._control_provider
+        if provider is None:
+            return _error_response(
+                "control_unavailable",
+                "Halo Server camera controls are unavailable",
+                status=404,
+            )
+        camera_id = request.match_info.get("camera_id", "")
+        validation = self._camera_operation_target(camera_id, capability=capability)
+        if isinstance(validation, web.Response):
+            return validation
+        if request.content_type != "application/json":
+            return _error_response(
+                "bad_request",
+                "Camera control body must be JSON",
+                status=400,
+            )
+        try:
+            body = await request.json(loads=_strict_json_loads)
+        except (LookupError, UnicodeError, ValueError):
+            return _error_response(
+                "bad_request",
+                "Camera control body is invalid",
+                status=400,
+            )
+        if not isinstance(body, dict) or set(body) != {"on"} or not isinstance(body["on"], bool):
+            return _error_response(
+                "bad_request",
+                'Camera control body must contain exactly one boolean "on" field',
+                status=400,
+            )
+        try:
+            async with asyncio.timeout(CAMERA_CONTROL_TIMEOUT_SECONDS):
+                await provider(camera_id, control, body["on"])
+        except TimeoutError:
+            return _error_response(
+                "control_timeout",
+                "Ring camera control request timed out",
+                status=504,
+            )
+        except PluginCameraOperationError as exc:
+            return _error_response(exc.code, str(exc), status=exc.status)
+        return web.Response(status=204)
+
+    def _camera_operation_target(
+        self,
+        camera_id: str,
+        *,
+        capability: str | None,
+    ) -> dict[str, Any] | web.Response:
+        if not 1 <= len(camera_id) <= 128:
+            return _error_response(
+                "bad_request",
+                "Camera identifier is invalid",
+                status=400,
+            )
+        status = self._status_provider()
+        account = status.get("account", {})
+        if not isinstance(account, dict):
+            account = {}
+        if not account.get("authenticated") or account.get("integrations_ready") is False:
+            return _error_response(
+                "ring_unavailable",
+                "Ring camera operations are temporarily unavailable",
+                status=503,
+            )
+        cameras = status.get("cameras", [])
+        if not isinstance(cameras, list):
+            cameras = []
+        camera = next(
+            (
+                camera
+                for camera in cameras
+                if isinstance(camera, dict) and camera.get("id") == camera_id
+            ),
+            None,
+        )
+        if camera is None:
+            return _error_response(
+                "camera_unavailable",
+                "Ring camera is unavailable",
+                status=404,
+            )
+        if capability is not None and camera.get(capability) is not True:
+            return _error_response(
+                f"{capability.removeprefix('has_')}_unsupported",
+                "This Ring camera does not support that control",
+                status=404,
+            )
+        return camera
 
     async def _event_socket(self, request: web.Request) -> web.StreamResponse:
         epoch = request.query.get("epoch")
@@ -500,6 +677,8 @@ class PluginApiServer:
 
         socket = web.WebSocketResponse(
             heartbeat=15,
+            # Compressed PCM can be larger on the wire than its decoded frame.
+            compress=False,
             # aiohttp rejects payloads equal to max_msg_size; Halo validates
             # the exact 1,920-byte protocol frame immediately after receipt.
             max_msg_size=INTERCOM_FRAME_BYTES + 1,
@@ -659,6 +838,18 @@ def _error_response(code: str, message: str, *, status: int) -> web.Response:
         {"error": {"code": code, "message": message}},
         status=status,
     )
+
+
+def _strict_json_loads(value: str) -> Any:
+    def unique_object(pairs):
+        result = {}
+        for key, item in pairs:
+            if key in result:
+                raise ValueError("duplicate JSON object key")
+            result[key] = item
+        return result
+
+    return json.loads(value, object_pairs_hook=unique_object)
 
 
 def _secure_response(response: web.StreamResponse) -> web.StreamResponse:

@@ -11,6 +11,7 @@ from collections.abc import Callable
 from typing import Any
 
 from halo_server.ring.credentials import CredentialStore, CredentialStoreError
+from halo_server.ring.snapshots import validated_snapshot_bytes
 
 _log = logging.getLogger(__name__)
 
@@ -95,10 +96,21 @@ class RingClient:
                 return device
         return None
 
-    def snapshot_for_device(self, device) -> bytes | None:
+    def snapshot_for_device(self, device, *, fresh: bool = False) -> bytes | None:
         if self._ring is None:
             return None
-        return self._run(self._async_snapshot_bytes(device))
+        return self._run(self._async_snapshot_bytes(device, fresh=fresh))
+
+    def submit_snapshot_for_device(
+        self,
+        device,
+        *,
+        fresh: bool = False,
+    ) -> concurrent.futures.Future:
+        """Submit one snapshot request to the client-owned Ring event loop."""
+        if self._ring is None:
+            raise RuntimeError("Not signed in to Ring")
+        return self.submit(self._async_snapshot_bytes(device, fresh=fresh))
 
     def submit(self, coro) -> concurrent.futures.Future:
         """Submit work to the Ring event loop without blocking the caller."""
@@ -288,20 +300,21 @@ class RingClient:
             device for device in devices if (getattr(device, "family", None) or "other") in families
         ]
 
-    async def _async_snapshot_bytes(self, device) -> bytes | None:
-        try:
-            snapshot = await device.async_get_snapshot(retries=2, delay=1)
-            if snapshot:
-                return bytes(snapshot)
-        except Exception as exc:
-            _log.debug("Snapshot fetch failed for %s: %s", device.name, exc)
+    async def _async_snapshot_bytes(self, device, *, fresh: bool = False) -> bytes | None:
+        if fresh:
+            try:
+                snapshot = await device.async_get_snapshot(retries=2, delay=1)
+                if image := validated_snapshot_bytes(snapshot):
+                    return image
+            except Exception as exc:
+                _log.debug("Fresh snapshot fetch failed for %s: %s", device.name, exc)
 
         try:
             from ring_doorbell.const import SNAPSHOT_ENDPOINT
 
             response = await self._ring.async_query(SNAPSHOT_ENDPOINT.format(device.id))
-            if response.status_code == 200 and response.content:
-                return bytes(response.content)
+            if response.status_code == 200:
+                return validated_snapshot_bytes(response.content)
         except Exception as exc:
             _log.debug("Cached snapshot fetch failed for %s: %s", device.name, exc)
         return None
@@ -361,6 +374,25 @@ class RingSessionManager:
     def has_stored_credentials(self) -> bool:
         """Return whether a cached Ring session is available for restoration."""
         return self._credentials.load_token() is not None
+
+    def prepare_event_listener_credentials(
+        self,
+        client: RingClient,
+    ) -> tuple[dict[str, Any] | None, Callable[[dict[str, Any]], None]]:
+        """Bind persisted push credentials to the current authenticated session."""
+        with self._lock:
+            if self._client is not client or not client.is_authenticated:
+                raise SessionSupersededError("Ring session was superseded")
+            generation = self._generation
+            credentials = self._credentials.load_event_credentials()
+
+            def persist(updated: dict[str, Any]) -> None:
+                with self._lock:
+                    if generation != self._generation and self._client is not client:
+                        raise SessionSupersededError("Ring session was superseded")
+                    self._credentials.save_event_credentials(updated)
+
+            return credentials, persist
 
     def login(
         self,

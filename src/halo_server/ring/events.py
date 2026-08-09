@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import contextlib
+import json
 import logging
 import math
 import threading
@@ -13,6 +14,15 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
+
+from ring_doorbell.const import (
+    KIND_DING,
+    KIND_MOTION,
+    PUSH_ACTION_DING,
+    PUSH_ACTION_MOTION,
+    PUSH_NOTIFICATION_DING,
+    PUSH_NOTIFICATION_MOTION,
+)
 
 _log = logging.getLogger(__name__)
 
@@ -37,6 +47,14 @@ class RingEventType(StrEnum):
     MOTION = "motion"
     DOORBELL = "doorbell"
     OTHER = "other"
+
+
+_MOTION_SOURCE_KINDS = frozenset(
+    kind.casefold() for kind in (KIND_MOTION, PUSH_ACTION_MOTION, PUSH_NOTIFICATION_MOTION)
+)
+_DOORBELL_SOURCE_KINDS = frozenset(
+    kind.casefold() for kind in (KIND_DING, PUSH_ACTION_DING, PUSH_NOTIFICATION_DING)
+)
 
 
 class EventNormalizationError(ValueError):
@@ -68,7 +86,7 @@ def normalize_ring_event(
     """Convert a ring-doorbell event into Halo's stable internal contract."""
     event_id = _required_identifier(event, "id", "event")
     camera_id = _required_identifier(event, "doorbot_id", "camera")
-    source_kind = _required_text(event, "kind").lower()
+    source_kind = _required_text(event, "kind").casefold()
     occurred_at = _finite_number(getattr(event, "now", None), "event timestamp")
     received_at = _finite_number(clock(), "receipt timestamp")
     expires = getattr(event, "expires_in", None)
@@ -78,9 +96,9 @@ def normalize_ring_event(
     if source_expires_in is not None and source_expires_in < 0:
         raise EventNormalizationError("source expiry duration must be non-negative")
 
-    if source_kind == "motion":
+    if source_kind in _MOTION_SOURCE_KINDS:
         event_type = RingEventType.MOTION
-    elif source_kind == "ding":
+    elif source_kind in _DOORBELL_SOURCE_KINDS:
         event_type = RingEventType.DOORBELL
     else:
         event_type = RingEventType.OTHER
@@ -108,6 +126,9 @@ class EventListener:
         client,
         on_event: Callable[[NormalizedRingEvent], None],
         on_state: Callable[[EventConnectionState], None] | None = None,
+        *,
+        credentials: dict[str, Any] | None = None,
+        credentials_updated_callback: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
         self._client = client
         self._on_event = on_event
@@ -118,6 +139,10 @@ class EventListener:
         self._state = EventConnectionState.OFFLINE
         self._startup_ready = threading.Event()
         self._startup_error: BaseException | None = None
+        self._credentials = (
+            _copy_event_credentials(credentials) if credentials is not None else None
+        )
+        self._credentials_updated_callback = credentials_updated_callback
 
     @property
     def state(self) -> EventConnectionState:
@@ -214,6 +239,24 @@ class EventListener:
             except Exception as exc:
                 _log.debug("Ring connection-state callback failed: %s", exc)
 
+    def _credentials_updated(self, credentials: dict[str, Any]) -> None:
+        try:
+            normalized = _copy_event_credentials(credentials)
+        except ValueError:
+            _log.warning("Ignoring an invalid Ring push credential update")
+            return
+        with self._lock:
+            self._credentials = normalized
+            callback = self._credentials_updated_callback
+        if callback is not None:
+            try:
+                callback(_copy_event_credentials(normalized))
+            except Exception as exc:
+                _log.warning(
+                    "Ring push credentials could not be persisted (%s)",
+                    type(exc).__name__,
+                )
+
     async def _run(self) -> None:
         try:
             from ring_doorbell import RingEventListener, RingEventListenerConfig
@@ -228,7 +271,18 @@ class EventListener:
             backoff = RECONNECT_MIN
             while not self._stop.is_set():
                 self._set_state(EventConnectionState.CONNECTING)
-                listener = RingEventListener(ring, config=config)
+                with self._lock:
+                    credentials = (
+                        _copy_event_credentials(self._credentials)
+                        if self._credentials is not None
+                        else None
+                    )
+                listener = RingEventListener(
+                    ring,
+                    credentials,
+                    self._credentials_updated,
+                    config=config,
+                )
                 listener.add_notification_callback(self._emit)
                 self._signal_startup()
                 try:
@@ -288,6 +342,19 @@ def _listener_run_state(listener: Any) -> str | None:
     state = getattr(receiver, "run_state", None)
     name = getattr(state, "name", None)
     return name if isinstance(name, str) else None
+
+
+def _copy_event_credentials(credentials: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(credentials, dict):
+        raise ValueError("Ring push credentials must be a JSON object")
+    try:
+        encoded = json.dumps(credentials, allow_nan=False, separators=(",", ":"))
+        normalized = json.loads(encoded)
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise ValueError("Ring push credentials must be a JSON object") from exc
+    if not isinstance(normalized, dict):
+        raise ValueError("Ring push credentials must be a JSON object")
+    return normalized
 
 
 def _required_identifier(event: Any, attribute: str, label: str) -> str:

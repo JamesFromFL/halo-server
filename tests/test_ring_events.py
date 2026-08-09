@@ -4,6 +4,12 @@ from types import SimpleNamespace
 
 import pytest
 import ring_doorbell
+from ring_doorbell.const import (
+    PUSH_ACTION_DING,
+    PUSH_ACTION_MOTION,
+    PUSH_NOTIFICATION_DING,
+    PUSH_NOTIFICATION_MOTION,
+)
 
 from halo_server.ring.events import (
     EventConnectionState,
@@ -56,6 +62,22 @@ def test_normalize_maps_ring_ding_to_doorbell_without_losing_source_kind():
     assert normalized.is_update is True
 
 
+@pytest.mark.parametrize(
+    ("source_kind", "event_type"),
+    [
+        (PUSH_ACTION_DING, RingEventType.DOORBELL),
+        (PUSH_ACTION_MOTION, RingEventType.MOTION),
+        (PUSH_NOTIFICATION_DING, RingEventType.DOORBELL),
+        (PUSH_NOTIFICATION_MOTION, RingEventType.MOTION),
+    ],
+)
+def test_normalize_maps_exact_ring_push_aliases(source_kind, event_type):
+    normalized = normalize_ring_event(_event(kind=source_kind), clock=lambda: 1)
+
+    assert normalized.type is event_type
+    assert normalized.source_kind == source_kind.casefold()
+
+
 def test_normalize_preserves_unknown_event_as_other():
     normalized = normalize_ring_event(_event(kind="alarm"), clock=lambda: 1)
 
@@ -93,8 +115,17 @@ async def test_listener_normalizes_events_and_reports_state(monkeypatch):
             return cls()
 
     class FakeSdkListener:
-        def __init__(self, ring, *, config):
+        def __init__(
+            self,
+            ring,
+            credentials=None,
+            credentials_updated_callback=None,
+            *,
+            config,
+        ):
             assert ring == "ring"
+            assert credentials is None
+            assert callable(credentials_updated_callback)
             assert config.connection_retry_count == 1_000_000
             assert config.abort_on_sequential_error_count is None
             self.callback = None
@@ -140,7 +171,14 @@ async def test_listener_retries_failed_start_and_stops_each_sdk_listener(monkeyp
             return cls()
 
     class FakeSdkListener:
-        def __init__(self, _ring, *, config):
+        def __init__(
+            self,
+            _ring,
+            _credentials=None,
+            _credentials_updated_callback=None,
+            *,
+            config,
+        ):
             self.config = config
             self.callback = None
             self.stopped = False
@@ -169,6 +207,82 @@ async def test_listener_retries_failed_start_and_stops_each_sdk_listener(monkeyp
     assert len(instances) == 2
     assert all(instance.stopped for instance in instances)
     assert states[-1] is EventConnectionState.OFFLINE
+
+
+@pytest.mark.asyncio
+async def test_listener_retains_updated_credentials_when_persistence_fails(monkeypatch, caplog):
+    instances = []
+    first_credentials = {"gcm": {"android_id": "original-secret"}}
+    replacement = {"gcm": {"android_id": "replacement-secret"}}
+
+    class FakeConfig:
+        @classmethod
+        def default_config(cls):
+            return cls()
+
+    class FakeSdkListener:
+        def __init__(
+            self,
+            _ring,
+            credentials=None,
+            credentials_updated_callback=None,
+            *,
+            config,
+        ):
+            self.credentials = credentials
+            self.credentials_updated_callback = credentials_updated_callback
+            self.config = config
+            self.stopped = False
+            instances.append(self)
+
+        def add_notification_callback(self, _callback):
+            pass
+
+        async def start(self):
+            if len(instances) == 1:
+                self.credentials_updated_callback(replacement)
+                return False
+            listener._stop.set()
+            return True
+
+        async def stop(self):
+            self.stopped = True
+
+    def fail_persistence(_credentials):
+        raise RuntimeError("must-not-appear-secret")
+
+    monkeypatch.setattr(ring_doorbell, "RingEventListenerConfig", FakeConfig)
+    monkeypatch.setattr(ring_doorbell, "RingEventListener", FakeSdkListener)
+    monkeypatch.setattr("halo_server.ring.events.RECONNECT_MIN", 0)
+    listener = EventListener(
+        SimpleNamespace(ring="ring"),
+        lambda _event: None,
+        credentials=first_credentials,
+        credentials_updated_callback=fail_persistence,
+    )
+
+    await asyncio.wait_for(listener._run(), timeout=1)
+
+    assert instances[0].credentials == first_credentials
+    assert instances[1].credentials == replacement
+    assert all(instance.stopped for instance in instances)
+    assert "must-not-appear-secret" not in caplog.text
+    assert "RuntimeError" in caplog.text
+
+
+def test_listener_ignores_invalid_credential_callback_without_logging_value(caplog):
+    persisted = []
+    listener = EventListener(
+        SimpleNamespace(),
+        lambda _event: None,
+        credentials_updated_callback=persisted.append,
+    )
+
+    listener._credentials_updated({"secret-value": object()})
+
+    assert persisted == []
+    assert listener._credentials is None
+    assert "secret-value" not in caplog.text
 
 
 def test_start_is_idempotent_and_stop_waits_for_owned_future():

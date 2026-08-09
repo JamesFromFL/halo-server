@@ -16,6 +16,7 @@ from halo_server.ring.credentials import (
     CredentialStoreError,
     CredentialSupersededError,
 )
+from halo_server.ring.snapshots import MAX_SNAPSHOT_BYTES
 
 
 class _FakeDevices:
@@ -220,18 +221,18 @@ async def test_device_refresh_uses_ttl_and_family_filter(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_snapshot_uses_cached_endpoint_after_live_snapshot_failure(monkeypatch):
+async def test_cached_snapshot_does_not_request_a_fresh_camera_image(monkeypatch):
     class FakeDevice:
         id = 42
         name = "Front Door"
 
         async def async_get_snapshot(self, **_kwargs):
-            raise RuntimeError("live snapshot unavailable")
+            raise AssertionError("cached snapshot must not wake the camera")
 
     class FakeRing:
         async def async_query(self, endpoint):
             assert "42" in endpoint
-            return SimpleNamespace(status_code=200, content=b"cached")
+            return SimpleNamespace(status_code=200, content=b"\xff\xd8cached\xff\xd9")
 
     client = RingClient()
     client._ring = FakeRing()
@@ -240,7 +241,117 @@ async def test_snapshot_uses_cached_endpoint_after_live_snapshot_failure(monkeyp
         "/clients_api/snapshots/image/{0}",
     )
 
-    assert await client._async_snapshot_bytes(FakeDevice()) == b"cached"
+    assert await client._async_snapshot_bytes(FakeDevice(), fresh=False) == (
+        b"\xff\xd8cached\xff\xd9"
+    )
+
+
+@pytest.mark.asyncio
+async def test_fresh_snapshot_returns_live_jpeg_without_cached_request():
+    calls = []
+
+    class FakeDevice:
+        id = 42
+        name = "Front Door"
+
+        async def async_get_snapshot(self, **kwargs):
+            calls.append(kwargs)
+            return b"\xff\xd8fresh\xff\xd9"
+
+    class FakeRing:
+        async def async_query(self, _endpoint):
+            raise AssertionError("valid fresh snapshot must not use cached endpoint")
+
+    client = RingClient()
+    client._ring = FakeRing()
+
+    assert await client._async_snapshot_bytes(FakeDevice(), fresh=True) == (
+        b"\xff\xd8fresh\xff\xd9"
+    )
+    assert calls == [{"retries": 2, "delay": 1}]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "fresh_result",
+    [
+        None,
+        b"",
+        b"not-a-jpeg",
+        b"\xff\xd8missing-end",
+        b"\xff\xd8" + b"x" * MAX_SNAPSHOT_BYTES + b"\xff\xd9",
+        IndexError("empty snapshot timestamp response"),
+    ],
+    ids=[
+        "none",
+        "empty",
+        "non-jpeg",
+        "truncated-jpeg",
+        "oversize",
+        "empty-timestamp",
+    ],
+)
+async def test_fresh_snapshot_falls_back_to_cached_jpeg(monkeypatch, fresh_result):
+    class FakeDevice:
+        id = 42
+        name = "Front Door"
+
+        async def async_get_snapshot(self, **_kwargs):
+            if isinstance(fresh_result, Exception):
+                raise fresh_result
+            return fresh_result
+
+    class FakeRing:
+        async def async_query(self, endpoint):
+            assert "42" in endpoint
+            return SimpleNamespace(status_code=200, content=b"\xff\xd8cached\xff\xd9")
+
+    client = RingClient()
+    client._ring = FakeRing()
+    monkeypatch.setattr(
+        "ring_doorbell.const.SNAPSHOT_ENDPOINT",
+        "/clients_api/snapshots/image/{0}",
+    )
+
+    assert await client._async_snapshot_bytes(FakeDevice(), fresh=True) == (
+        b"\xff\xd8cached\xff\xd9"
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "cached_result",
+    [
+        SimpleNamespace(status_code=404, content=b"\xff\xd8cached\xff\xd9"),
+        SimpleNamespace(status_code=200, content=b""),
+        SimpleNamespace(status_code=200, content=b"not-a-jpeg"),
+        SimpleNamespace(
+            status_code=200,
+            content=b"\xff\xd8" + b"x" * MAX_SNAPSHOT_BYTES + b"\xff\xd9",
+        ),
+        RuntimeError("cached endpoint unavailable"),
+    ],
+    ids=["http-error", "empty", "non-jpeg", "oversize", "query-error"],
+)
+async def test_snapshot_rejects_invalid_cached_response(monkeypatch, cached_result):
+    class FakeDevice:
+        id = 42
+        name = "Front Door"
+
+    class FakeRing:
+        async def async_query(self, _endpoint):
+            if isinstance(cached_result, Exception):
+                raise cached_result
+            return cached_result
+
+    client = RingClient()
+    client._ring = FakeRing()
+    monkeypatch.setattr(
+        "ring_doorbell.const.SNAPSHOT_ENDPOINT",
+        "/clients_api/snapshots/image/{0}",
+    )
+
+    assert await client._async_snapshot_bytes(FakeDevice(), fresh=False) is None
 
 
 def test_login_publishes_validated_session_and_stops_previous(tmp_path):
@@ -257,6 +368,76 @@ def test_login_publishes_validated_session_and_stops_previous(tmp_path):
     assert manager.active_client is second
     assert manager.account_email == "second@example.com"
     assert store.load().ring_token == {"refresh_token": "second"}
+
+
+def test_event_credentials_survive_restart_and_are_bound_to_active_client(tmp_path):
+    path = tmp_path / "credentials.json"
+    first = _ManagedClient("first")
+    store = CredentialStore(path)
+    manager = RingSessionManager(store, client_factory=lambda: first)
+    manager.login("person@example.com", "password")
+    initial, persist = manager.prepare_event_listener_credentials(first)
+
+    assert initial is None
+    persist({"gcm": {"android_id": "push-device"}})
+    manager.shutdown()
+
+    restored = _ManagedClient("restored")
+    restarted = RingSessionManager(CredentialStore(path), client_factory=lambda: restored)
+    assert restarted.restore() is restored
+    credentials, _persist = restarted.prepare_event_listener_credentials(restored)
+    assert credentials == {"gcm": {"android_id": "push-device"}}
+
+
+def test_logout_clears_event_credentials_and_rejects_late_listener_callback(tmp_path):
+    client = _ManagedClient("active")
+    store = CredentialStore(tmp_path / "credentials.json")
+    manager = RingSessionManager(store, client_factory=lambda: client)
+    manager.login("person@example.com", "password")
+    _credentials, persist = manager.prepare_event_listener_credentials(client)
+    persist({"gcm": {"android_id": "push-device"}})
+
+    manager.logout()
+
+    cleared = store.load()
+    assert cleared.ring_token is None
+    assert cleared.account_email is None
+    assert cleared.event_credentials is None
+    with pytest.raises(SessionSupersededError, match="superseded"):
+        persist({"gcm": {"android_id": "late-device"}})
+    assert store.load().event_credentials is None
+
+
+def test_event_credential_callback_preserves_external_revision_change(tmp_path):
+    path = tmp_path / "credentials.json"
+    client = _ManagedClient("active")
+    store = CredentialStore(path)
+    manager = RingSessionManager(store, client_factory=lambda: client)
+    manager.login("person@example.com", "password")
+    _credentials, persist = manager.prepare_event_listener_credentials(client)
+    external = CredentialStore(path)
+    external.save_event_credentials({"gcm": {"android_id": "external"}})
+
+    with pytest.raises(CredentialSupersededError, match="stale"):
+        persist({"gcm": {"android_id": "stale"}})
+
+    assert CredentialStore(path).load_event_credentials() == {"gcm": {"android_id": "external"}}
+
+
+def test_failed_replacement_login_does_not_invalidate_active_event_writer(tmp_path):
+    active = _ManagedClient("active")
+    rejected = _ManagedClient("rejected", login_error=AuthenticationError("rejected"))
+    store = CredentialStore(tmp_path / "credentials.json")
+    manager = RingSessionManager(store, client_factory=_factory(active, rejected))
+    manager.login("person@example.com", "password")
+    _credentials, persist = manager.prepare_event_listener_credentials(active)
+
+    with pytest.raises(AuthenticationError):
+        manager.login("other@example.com", "wrong")
+    persist({"gcm": {"android_id": "still-active"}})
+
+    assert manager.active_client is active
+    assert store.load_event_credentials() == {"gcm": {"android_id": "still-active"}}
 
 
 def test_failed_login_preserves_existing_session_and_credentials(tmp_path):

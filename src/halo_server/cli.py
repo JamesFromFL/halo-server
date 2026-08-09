@@ -7,6 +7,7 @@ import asyncio
 import ipaddress
 import json
 import signal
+import sys
 from pathlib import Path
 
 from halo_server import __version__
@@ -70,6 +71,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command is None:
         parser.print_help()
         return 0
+    _require_native_platform(parser)
     paths = _paths_from_args(args)
     if args.command == "daemon":
         from halo_server.logging_setup import configure_logging
@@ -138,6 +140,17 @@ def _tcp_port(value: str) -> int:
     if not 0 <= port <= 65535:
         raise argparse.ArgumentTypeError("TCP port must be between 0 and 65535")
     return port
+
+
+def _require_native_platform(parser: argparse.ArgumentParser) -> None:
+    if sys.platform in {"linux", "darwin"}:
+        return
+    if sys.platform == "win32":
+        parser.error(
+            "native Windows is not supported; Halo Server and Scrypted must run together "
+            "in a Linux environment such as WSL2"
+        )
+    parser.error(f"native Halo Server does not support this platform: {sys.platform}")
 
 
 async def _run_daemon(

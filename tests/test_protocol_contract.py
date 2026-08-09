@@ -9,7 +9,7 @@ from halo_server.api.plugin import PLUGIN_PROTOCOL_VERSION
 from halo_server.media.leases import maximum_session_seconds
 from halo_server.ring.devices import DeviceSummary
 
-PROTOCOL_ROOT = files("halo_server.api").joinpath("protocol", "v2")
+PROTOCOL_ROOT = files("halo_server.api").joinpath("protocol", f"v{PLUGIN_PROTOCOL_VERSION}")
 
 
 def _load(name):
@@ -21,7 +21,7 @@ def test_canonical_plugin_protocol_schema_and_fixtures_are_valid():
     fixtures = _load("fixtures.json")
 
     Draft202012Validator.check_schema(schema)
-    assert schema["$id"] == "urn:halo:plugin-protocol:v2"
+    assert schema["$id"] == f"urn:halo:plugin-protocol:v{PLUGIN_PROTOCOL_VERSION}"
     assert schema["x-halo-owner"] == "halo-server"
     assert schema["x-halo-protocol-version"] == PLUGIN_PROTOCOL_VERSION
     assert fixtures["protocol_version"] == PLUGIN_PROTOCOL_VERSION
@@ -47,6 +47,18 @@ def test_canonical_fixtures_match_server_serializer_boundaries():
 
     device = cases["device_snapshot"]["devices"][0]
     assert set(device) == {field.name for field in fields(DeviceSummary)}
+    assert cases["capabilities"]["capabilities"] == [
+        "devices",
+        "events",
+        "motion",
+        "doorbell",
+        "battery",
+        "online",
+        "intercom",
+        "snapshot",
+        "light",
+        "siren",
+    ]
     assert cases["capabilities"]["media"]["maximum_session_seconds"] == maximum_session_seconds()
 
     event = cases["event_envelope"]["event"]
