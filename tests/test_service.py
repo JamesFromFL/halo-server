@@ -589,7 +589,7 @@ def test_failed_media_session_is_not_reported_as_an_active_upstream(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_media_readiness_publishes_incident_motion_and_quiet_stop_releases_lease(
+async def test_source_motion_precedes_media_readiness_and_quiet_stop_releases_lease(
     tmp_path,
 ):
     sessions = FakeSessions()
@@ -623,10 +623,9 @@ async def test_media_readiness_publishes_incident_motion_and_quiet_stop_releases
     incident = service._incidents["42"].snapshot()
     assert incident.media_ready is True
     assert incident.motion_published is True
-    assert [str(action["type"]) for action in service._recent_actions][-2:] == [
-        "media_ready",
-        "motion_on",
-    ]
+    published_types = [str(action["type"]) for action in service._recent_actions]
+    assert published_types.count("motion_on") == 1
+    assert published_types.index("motion_on") < published_types.index("media_ready")
 
     stop_actions = service._incidents["42"].tick(now=incident.quiet_deadline)
     service._handle_incident_actions("42", stop_actions)
@@ -639,6 +638,7 @@ async def test_media_readiness_publishes_incident_motion_and_quiet_stop_releases
 @pytest.mark.asyncio
 async def test_callbacks_from_replaced_listener_are_ignored(tmp_path):
     sessions = FakeSessions()
+    sessions.client.all_devices = [SimpleNamespace(id=42, name="Front Door")]
     service = _service(tmp_path, sessions)
     service._main_loop = asyncio.get_running_loop()
     await service.handle_admin(
@@ -736,7 +736,7 @@ def test_only_downstream_incident_actions_enter_plugin_event_journal(tmp_path):
         )
     )
 
-    assert service._plugin_events.latest_sequence == 0
+    assert service._plugin_events.latest_sequence == 1
 
     service._handle_incident_actions(
         "42",
@@ -747,7 +747,7 @@ def test_only_downstream_incident_actions_enter_plugin_event_journal(tmp_path):
         after_sequence=0,
     )
 
-    assert [event.type for event in events] == ["media_ready", "motion_on"]
+    assert [event.type for event in events] == ["motion_on", "media_ready"]
     assert all(event.camera_id == "42" for event in events)
 
 

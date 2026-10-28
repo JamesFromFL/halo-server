@@ -196,3 +196,39 @@ test("literal text acceptance is pinned to the same Unicode16 ranges as Python a
     assert.throws(() => encodeEnvelope(message), ProtocolError);
   }
 });
+
+test("S07 configuration and event replies correlate null scope and each registry/page identity", async () => {
+  const {validateReply} = await import("../src/protocol.js");
+  const samples = new Map([...fixtures.valid].reverse().map(value => [value.kind, value]));
+  for (const kind of ["accessory_config", "event_sync"] as const) for (const nullScope of [false, true]) {
+    const request = structuredClone(samples.get(kind)!);
+    const reply = structuredClone(samples.get(kind === "accessory_config" ? "accessory_config_ack" : "event_sync_ack")!);
+    if (nullScope) {
+      request.payload.scope = reply.payload.scope = null;
+      if (kind === "accessory_config") request.payload.entries = [];
+    }
+    assert.deepEqual(validateReply(request, reply), reply);
+    const stale = structuredClone(reply);
+    stale.payload.scope = nullScope ? samples.get(kind)!.payload.scope : null;
+    assert.throws(() => validateReply(request, stale), /invalid-reply-ownership/);
+    if (kind === "accessory_config") for (const field of ["revision", "generation", "page_index"]) {
+      const unowned = structuredClone(reply);
+      unowned.payload[field] = (unowned.payload[field] as number) + 1;
+      assert.deepEqual(decodeEnvelope(encodeEnvelope(unowned).subarray(4)), unowned);
+      assert.throws(() => validateReply(request, unowned), /invalid-config-correlation/);
+    }
+  }
+  const request = structuredClone(samples.get("event_sync")!), reply = structuredClone(samples.get("event_sync_ack")!);
+  request.payload.epoch = "old-epoch"; request.payload.sequence = 10;
+  reply.payload.epoch = "current-epoch"; reply.payload.sequence = 100;
+  assert.deepEqual(validateReply(request, reply), reply);
+});
+
+test("an expired monotonic deadline is structurally valid and never proves event freshness", () => {
+  for (const kind of ["event_state", "camera_event"] as const) {
+    const message = structuredClone(fixtures.valid.find(value => value.kind === kind)!);
+    message.payload.expires_at_ms = 0;
+    assert.ok((message.payload.ttl_ms as number) > 0);
+    assert.deepEqual(decodeEnvelope(encodeEnvelope(message).subarray(4)), message);
+  }
+});

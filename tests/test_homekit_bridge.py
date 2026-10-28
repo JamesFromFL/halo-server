@@ -60,7 +60,7 @@ async def test_daemon_real_compiled_child_is_control_ready_without_publishing(tm
         await wait_until(lambda: service.status()["homekit"]["transport_ready"])
         status = service.status()["homekit"]
         assert status["state"] == "control_ready"
-        assert status["reason"] == "accessories_not_implemented"
+        assert status["reason"] == "media_not_implemented"
         assert status["camera_ready"] is False
         runtime = service._homekit_bridge._runtime
         process = runtime._process

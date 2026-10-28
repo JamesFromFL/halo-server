@@ -504,8 +504,11 @@ class HomeKitController:
                 waiter.add_done_callback(_observe)
                 raise
 
-    async def detach(self, boot_id: str | None = None) -> None:
-        self._owner()
+    def fence(self) -> None:
+        """Synchronously revoke local selection before waiting for persistence/cleanup."""
+        self._fence()
+
+    def _fence(self, boot_id: str | None = None):
         with self._lock:
             if boot_id is not None and boot_id != self._boot:
                 raise HomeKitOperationError("boot_changed")
@@ -514,7 +517,11 @@ class HomeKitController:
             claims = tuple(self._claims.values())
             for claim in claims:
                 claim.retired = True
-        await self._retire(claims)
+            return claims
+
+    async def detach(self, boot_id: str | None = None) -> None:
+        self._owner()
+        await self._retire(self._fence(boot_id))
 
     async def close(self) -> None:
         with self._lock:

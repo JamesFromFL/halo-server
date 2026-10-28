@@ -1839,6 +1839,332 @@
         }
       },
       "additionalProperties": false
+    },
+    "accessory_config_payload": {
+      "type": "object",
+      "required": [
+        "scope",
+        "revision",
+        "generation",
+        "page_index",
+        "total_pages",
+        "entries",
+        "media_ready"
+      ],
+      "properties": {
+        "scope": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/account_scope"
+            }
+          ]
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "page_index": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 7
+        },
+        "total_pages": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 8
+        },
+        "entries": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "type": "object",
+            "required": [
+              "camera_id",
+              "accessory_id",
+              "username",
+              "doorbell"
+            ],
+            "properties": {
+              "camera_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128,
+                "pattern": "^[^\u0000-\u001f\u007f-\u009f\u00ad\u0600-\u0605\u061c\u06dd\u070f\u0890-\u0891\u08e2\u180e\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u206f\ud800-\udfff\ufeff\ufff9-\ufffb\ud804\udcbd\ud804\udccd\ud80d\udc30-\ud80d\udc3f\ud82f\udca0-\ud82f\udca3\ud834\udd73-\ud834\udd7a\udb40\udc01\udb40\udc20-\udb40\udc7f]*$",
+                "not": {
+                  "pattern": "[\u0000-\u001f\u007f-\u009f\u00ad\u0600-\u0605\u061c\u06dd\u070f\u0890-\u0891\u08e2\u180e\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u206f\ud800-\udfff\ufeff\ufff9-\ufffb\ud804\udcbd\ud804\udccd\ud80d\udc30-\ud80d\udc3f\ud82f\udca0-\ud82f\udca3\ud834\udd73-\ud834\udd7a\udb40\udc01\udb40\udc20-\udb40\udc7f]"
+                }
+              },
+              "accessory_id": {
+                "$ref": "#/$defs/uuid"
+              },
+              "username": {
+                "type": "string",
+                "minLength": 17,
+                "maxLength": 17,
+                "pattern": "^[0-9A-F][26AE](?::[0-9A-F]{2}){5}$"
+              },
+              "doorbell": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "media_ready": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "accessory_config_ack_payload": {
+      "type": "object",
+      "required": [
+        "scope",
+        "revision",
+        "generation",
+        "page_index",
+        "accepted",
+        "code"
+      ],
+      "properties": {
+        "scope": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/account_scope"
+            }
+          ]
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "page_index": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 7
+        },
+        "accepted": {
+          "type": "boolean"
+        },
+        "code": {
+          "$ref": "#/$defs/code"
+        }
+      },
+      "additionalProperties": false
+    },
+    "event_sync_payload": {
+      "type": "object",
+      "required": [
+        "scope",
+        "epoch",
+        "sequence"
+      ],
+      "properties": {
+        "scope": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/account_scope"
+            }
+          ]
+        },
+        "epoch": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^[A-Za-z0-9_-]{1,64}$",
+              "not": {
+                "pattern": "[^A-Za-z0-9_-]"
+              }
+            }
+          ]
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "additionalProperties": false
+    },
+    "event_sync_ack_payload": {
+      "type": "object",
+      "required": [
+        "scope",
+        "epoch",
+        "sequence",
+        "accepted",
+        "code"
+      ],
+      "properties": {
+        "scope": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/account_scope"
+            }
+          ]
+        },
+        "epoch": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "not": {
+            "pattern": "[^A-Za-z0-9_-]"
+          }
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "accepted": {
+          "type": "boolean"
+        },
+        "code": {
+          "$ref": "#/$defs/code"
+        }
+      },
+      "additionalProperties": false
+    },
+    "event_state_payload": {
+      "type": "object",
+      "required": [
+        "scope",
+        "epoch",
+        "sequence",
+        "motion",
+        "ttl_ms",
+        "source_state",
+        "synchronized",
+        "expires_at_ms"
+      ],
+      "properties": {
+        "scope": {
+          "$ref": "#/$defs/media_scope"
+        },
+        "epoch": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "not": {
+            "pattern": "[^A-Za-z0-9_-]"
+          }
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "motion": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "boolean"
+            }
+          ]
+        },
+        "ttl_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 30000
+        },
+        "source_state": {
+          "enum": [
+            "connected",
+            "connecting",
+            "offline"
+          ]
+        },
+        "synchronized": {
+          "type": "boolean"
+        },
+        "expires_at_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "additionalProperties": false
+    },
+    "camera_event_payload": {
+      "type": "object",
+      "required": [
+        "scope",
+        "epoch",
+        "sequence",
+        "event_id",
+        "type",
+        "ttl_ms",
+        "expires_at_ms"
+      ],
+      "properties": {
+        "scope": {
+          "$ref": "#/$defs/media_scope"
+        },
+        "epoch": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "not": {
+            "pattern": "[^A-Za-z0-9_-]"
+          }
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "event_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "type": {
+          "const": "doorbell"
+        },
+        "ttl_ms": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2000
+        },
+        "expires_at_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "additionalProperties": false
     }
   },
   "oneOf": [
@@ -2828,6 +3154,192 @@
         },
         "payload": {
           "$ref": "#/$defs/inventory_reset_payload"
+        }
+      },
+      "additionalProperties": false,
+      "x-sender": "python",
+      "x-reply-kind": null
+    },
+    {
+      "type": "object",
+      "required": [
+        "v",
+        "kind",
+        "boot_id",
+        "request_id",
+        "payload"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "integer"
+        },
+        "kind": {
+          "const": "accessory_config"
+        },
+        "boot_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "request_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "payload": {
+          "$ref": "#/$defs/accessory_config_payload"
+        }
+      },
+      "additionalProperties": false,
+      "x-sender": "python",
+      "x-reply-kind": "accessory_config_ack"
+    },
+    {
+      "type": "object",
+      "required": [
+        "v",
+        "kind",
+        "boot_id",
+        "request_id",
+        "payload"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "integer"
+        },
+        "kind": {
+          "const": "accessory_config_ack"
+        },
+        "boot_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "request_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "payload": {
+          "$ref": "#/$defs/accessory_config_ack_payload"
+        }
+      },
+      "additionalProperties": false,
+      "x-sender": "hap",
+      "x-reply-kind": null
+    },
+    {
+      "type": "object",
+      "required": [
+        "v",
+        "kind",
+        "boot_id",
+        "request_id",
+        "payload"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "integer"
+        },
+        "kind": {
+          "const": "event_sync"
+        },
+        "boot_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "request_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "payload": {
+          "$ref": "#/$defs/event_sync_payload"
+        }
+      },
+      "additionalProperties": false,
+      "x-sender": "hap",
+      "x-reply-kind": "event_sync_ack"
+    },
+    {
+      "type": "object",
+      "required": [
+        "v",
+        "kind",
+        "boot_id",
+        "request_id",
+        "payload"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "integer"
+        },
+        "kind": {
+          "const": "event_sync_ack"
+        },
+        "boot_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "request_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "payload": {
+          "$ref": "#/$defs/event_sync_ack_payload"
+        }
+      },
+      "additionalProperties": false,
+      "x-sender": "python",
+      "x-reply-kind": null
+    },
+    {
+      "type": "object",
+      "required": [
+        "v",
+        "kind",
+        "boot_id",
+        "request_id",
+        "payload"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "integer"
+        },
+        "kind": {
+          "const": "event_state"
+        },
+        "boot_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "request_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "payload": {
+          "$ref": "#/$defs/event_state_payload"
+        }
+      },
+      "additionalProperties": false,
+      "x-sender": "python",
+      "x-reply-kind": null
+    },
+    {
+      "type": "object",
+      "required": [
+        "v",
+        "kind",
+        "boot_id",
+        "request_id",
+        "payload"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "integer"
+        },
+        "kind": {
+          "const": "camera_event"
+        },
+        "boot_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "request_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "payload": {
+          "$ref": "#/$defs/camera_event_payload"
         }
       },
       "additionalProperties": false,

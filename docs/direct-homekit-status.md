@@ -2,7 +2,8 @@
 
 Engineering record, 2026-10-28. Foundation committed locally as
 `798b7173ad9e8fbcbe655eb692a709b17cafcc87`; S05 is committed locally as
-`16c5aeda589d8d59886450b74018104b49ee616d`. S06 builds on those commits.
+`16c5aeda589d8d59886450b74018104b49ee616d`. S06 is committed locally as
+`7b735aaf13638decb1ad839bc3c5099658e72748`. S07 builds on those commits.
 
 The approved architecture keeps Python as the sole Ring account, push-event,
 shared capture and speaker owner. A supervised Node adapter uses released public
@@ -48,7 +49,7 @@ development. Direct HomeKit is not ready to pair or use with cameras.
   compiled Node session now drives native inventory, policy and synthetic camera
   delegates. Typed binary transfers enforce authorization, exact lengths,
   sequencing, two-chunk credit and owned consumer/producer cleanup. The adapter
-  still publishes no accessories or pairing storage.
+  does not yet publish accessories.
 
 Initial Ring restoration runs in an owned background task so local administration
 is available while the network is slow. Pending authentication is retired during
@@ -67,7 +68,7 @@ owner-only regular files, no-follow directory traversal, atomic replacement,
 file/directory fsync and visible corruption/conflict/uncertain-durability errors.
 The future settings interface will use this store; no TUI editor is added here.
 `homekit` and `dual` report `control_ready` with
-`accessories_not_implemented` once the control child is ready; missing compiled
+`media_not_implemented` once the control child is ready; missing compiled
 resources remain visibly degraded. Choosing either mode cannot publish an
 accessory yet.
 
@@ -117,8 +118,8 @@ active requests, recent wire IDs, cursor pages and media claims are bounded. An
 inventory notice invalidates changed state; exact duplicate complete notices keep
 live sessions intact. Policy ACKs echo the submitted scope, then the Node delegate
 fetches the Python-assigned privacy generation before admitting more work. Source
-metadata does not authorize camera selection: S06 production selection is empty
-until the trusted registry/selection slice S07.
+metadata does not authorize camera selection. S07 resolves explicit owner selection
+from a private durable registry; discovery alone never selects a camera.
 
 Python owns lease TTL expiry even if the peer disappears. Duplicate pending
 acquisitions cannot share and accidentally close a handle. Stopped session IDs
@@ -139,6 +140,47 @@ policy, shared capture leases, renew/stop, controls and PCM transfer. Image requ
 return `not-ready` until S10 can meet decode/resize/pixel/CPU requirements. Neither
 control readiness nor a private live lease means an Apple camera stream is ready.
 
+## S07 identities, selection, storage and event delivery
+
+The private registry retains opaque profile/camera identities across rename,
+outage and ordinary restart. UUIDs, locally administered HomeKit usernames and
+camera/doorbell birth class are durable; runtime account/device/privacy generations
+are not. Complete inventory can enroll identities, but selection is always explicit.
+Missing cameras retain tombstones. The current bound is 256 retained identities;
+exhaustion is visible instead of deleting pairings. HAP chooses listener ports.
+
+Owner-only administration adds bounded `homekit_list` pages and `homekit_select`
+with current profile/account generation and revision compare-and-swap. These are
+local admin RPCs; the full CLI/TUI selection and pairing workflow remains S13.
+Cancelling a save joins its durable write, cache update and immediate authority
+fence. An uncertain post-replace write fences authority, reloads and requests
+reconciliation before any retry. A selection save does not mean a camera is live.
+
+The Node adapter constructs released public CameraController/DoorbellController
+and motion/fault services, preserves stable identity, and retires asynchronous
+publication without deleting pairing data. Production publication is deliberately
+gated until S08 supplies a qualified output catalogue and streaming transport.
+Neither a peer configuration flag nor control readiness can bypass that gate.
+No real HomeKit listener, pairing PIN or capture is created just by selecting.
+
+Pairing storage preflight rejects unsafe files, symlinks, hard links, malformed or
+duplicate-key JSON, invalid known filenames, inconsistent accessory/controller
+records and mismatched Ed25519 keys. Corrupt records are preserved. Python pins
+the owner-only directory and a separate exclusive lock; both descriptors are
+inherited by Node and retained through child retirement. Tests cover a child
+retaining ownership after the parent descriptor closes. This path is qualified
+for Linux `/proc/self/fd`; native support elsewhere remains unqualified. These
+checks do not add crash durability to HAP's own persistence.
+
+Motion is published from source facts before media warming, with an independent
+finite deadline. A doorbell does not invent motion, and unseen SDK press updates
+do not become fresh edges. Event synchronization restores state and cursor without
+replaying button presses. Full source/privacy scope, boot, source health and expiry
+are rechecked at transport admission. Original receipt time survives daemon queue
+delay. Absolute monotonic expiry prevents a stalled Node reader from reviving a
+press or emitting even a transient expired-motion alert. The shared clock domain
+was measured on the pinned Linux Python/Node pair; this is not a cross-OS claim.
+
 ## Account continuity and migration
 
 Credential format v3 adds a durable, private UUID for one authenticated profile.
@@ -156,13 +198,12 @@ that could revive revoked pairings/controllers.
 
 ## Remaining implementation
 
-S04 still needs the final distribution/runtime capability gates. S05 and S06 are
-complete as the shared service/configuration/contract and operational private IPC
-slices. Build identity remains correlation, not independent provenance; immutable
+S04 still needs the final distribution/runtime capability gates. S05, S06 and
+S07 are complete as service/configuration/contracts, operational private IPC, and
+identity/accessory/event groundwork. Build identity remains correlation, not independent provenance; immutable
 bundled-resource manifests and release packaging belong in S14.
 
-S07–S15 remain: durable camera/doorbell accessories and selection; immediate source
-motion with resynchronization; actual H.264 RTP/SRTP/RTCP; negotiated audio and
+S08–S15 remain: actual H.264 RTP/SRTP/RTCP; negotiated audio and
 shared talkback; bounded JPEG decode/resize/cache; timed recording samples and an
 isolated fMP4 worker; HDS delivery; CLI/TUI management; packaged installation and
 rollback; authorized Ring/Apple Home acceptance and measured performance.
@@ -178,8 +219,9 @@ cannot make its internal socket writes strictly bounded. A reviewed upstream API
 extension or maintained narrow fork is required before strict HDS backpressure
 can be claimed. No private-socket monkeypatch or library fork has been adopted.
 
-HAP pairing persistence also needs private-path/corruption checks and verified
-durability. Native muxing must prove real timestamps, keyframe fragments and
+S07 validates HAP private paths, corruption and key consistency before library
+reads. Verified power-loss durability still requires S14 work: released HAP writes
+use rename without fsync. Native muxing must prove real timestamps, keyframe fragments and
 cancellation before choosing an alternative backend. Full HKSV requires actual
 decodable pre-roll and supported output formats; cold event capture cannot promise
 that. Battery capture will not become continuously warm without an explicit policy

@@ -29,6 +29,8 @@ from halo_server.api.tokens import PluginTokenStore, PluginTokenStoreError
 from halo_server.configuration import ServerConfiguration
 from halo_server.homekit.bridge import HomeKitBridge
 from halo_server.homekit.controller import HomeKitController
+from halo_server.homekit.models import HomeKitOperationError
+from halo_server.homekit.registry import RegistryConflictError, RegistryError
 from halo_server.homekit.service_backend import ServiceHomeKitBackend
 from halo_server.incidents.coordinator import (
     IncidentAction,
@@ -239,7 +241,15 @@ class HaloService:
         self._homekit_backend = ServiceHomeKitBackend(self)
         self.homekit = HomeKitController(self._homekit_backend)
         self._homekit_bridge = (
-            homekit_bridge_factory(self.homekit, self._homekit_backend, resources=homekit_resources)
+            homekit_bridge_factory(
+                self.homekit,
+                self._homekit_backend,
+                resources=homekit_resources,
+                paths=paths,
+                journal=self._plugin_events,
+                incidents=lambda: {key: value.snapshot() for key, value in self._incidents.items()},
+                source_state=lambda: str(self._event_state),
+            )
             if self.configuration.homekit_enabled
             else None
         )
@@ -518,6 +528,93 @@ class HaloService:
         if method == "plugin_list":
             _require_only(params, set())
             return self._plugin_status()
+        if method in {"homekit_list", "homekit_select"}:
+            if self._homekit_bridge is None:
+                raise AdminProtocolError(
+                    "homekit_disabled", "Start a native HomeKit operating mode first"
+                )
+            try:
+                if method == "homekit_list":
+                    _require_only(params, {"offset", "limit"})
+                    offset, limit = params.get("offset", 0), params.get("limit", 32)
+                    if (
+                        type(offset) is not int
+                        or not 0 <= offset <= 256
+                        or type(limit) is not int
+                        or not 1 <= limit <= 32
+                    ):
+                        raise AdminProtocolError("bad_params", "Camera page bounds are invalid")
+                    registry, inventory = await self._homekit_bridge.cameras()
+                    current = {camera.scope.camera_id: camera for camera in inventory.cameras}
+                    rows = [
+                        row for row in registry.entries if row.profile_id == inventory.profile_id
+                    ]
+                    return {
+                        "profile_id": inventory.profile_id,
+                        "account_generation": inventory.account_generation,
+                        "revision": registry.revision,
+                        "offset": offset,
+                        "total": len(rows),
+                        "cameras": [
+                            {
+                                "camera_id": row.camera_id,
+                                "accessory_id": row.accessory_uuid,
+                                "username": row.username,
+                                "doorbell": row.doorbell,
+                                "selected": row.selected,
+                                "available": row.camera_id in current,
+                                "name": current[row.camera_id].name
+                                if row.camera_id in current
+                                else "",
+                            }
+                            for row in rows[offset : offset + limit]
+                        ],
+                    }
+                _require_only(
+                    params, {"profile_id", "account_generation", "camera_ids", "expected_revision"}
+                )
+                identifiers = params.get("camera_ids")
+                generation, revision = (
+                    params.get("account_generation"),
+                    params.get("expected_revision"),
+                )
+                if (
+                    not isinstance(identifiers, list)
+                    or len(identifiers) > 256
+                    or any(
+                        not isinstance(value, str) or not 1 <= len(value) <= 128
+                        for value in identifiers
+                    )
+                    or type(generation) is not int
+                    or generation < 1
+                    or type(revision) is not int
+                    or revision < 0
+                ):
+                    raise AdminProtocolError(
+                        "bad_params", "Camera selection parameters are invalid"
+                    )
+                registry = await self._homekit_bridge.select(
+                    _required_string(params, "profile_id", max_length=36),
+                    generation,
+                    identifiers,
+                    revision,
+                )
+                return {"saved": True, "revision": registry.revision, "camera_ready": False}
+            except RegistryConflictError as exc:
+                raise AdminProtocolError(
+                    "configuration_conflict",
+                    "Camera selection changed; reload the current revision",
+                ) from exc
+            except RegistryError as exc:
+                raise AdminProtocolError(
+                    "configuration_unavailable",
+                    "Camera selection could not be saved safely; reload before retrying",
+                ) from exc
+            except HomeKitOperationError as exc:
+                raise AdminProtocolError(
+                    "account_changed",
+                    "Account authority changed; reload the current camera selection",
+                ) from exc
         if method == "shutdown":
             _require_only(params, set())
             self.request_stop()
@@ -901,6 +998,7 @@ class HaloService:
         self._event_state = EventConnectionState.OFFLINE
         self._account_integrations_ready = False
         self._last_account_error = "Ring event listener stopped; retrying"
+        self._notify_homekit_inventory()
         if error is None:
             _log.warning("Ring event listener stopped unexpectedly; repairing")
         else:
@@ -924,7 +1022,10 @@ class HaloService:
             or not self._accept_events
         ):
             return
-        loop.call_soon_threadsafe(self._process_listener_event, generation, event)
+        source_device = self._find_media_device(event.camera_id)
+        if source_device is None:
+            return
+        loop.call_soon_threadsafe(self._process_listener_event, generation, event, source_device)
 
     def _receive_event_state(
         self,
@@ -944,21 +1045,27 @@ class HaloService:
         if generation != self._listener_generation or not self._account_authority_current():
             return
         self._event_state = state
+        self._notify_homekit_inventory()
 
     def _process_listener_event(
         self,
         generation: int,
         event: NormalizedRingEvent,
+        source_device=None,
     ) -> None:
         if (
             generation != self._listener_generation
             or not self._accept_events
             or not self._account_authority_current()
+            or source_device is None
+            or self._find_media_device(event.camera_id) is not source_device
         ):
             return
-        self._process_event(event)
+        self._process_event(event, source_received_at=event.received_at)
 
-    def _process_event(self, event: NormalizedRingEvent) -> None:
+    def _process_event(
+        self, event: NormalizedRingEvent, *, source_received_at: float | None = None
+    ) -> None:
         self._recent_events.append(
             {
                 "event_id": event.event_id,
@@ -973,7 +1080,12 @@ class HaloService:
         )
         coordinator = self._incidents.setdefault(event.camera_id, IncidentCoordinator())
         if event.type is RingEventType.MOTION:
-            actions = coordinator.on_motion(event.event_id, is_update=event.is_update)
+            actions = coordinator.on_motion(
+                event.event_id,
+                is_update=event.is_update,
+                expires_in=event.source_expires_in,
+                received_at=source_received_at,
+            )
         elif event.type is RingEventType.DOORBELL:
             actions = coordinator.on_doorbell(event.event_id, is_update=event.is_update)
         else:
@@ -982,8 +1094,12 @@ class HaloService:
         self._handle_incident_actions(
             event.camera_id,
             actions,
+            source_received_at=source_received_at,
             ensure_event_generation=(
-                generation if event.type in {RingEventType.MOTION, RingEventType.DOORBELL} else None
+                generation
+                if event.type in {RingEventType.MOTION, RingEventType.DOORBELL}
+                and coordinator.snapshot().phase != "idle"
+                else None
             ),
         )
 
@@ -1094,6 +1210,7 @@ class HaloService:
         actions: list[IncidentAction],
         *,
         ensure_event_generation: int | None = None,
+        source_received_at: float | None = None,
     ) -> None:
         for action in actions:
             if not self._account_authority_current():
@@ -1122,7 +1239,7 @@ class HaloService:
                     else None
                 )
                 try:
-                    self._plugin_events.publish(
+                    published = self._plugin_events.publish(
                         action.type,
                         camera_id=camera_id,
                         payload={
@@ -1132,6 +1249,8 @@ class HaloService:
                         },
                         expected_scope=scope,
                     )
+                    if self._homekit_bridge is not None:
+                        self._homekit_bridge.notify_event(published, received_at=source_received_at)
                 except EventJournalError:
                     # A manager thread can publish a replacement while this
                     # event-loop callback serializes an old source fact.
@@ -1817,6 +1936,7 @@ class HaloService:
     def _notify_homekit_inventory(self) -> None:
         if self._homekit_bridge is not None:
             self._homekit_bridge.notify_inventory()
+            self._homekit_bridge.notify_event()
 
     def _invalidate_media_access(self) -> None:
         self._notify_homekit_inventory()

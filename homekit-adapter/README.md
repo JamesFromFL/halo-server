@@ -1,8 +1,8 @@
 # Halo private HAP adapter groundwork
 
-This package implements **S04 dependency/public-API checks, S05 private contracts and S06 supervised control/binary lifecycle**. It does not publish an accessory, open a HAP/mDNS listener, initialize pairing storage, authenticate to Ring, deliver media, or provide a working camera/HKSV integration. A `hello_ack` and the feature marker `classic-camera-control-v1` mean only that this initial private control protocol is understood.
+This package implements **S04 dependency checks, S05 contracts, S06 supervised channels and S07 stable accessory/event groundwork**. It does not publish an accessory, open a HAP/mDNS listener, authenticate to Ring, deliver media, or provide a working camera/HKSV integration. A `hello_ack` and the feature marker `classic-camera-control-v1` mean only that this initial private control protocol is understood.
 
-The Python daemon remains the Ring/session owner. The intended future adapter uses the released HAP public API; it does not embed Scrypted, require Homebridge, or import HAP private paths. Stable accessories, protected pairing stores, privacy/media delegates, snapshots, live transport and HKSV are later slices. No unpublished scratchpad dependency or HAP fork is used here.
+The Python daemon remains the Ring/session owner. The intended future adapter uses the released HAP public API; it does not embed Scrypted, require Homebridge, or import HAP private paths. Stable selected camera/doorbell graphs, pairing-store preflight and state-plus-cursor event delivery are implemented. Publication stays hard-gated until S08 supplies supported streaming formats. Snapshots, live transport and HKSV remain later slices. No unpublished scratchpad dependency or HAP fork is used here.
 
 ## Pinned toolchain
 
@@ -39,15 +39,30 @@ No cancellation can undo bytes already handed to a kernel/peer. This control-onl
 
 Node's test runner uses explicit `--test-isolation=none` and one-at-a-time tests so named test results are visible under the restricted local executor. Before HAP imports, a test-only guard blocks TCP/Unix connect/listen, UDP bind/send/connect, HTTP/HTTPS, DNS, fetch and child-process execution. It records attempted operation names and fails the unit phase if any occur. This is an in-process JavaScript API guard for this test phase, not an OS-wide network sandbox for npm/builds or a future native-media process.
 
-Tests exercise canonical Python fixtures, split/coalesced frames, exact frame limits, malformed/duplicate/deep JSON, invalid UTF-8/BOM, Unicode bounds, backpressure, deadlines, promise retirement and public CameraController/DoorbellController construction with rejecting synthetic delegates. Tests do not call `publish`, start storage or perform a Home pairing. Python `tests/test_homekit_runtime.py` separately exercises the actual compiled child over inherited private socketpairs, including lifecycle/cancellation/crash/reap and raw JSON parser agreement. Those tests require Node and the compiled entry; CI must build them first, and a release gate must not accept a skipped integration phase.
+Tests exercise canonical Python fixtures, split/coalesced frames, exact frame limits, malformed/duplicate/deep JSON, invalid UTF-8/BOM, Unicode bounds, backpressure, deadlines, promise retirement and public CameraController/DoorbellController construction with rejecting synthetic delegates. Tests use fake publication and isolated storage fixtures; they do not start real HAP listeners or perform a Home pairing. Python `tests/test_homekit_runtime.py` separately exercises the actual compiled child over inherited private socketpairs, including lifecycle/cancellation/crash/reap and raw JSON parser agreement. Those tests require Node and the compiled entry; CI must build them first, and a release gate must not accept a skipped integration phase.
 
 `HALO_PROTOCOL_FIXTURES` can select the same canonical fixture file when verifying an isolated clean package copy. `HALO_TEST_NETWORK_RECORD` writes the unit-phase guard result to a requested evidence file; neither is consumed by the production entry.
 
 ## Explicit later gates
 
-- HAP's released storage uses temporary-write/rename without fsync durability, can treat invalid JSON as missing and follows file symlinks during reads. A protected-path/corruption/revocation policy and supported storage hooks need qualification before S07 persistence claims. This package does not initialize that storage.
+- HAP's released storage uses temporary-write/rename without fsync durability, can treat invalid JSON as missing and follows file symlinks during reads. S07 now validates private pinned paths, exact records/key consistency and exclusive inherited ownership before HAP reads. Power-loss durability and revocation recovery remain S14 gates; unsafe existing state is preserved and refused.
 - Released HDS `sendEvent` has no public awaited drain/queued-byte bound. IPC credits alone cannot guarantee bounded HDS output. A maintained supported extension decision and stalled-controller measurements are mandatory before reliable HKSV claims; no private socket monkeypatch is included.
 - Public API imports and synthetic controller objects do not prove live SRTP, valid clips, audio-off privacy, Apple notification timing, actual source resolution, HEVC/HKSV3, real pairing, unattended install or platform support. Keep those acceptance gates separate.
 - `npm audit` must be reviewed as evidence about this exact locked graph/date; do not silently upgrade HAP or hide advisories to obtain a clean result.
 
 Primary dependency sources: [HAP-NodeJS2.2.3 npm package](https://www.npmjs.com/package/@homebridge/hap-nodejs/v/2.2.3), [released source comparison pin](https://github.com/homebridge/HAP-NodeJS/tree/25e8bea26a64309a47184dec478479483fbdd50c). The npm tarball integrity and lockfile, not an assumption about Scrypted's missing local fork, identify the installed dependency.
+
+## S07 storage and event contract
+
+Python supplies both `HALO_PAIRING_FD` and `HALO_PAIRING_LOCK_FD`; descriptors must
+be distinct from each other and the control/bulk channels. Linux `/proc/self/fd`
+pins the validated private directory. The lock is outside the HAP record directory
+and remains open in both owners through process exit. Never call accessory
+destruction/cleanup APIs during ordinary retirement: they erase durable pairings.
+
+Accessory configuration is bounded to eight pages, 32 entries per page, with a
+whole-assembly deadline and atomic graph replacement. Event delivery uses scoped
+state plus a cursor; doorbell edges are never reconstructed from replay. Both TTL
+and absolute monotonic expiry are checked, including after delayed consumption.
+Python `time.monotonic()` and Node `process.hrtime.bigint()` were bracket-probed on
+the qualified Linux runtime; other operating systems require qualification.

@@ -1779,6 +1779,638 @@
         },
         "revision": 1
       }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1,
+        "generation": 1,
+        "page_index": 0,
+        "total_pages": 1,
+        "entries": [
+          {
+            "camera_id": "42",
+            "accessory_id": "00000000-0000-0000-0000-000000000004",
+            "username": "02:01:02:03:04:05",
+            "doorbell": true
+          }
+        ],
+        "media_ready": false
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config_ack",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1,
+        "generation": 1,
+        "page_index": 0,
+        "accepted": true,
+        "code": "ok"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_sync",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "epoch": null,
+        "sequence": 0
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_sync_ack",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "epoch": "synthetic-epoch",
+        "sequence": 0,
+        "accepted": true,
+        "code": "ok"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_state",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": "synthetic-epoch",
+        "sequence": 1,
+        "motion": true,
+        "ttl_ms": 30000,
+        "source_state": "connected",
+        "synchronized": true,
+        "expires_at_ms": 30000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "camera_event",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": "synthetic-epoch",
+        "sequence": 2,
+        "event_id": "00000000-0000-0000-0000-000000000005",
+        "type": "doorbell",
+        "ttl_ms": 2000,
+        "expires_at_ms": 30000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1,
+        "generation": 1,
+        "page_index": 0,
+        "total_pages": 1,
+        "entries": [
+          {
+            "camera_id": "0",
+            "accessory_id": "00000000-0000-0000-0000-000000000010",
+            "username": "02:00:00:00:00:00",
+            "doorbell": true
+          },
+          {
+            "camera_id": "1",
+            "accessory_id": "00000000-0000-0000-0000-000000000011",
+            "username": "02:00:00:00:00:01",
+            "doorbell": true
+          },
+          {
+            "camera_id": "2",
+            "accessory_id": "00000000-0000-0000-0000-000000000012",
+            "username": "02:00:00:00:00:02",
+            "doorbell": true
+          },
+          {
+            "camera_id": "3",
+            "accessory_id": "00000000-0000-0000-0000-000000000013",
+            "username": "02:00:00:00:00:03",
+            "doorbell": true
+          },
+          {
+            "camera_id": "4",
+            "accessory_id": "00000000-0000-0000-0000-000000000014",
+            "username": "02:00:00:00:00:04",
+            "doorbell": true
+          },
+          {
+            "camera_id": "5",
+            "accessory_id": "00000000-0000-0000-0000-000000000015",
+            "username": "02:00:00:00:00:05",
+            "doorbell": true
+          },
+          {
+            "camera_id": "6",
+            "accessory_id": "00000000-0000-0000-0000-000000000016",
+            "username": "02:00:00:00:00:06",
+            "doorbell": true
+          },
+          {
+            "camera_id": "7",
+            "accessory_id": "00000000-0000-0000-0000-000000000017",
+            "username": "02:00:00:00:00:07",
+            "doorbell": true
+          },
+          {
+            "camera_id": "8",
+            "accessory_id": "00000000-0000-0000-0000-000000000018",
+            "username": "02:00:00:00:00:08",
+            "doorbell": true
+          },
+          {
+            "camera_id": "9",
+            "accessory_id": "00000000-0000-0000-0000-000000000019",
+            "username": "02:00:00:00:00:09",
+            "doorbell": true
+          },
+          {
+            "camera_id": "10",
+            "accessory_id": "00000000-0000-0000-0000-00000000001a",
+            "username": "02:00:00:00:00:0A",
+            "doorbell": true
+          },
+          {
+            "camera_id": "11",
+            "accessory_id": "00000000-0000-0000-0000-00000000001b",
+            "username": "02:00:00:00:00:0B",
+            "doorbell": true
+          },
+          {
+            "camera_id": "12",
+            "accessory_id": "00000000-0000-0000-0000-00000000001c",
+            "username": "02:00:00:00:00:0C",
+            "doorbell": true
+          },
+          {
+            "camera_id": "13",
+            "accessory_id": "00000000-0000-0000-0000-00000000001d",
+            "username": "02:00:00:00:00:0D",
+            "doorbell": true
+          },
+          {
+            "camera_id": "14",
+            "accessory_id": "00000000-0000-0000-0000-00000000001e",
+            "username": "02:00:00:00:00:0E",
+            "doorbell": true
+          },
+          {
+            "camera_id": "15",
+            "accessory_id": "00000000-0000-0000-0000-00000000001f",
+            "username": "02:00:00:00:00:0F",
+            "doorbell": true
+          },
+          {
+            "camera_id": "16",
+            "accessory_id": "00000000-0000-0000-0000-000000000020",
+            "username": "02:00:00:00:00:10",
+            "doorbell": true
+          },
+          {
+            "camera_id": "17",
+            "accessory_id": "00000000-0000-0000-0000-000000000021",
+            "username": "02:00:00:00:00:11",
+            "doorbell": true
+          },
+          {
+            "camera_id": "18",
+            "accessory_id": "00000000-0000-0000-0000-000000000022",
+            "username": "02:00:00:00:00:12",
+            "doorbell": true
+          },
+          {
+            "camera_id": "19",
+            "accessory_id": "00000000-0000-0000-0000-000000000023",
+            "username": "02:00:00:00:00:13",
+            "doorbell": true
+          },
+          {
+            "camera_id": "20",
+            "accessory_id": "00000000-0000-0000-0000-000000000024",
+            "username": "02:00:00:00:00:14",
+            "doorbell": true
+          },
+          {
+            "camera_id": "21",
+            "accessory_id": "00000000-0000-0000-0000-000000000025",
+            "username": "02:00:00:00:00:15",
+            "doorbell": true
+          },
+          {
+            "camera_id": "22",
+            "accessory_id": "00000000-0000-0000-0000-000000000026",
+            "username": "02:00:00:00:00:16",
+            "doorbell": true
+          },
+          {
+            "camera_id": "23",
+            "accessory_id": "00000000-0000-0000-0000-000000000027",
+            "username": "02:00:00:00:00:17",
+            "doorbell": true
+          },
+          {
+            "camera_id": "24",
+            "accessory_id": "00000000-0000-0000-0000-000000000028",
+            "username": "02:00:00:00:00:18",
+            "doorbell": true
+          },
+          {
+            "camera_id": "25",
+            "accessory_id": "00000000-0000-0000-0000-000000000029",
+            "username": "02:00:00:00:00:19",
+            "doorbell": true
+          },
+          {
+            "camera_id": "26",
+            "accessory_id": "00000000-0000-0000-0000-00000000002a",
+            "username": "02:00:00:00:00:1A",
+            "doorbell": true
+          },
+          {
+            "camera_id": "27",
+            "accessory_id": "00000000-0000-0000-0000-00000000002b",
+            "username": "02:00:00:00:00:1B",
+            "doorbell": true
+          },
+          {
+            "camera_id": "28",
+            "accessory_id": "00000000-0000-0000-0000-00000000002c",
+            "username": "02:00:00:00:00:1C",
+            "doorbell": true
+          },
+          {
+            "camera_id": "29",
+            "accessory_id": "00000000-0000-0000-0000-00000000002d",
+            "username": "02:00:00:00:00:1D",
+            "doorbell": true
+          },
+          {
+            "camera_id": "30",
+            "accessory_id": "00000000-0000-0000-0000-00000000002e",
+            "username": "02:00:00:00:00:1E",
+            "doorbell": true
+          },
+          {
+            "camera_id": "31",
+            "accessory_id": "00000000-0000-0000-0000-00000000002f",
+            "username": "02:00:00:00:00:1F",
+            "doorbell": true
+          }
+        ],
+        "media_ready": false
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": null,
+        "revision": 1,
+        "generation": 1,
+        "page_index": 0,
+        "total_pages": 1,
+        "entries": [],
+        "media_ready": false
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 9007199254740991,
+        "generation": 9007199254740991,
+        "page_index": 7,
+        "total_pages": 8,
+        "entries": [
+          {
+            "camera_id": "42",
+            "accessory_id": "00000000-0000-0000-0000-000000000004",
+            "username": "02:01:02:03:04:05",
+            "doorbell": true
+          }
+        ],
+        "media_ready": false
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1,
+        "generation": 1,
+        "page_index": 0,
+        "total_pages": 1,
+        "entries": [
+          {
+            "camera_id": "42",
+            "accessory_id": "00000000-0000-0000-0000-000000000004",
+            "username": "FE:01:02:03:04:05",
+            "doorbell": true
+          }
+        ],
+        "media_ready": false
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config_ack",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": null,
+        "revision": 1,
+        "generation": 1,
+        "page_index": 0,
+        "accepted": true,
+        "code": "ok"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_sync_ack",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": null,
+        "epoch": "synthetic-epoch",
+        "sequence": 0,
+        "accepted": true,
+        "code": "ok"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_sync",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "epoch": "A_A_A_A_A_A_A_A_A_A_A_A_A_A_A_A_A_A_A_A_A_A_A_A_A_A_A_A_A_A_A_A_",
+        "sequence": 0
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_sync_ack",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "epoch": "A_A_A_A_A_A_A_A_A_A_A_A_A_A_A_A_A_A_A_A_A_A_A_A_A_A_A_A_A_A_A_A_",
+        "sequence": 0,
+        "accepted": true,
+        "code": "ok"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_state",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": "A_A_A_A_A_A_A_A_A_A_A_A_A_A_A_A_A_A_A_A_A_A_A_A_A_A_A_A_A_A_A_A_",
+        "sequence": 1,
+        "motion": true,
+        "ttl_ms": 30000,
+        "source_state": "connected",
+        "synchronized": true,
+        "expires_at_ms": 30000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "camera_event",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": "A_A_A_A_A_A_A_A_A_A_A_A_A_A_A_A_A_A_A_A_A_A_A_A_A_A_A_A_A_A_A_A_",
+        "sequence": 2,
+        "event_id": "00000000-0000-0000-0000-000000000005",
+        "type": "doorbell",
+        "ttl_ms": 2000,
+        "expires_at_ms": 30000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_sync",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": null,
+        "epoch": null,
+        "sequence": 0
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_state",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": "synthetic-epoch",
+        "sequence": 1,
+        "motion": true,
+        "ttl_ms": 30000,
+        "source_state": "connected",
+        "synchronized": true,
+        "expires_at_ms": 9007199254740991
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_state",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": "synthetic-epoch",
+        "sequence": 1,
+        "motion": true,
+        "ttl_ms": 30000,
+        "source_state": "connected",
+        "synchronized": true,
+        "expires_at_ms": 0
+      }
+    },
+    {
+      "v": 1,
+      "kind": "camera_event",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": "synthetic-epoch",
+        "sequence": 2,
+        "event_id": "00000000-0000-0000-0000-000000000005",
+        "type": "doorbell",
+        "ttl_ms": 2000,
+        "expires_at_ms": 9007199254740991
+      }
+    },
+    {
+      "v": 1,
+      "kind": "camera_event",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": "synthetic-epoch",
+        "sequence": 2,
+        "event_id": "00000000-0000-0000-0000-000000000005",
+        "type": "doorbell",
+        "ttl_ms": 2000,
+        "expires_at_ms": 0
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_state",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": "synthetic-epoch",
+        "sequence": 1,
+        "motion": false,
+        "ttl_ms": 0,
+        "source_state": "offline",
+        "synchronized": false,
+        "expires_at_ms": 0
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_state",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": "synthetic-epoch",
+        "sequence": 1,
+        "motion": null,
+        "ttl_ms": 0,
+        "source_state": "offline",
+        "synchronized": false,
+        "expires_at_ms": 0
+      }
     }
   ],
   "invalid": [
@@ -9837,6 +10469,4314 @@
         "revision": 0,
         "ready": true
       }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "revision": 1,
+        "generation": 1,
+        "page_index": 0,
+        "total_pages": 1,
+        "entries": [
+          {
+            "camera_id": "42",
+            "accessory_id": "00000000-0000-0000-0000-000000000004",
+            "username": "02:01:02:03:04:05",
+            "doorbell": true
+          }
+        ],
+        "media_ready": false
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "generation": 1,
+        "page_index": 0,
+        "total_pages": 1,
+        "entries": [
+          {
+            "camera_id": "42",
+            "accessory_id": "00000000-0000-0000-0000-000000000004",
+            "username": "02:01:02:03:04:05",
+            "doorbell": true
+          }
+        ],
+        "media_ready": false
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1,
+        "page_index": 0,
+        "total_pages": 1,
+        "entries": [
+          {
+            "camera_id": "42",
+            "accessory_id": "00000000-0000-0000-0000-000000000004",
+            "username": "02:01:02:03:04:05",
+            "doorbell": true
+          }
+        ],
+        "media_ready": false
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1,
+        "generation": 1,
+        "total_pages": 1,
+        "entries": [
+          {
+            "camera_id": "42",
+            "accessory_id": "00000000-0000-0000-0000-000000000004",
+            "username": "02:01:02:03:04:05",
+            "doorbell": true
+          }
+        ],
+        "media_ready": false
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1,
+        "generation": 1,
+        "page_index": 0,
+        "entries": [
+          {
+            "camera_id": "42",
+            "accessory_id": "00000000-0000-0000-0000-000000000004",
+            "username": "02:01:02:03:04:05",
+            "doorbell": true
+          }
+        ],
+        "media_ready": false
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1,
+        "generation": 1,
+        "page_index": 0,
+        "total_pages": 1,
+        "media_ready": false
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1,
+        "generation": 1,
+        "page_index": 0,
+        "total_pages": 1,
+        "entries": [
+          {
+            "camera_id": "42",
+            "accessory_id": "00000000-0000-0000-0000-000000000004",
+            "username": "02:01:02:03:04:05",
+            "doorbell": true
+          }
+        ]
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": true,
+        "generation": 1,
+        "page_index": 0,
+        "total_pages": 1,
+        "entries": [
+          {
+            "camera_id": "42",
+            "accessory_id": "00000000-0000-0000-0000-000000000004",
+            "username": "02:01:02:03:04:05",
+            "doorbell": true
+          }
+        ],
+        "media_ready": false
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": -1,
+        "generation": 1,
+        "page_index": 0,
+        "total_pages": 1,
+        "entries": [
+          {
+            "camera_id": "42",
+            "accessory_id": "00000000-0000-0000-0000-000000000004",
+            "username": "02:01:02:03:04:05",
+            "doorbell": true
+          }
+        ],
+        "media_ready": false
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 9007199254740992,
+        "generation": 1,
+        "page_index": 0,
+        "total_pages": 1,
+        "entries": [
+          {
+            "camera_id": "42",
+            "accessory_id": "00000000-0000-0000-0000-000000000004",
+            "username": "02:01:02:03:04:05",
+            "doorbell": true
+          }
+        ],
+        "media_ready": false
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1.5,
+        "generation": 1,
+        "page_index": 0,
+        "total_pages": 1,
+        "entries": [
+          {
+            "camera_id": "42",
+            "accessory_id": "00000000-0000-0000-0000-000000000004",
+            "username": "02:01:02:03:04:05",
+            "doorbell": true
+          }
+        ],
+        "media_ready": false
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": "1",
+        "generation": 1,
+        "page_index": 0,
+        "total_pages": 1,
+        "entries": [
+          {
+            "camera_id": "42",
+            "accessory_id": "00000000-0000-0000-0000-000000000004",
+            "username": "02:01:02:03:04:05",
+            "doorbell": true
+          }
+        ],
+        "media_ready": false
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 0
+        },
+        "revision": 1,
+        "generation": 1,
+        "page_index": 0,
+        "total_pages": 1,
+        "entries": [
+          {
+            "camera_id": "42",
+            "accessory_id": "00000000-0000-0000-0000-000000000004",
+            "username": "02:01:02:03:04:05",
+            "doorbell": true
+          }
+        ],
+        "media_ready": false
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "profile@example.invalid",
+          "account_generation": 1
+        },
+        "revision": 1,
+        "generation": 1,
+        "page_index": 0,
+        "total_pages": 1,
+        "entries": [
+          {
+            "camera_id": "42",
+            "accessory_id": "00000000-0000-0000-0000-000000000004",
+            "username": "02:01:02:03:04:05",
+            "doorbell": true
+          }
+        ],
+        "media_ready": false
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "unexpected": true
+        },
+        "revision": 1,
+        "generation": 1,
+        "page_index": 0,
+        "total_pages": 1,
+        "entries": [
+          {
+            "camera_id": "42",
+            "accessory_id": "00000000-0000-0000-0000-000000000004",
+            "username": "02:01:02:03:04:05",
+            "doorbell": true
+          }
+        ],
+        "media_ready": false
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config_ack",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "revision": 1,
+        "generation": 1,
+        "page_index": 0,
+        "accepted": true,
+        "code": "ok"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config_ack",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "generation": 1,
+        "page_index": 0,
+        "accepted": true,
+        "code": "ok"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config_ack",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1,
+        "page_index": 0,
+        "accepted": true,
+        "code": "ok"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config_ack",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1,
+        "generation": 1,
+        "accepted": true,
+        "code": "ok"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config_ack",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1,
+        "generation": 1,
+        "page_index": 0,
+        "code": "ok"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config_ack",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1,
+        "generation": 1,
+        "page_index": 0,
+        "accepted": true
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config_ack",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": true,
+        "generation": 1,
+        "page_index": 0,
+        "accepted": true,
+        "code": "ok"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config_ack",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": -1,
+        "generation": 1,
+        "page_index": 0,
+        "accepted": true,
+        "code": "ok"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config_ack",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 9007199254740992,
+        "generation": 1,
+        "page_index": 0,
+        "accepted": true,
+        "code": "ok"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config_ack",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1.5,
+        "generation": 1,
+        "page_index": 0,
+        "accepted": true,
+        "code": "ok"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config_ack",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": "1",
+        "generation": 1,
+        "page_index": 0,
+        "accepted": true,
+        "code": "ok"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config_ack",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 0
+        },
+        "revision": 1,
+        "generation": 1,
+        "page_index": 0,
+        "accepted": true,
+        "code": "ok"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config_ack",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "profile@example.invalid",
+          "account_generation": 1
+        },
+        "revision": 1,
+        "generation": 1,
+        "page_index": 0,
+        "accepted": true,
+        "code": "ok"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config_ack",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "unexpected": true
+        },
+        "revision": 1,
+        "generation": 1,
+        "page_index": 0,
+        "accepted": true,
+        "code": "ok"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "camera_event",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "epoch": "synthetic-epoch",
+        "sequence": 2,
+        "event_id": "00000000-0000-0000-0000-000000000005",
+        "type": "doorbell",
+        "ttl_ms": 2000,
+        "expires_at_ms": 30000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "camera_event",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "sequence": 2,
+        "event_id": "00000000-0000-0000-0000-000000000005",
+        "type": "doorbell",
+        "ttl_ms": 2000,
+        "expires_at_ms": 30000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "camera_event",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": "synthetic-epoch",
+        "event_id": "00000000-0000-0000-0000-000000000005",
+        "type": "doorbell",
+        "ttl_ms": 2000,
+        "expires_at_ms": 30000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "camera_event",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": "synthetic-epoch",
+        "sequence": 2,
+        "type": "doorbell",
+        "ttl_ms": 2000,
+        "expires_at_ms": 30000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "camera_event",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": "synthetic-epoch",
+        "sequence": 2,
+        "event_id": "00000000-0000-0000-0000-000000000005",
+        "ttl_ms": 2000,
+        "expires_at_ms": 30000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "camera_event",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": "synthetic-epoch",
+        "sequence": 2,
+        "event_id": "00000000-0000-0000-0000-000000000005",
+        "type": "doorbell",
+        "expires_at_ms": 30000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "camera_event",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": "synthetic-epoch",
+        "sequence": 2,
+        "event_id": "00000000-0000-0000-0000-000000000005",
+        "type": "doorbell",
+        "ttl_ms": 2000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "camera_event",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": "synthetic-epoch",
+        "sequence": true,
+        "event_id": "00000000-0000-0000-0000-000000000005",
+        "type": "doorbell",
+        "ttl_ms": 2000,
+        "expires_at_ms": 30000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "camera_event",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": "synthetic-epoch",
+        "sequence": -1,
+        "event_id": "00000000-0000-0000-0000-000000000005",
+        "type": "doorbell",
+        "ttl_ms": 2000,
+        "expires_at_ms": 30000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "camera_event",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": "synthetic-epoch",
+        "sequence": 9007199254740992,
+        "event_id": "00000000-0000-0000-0000-000000000005",
+        "type": "doorbell",
+        "ttl_ms": 2000,
+        "expires_at_ms": 30000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "camera_event",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": "synthetic-epoch",
+        "sequence": 1.5,
+        "event_id": "00000000-0000-0000-0000-000000000005",
+        "type": "doorbell",
+        "ttl_ms": 2000,
+        "expires_at_ms": 30000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "camera_event",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": "synthetic-epoch",
+        "sequence": "1",
+        "event_id": "00000000-0000-0000-0000-000000000005",
+        "type": "doorbell",
+        "ttl_ms": 2000,
+        "expires_at_ms": 30000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "camera_event",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": true,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": "synthetic-epoch",
+        "sequence": 2,
+        "event_id": "00000000-0000-0000-0000-000000000005",
+        "type": "doorbell",
+        "ttl_ms": 2000,
+        "expires_at_ms": 30000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "camera_event",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 0,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": "synthetic-epoch",
+        "sequence": 2,
+        "event_id": "00000000-0000-0000-0000-000000000005",
+        "type": "doorbell",
+        "ttl_ms": 2000,
+        "expires_at_ms": 30000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "camera_event",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "profile@example.invalid",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": "synthetic-epoch",
+        "sequence": 2,
+        "event_id": "00000000-0000-0000-0000-000000000005",
+        "type": "doorbell",
+        "ttl_ms": 2000,
+        "expires_at_ms": 30000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "camera_event",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1,
+          "unexpected": true
+        },
+        "epoch": "synthetic-epoch",
+        "sequence": 2,
+        "event_id": "00000000-0000-0000-0000-000000000005",
+        "type": "doorbell",
+        "ttl_ms": 2000,
+        "expires_at_ms": 30000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_state",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "epoch": "synthetic-epoch",
+        "sequence": 1,
+        "motion": true,
+        "ttl_ms": 30000,
+        "source_state": "connected",
+        "synchronized": true,
+        "expires_at_ms": 30000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_state",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "sequence": 1,
+        "motion": true,
+        "ttl_ms": 30000,
+        "source_state": "connected",
+        "synchronized": true,
+        "expires_at_ms": 30000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_state",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": "synthetic-epoch",
+        "motion": true,
+        "ttl_ms": 30000,
+        "source_state": "connected",
+        "synchronized": true,
+        "expires_at_ms": 30000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_state",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": "synthetic-epoch",
+        "sequence": 1,
+        "ttl_ms": 30000,
+        "source_state": "connected",
+        "synchronized": true,
+        "expires_at_ms": 30000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_state",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": "synthetic-epoch",
+        "sequence": 1,
+        "motion": true,
+        "source_state": "connected",
+        "synchronized": true,
+        "expires_at_ms": 30000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_state",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": "synthetic-epoch",
+        "sequence": 1,
+        "motion": true,
+        "ttl_ms": 30000,
+        "synchronized": true,
+        "expires_at_ms": 30000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_state",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": "synthetic-epoch",
+        "sequence": 1,
+        "motion": true,
+        "ttl_ms": 30000,
+        "source_state": "connected",
+        "expires_at_ms": 30000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_state",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": "synthetic-epoch",
+        "sequence": 1,
+        "motion": true,
+        "ttl_ms": 30000,
+        "source_state": "connected",
+        "synchronized": true
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_state",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": "synthetic-epoch",
+        "sequence": true,
+        "motion": true,
+        "ttl_ms": 30000,
+        "source_state": "connected",
+        "synchronized": true,
+        "expires_at_ms": 30000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_state",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": "synthetic-epoch",
+        "sequence": -1,
+        "motion": true,
+        "ttl_ms": 30000,
+        "source_state": "connected",
+        "synchronized": true,
+        "expires_at_ms": 30000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_state",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": "synthetic-epoch",
+        "sequence": 9007199254740992,
+        "motion": true,
+        "ttl_ms": 30000,
+        "source_state": "connected",
+        "synchronized": true,
+        "expires_at_ms": 30000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_state",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": "synthetic-epoch",
+        "sequence": 1.5,
+        "motion": true,
+        "ttl_ms": 30000,
+        "source_state": "connected",
+        "synchronized": true,
+        "expires_at_ms": 30000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_state",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": "synthetic-epoch",
+        "sequence": "1",
+        "motion": true,
+        "ttl_ms": 30000,
+        "source_state": "connected",
+        "synchronized": true,
+        "expires_at_ms": 30000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_state",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 0,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": "synthetic-epoch",
+        "sequence": 1,
+        "motion": true,
+        "ttl_ms": 30000,
+        "source_state": "connected",
+        "synchronized": true,
+        "expires_at_ms": 30000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_state",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "profile@example.invalid",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": "synthetic-epoch",
+        "sequence": 1,
+        "motion": true,
+        "ttl_ms": 30000,
+        "source_state": "connected",
+        "synchronized": true,
+        "expires_at_ms": 30000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_state",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1,
+          "unexpected": true
+        },
+        "epoch": "synthetic-epoch",
+        "sequence": 1,
+        "motion": true,
+        "ttl_ms": 30000,
+        "source_state": "connected",
+        "synchronized": true,
+        "expires_at_ms": 30000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_sync",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "epoch": null,
+        "sequence": 0
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_sync",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "sequence": 0
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_sync",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "epoch": null
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_sync",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "epoch": null,
+        "sequence": true
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_sync",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "epoch": null,
+        "sequence": -1
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_sync",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "epoch": null,
+        "sequence": 9007199254740992
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_sync",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "epoch": null,
+        "sequence": 1.5
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_sync",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "epoch": null,
+        "sequence": "1"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_sync",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": true
+        },
+        "epoch": null,
+        "sequence": 0
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_sync",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 0
+        },
+        "epoch": null,
+        "sequence": 0
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_sync",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "profile@example.invalid",
+          "account_generation": 1
+        },
+        "epoch": null,
+        "sequence": 0
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_sync",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "unexpected": true
+        },
+        "epoch": null,
+        "sequence": 0
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_sync_ack",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "epoch": "synthetic-epoch",
+        "sequence": 0,
+        "accepted": true,
+        "code": "ok"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_sync_ack",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "sequence": 0,
+        "accepted": true,
+        "code": "ok"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_sync_ack",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "epoch": "synthetic-epoch",
+        "accepted": true,
+        "code": "ok"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_sync_ack",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "epoch": "synthetic-epoch",
+        "sequence": 0,
+        "code": "ok"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_sync_ack",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "epoch": "synthetic-epoch",
+        "sequence": 0,
+        "accepted": true
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_sync_ack",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "epoch": "synthetic-epoch",
+        "sequence": true,
+        "accepted": true,
+        "code": "ok"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_sync_ack",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "epoch": "synthetic-epoch",
+        "sequence": -1,
+        "accepted": true,
+        "code": "ok"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_sync_ack",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "epoch": "synthetic-epoch",
+        "sequence": 9007199254740992,
+        "accepted": true,
+        "code": "ok"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_sync_ack",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "epoch": "synthetic-epoch",
+        "sequence": 1.5,
+        "accepted": true,
+        "code": "ok"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_sync_ack",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "epoch": "synthetic-epoch",
+        "sequence": "1",
+        "accepted": true,
+        "code": "ok"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_sync_ack",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": true
+        },
+        "epoch": "synthetic-epoch",
+        "sequence": 0,
+        "accepted": true,
+        "code": "ok"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_sync_ack",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 0
+        },
+        "epoch": "synthetic-epoch",
+        "sequence": 0,
+        "accepted": true,
+        "code": "ok"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_sync_ack",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "profile@example.invalid",
+          "account_generation": 1
+        },
+        "epoch": "synthetic-epoch",
+        "sequence": 0,
+        "accepted": true,
+        "code": "ok"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_sync_ack",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "unexpected": true
+        },
+        "epoch": "synthetic-epoch",
+        "sequence": 0,
+        "accepted": true,
+        "code": "ok"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1,
+        "generation": 0,
+        "page_index": 0,
+        "total_pages": 1,
+        "entries": [
+          {
+            "camera_id": "42",
+            "accessory_id": "00000000-0000-0000-0000-000000000004",
+            "username": "02:01:02:03:04:05",
+            "doorbell": true
+          }
+        ],
+        "media_ready": false
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1,
+        "generation": 9007199254740992,
+        "page_index": 0,
+        "total_pages": 1,
+        "entries": [
+          {
+            "camera_id": "42",
+            "accessory_id": "00000000-0000-0000-0000-000000000004",
+            "username": "02:01:02:03:04:05",
+            "doorbell": true
+          }
+        ],
+        "media_ready": false
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1,
+        "generation": 1,
+        "page_index": true,
+        "total_pages": 1,
+        "entries": [
+          {
+            "camera_id": "42",
+            "accessory_id": "00000000-0000-0000-0000-000000000004",
+            "username": "02:01:02:03:04:05",
+            "doorbell": true
+          }
+        ],
+        "media_ready": false
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1,
+        "generation": 1,
+        "page_index": -1,
+        "total_pages": 1,
+        "entries": [
+          {
+            "camera_id": "42",
+            "accessory_id": "00000000-0000-0000-0000-000000000004",
+            "username": "02:01:02:03:04:05",
+            "doorbell": true
+          }
+        ],
+        "media_ready": false
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1,
+        "generation": 1,
+        "page_index": 8,
+        "total_pages": 1,
+        "entries": [
+          {
+            "camera_id": "42",
+            "accessory_id": "00000000-0000-0000-0000-000000000004",
+            "username": "02:01:02:03:04:05",
+            "doorbell": true
+          }
+        ],
+        "media_ready": false
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": null,
+        "generation": 1,
+        "page_index": 0,
+        "total_pages": 1,
+        "entries": [
+          {
+            "camera_id": "42",
+            "accessory_id": "00000000-0000-0000-0000-000000000004",
+            "username": "02:01:02:03:04:05",
+            "doorbell": true
+          }
+        ],
+        "media_ready": false
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config_ack",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1,
+        "generation": 0,
+        "page_index": 0,
+        "accepted": true,
+        "code": "ok"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config_ack",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1,
+        "generation": 9007199254740992,
+        "page_index": 0,
+        "accepted": true,
+        "code": "ok"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config_ack",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1,
+        "generation": 1,
+        "page_index": true,
+        "accepted": true,
+        "code": "ok"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config_ack",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1,
+        "generation": 1,
+        "page_index": -1,
+        "accepted": true,
+        "code": "ok"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config_ack",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1,
+        "generation": 1,
+        "page_index": 8,
+        "accepted": true,
+        "code": "ok"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config_ack",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": null,
+        "generation": 1,
+        "page_index": 0,
+        "accepted": true,
+        "code": "ok"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1,
+        "generation": 1,
+        "page_index": 0,
+        "total_pages": 0,
+        "entries": [
+          {
+            "camera_id": "42",
+            "accessory_id": "00000000-0000-0000-0000-000000000004",
+            "username": "02:01:02:03:04:05",
+            "doorbell": true
+          }
+        ],
+        "media_ready": false
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1,
+        "generation": 1,
+        "page_index": 0,
+        "total_pages": 9,
+        "entries": [
+          {
+            "camera_id": "42",
+            "accessory_id": "00000000-0000-0000-0000-000000000004",
+            "username": "02:01:02:03:04:05",
+            "doorbell": true
+          }
+        ],
+        "media_ready": false
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1,
+        "generation": 1,
+        "page_index": 0,
+        "total_pages": "2",
+        "entries": [
+          {
+            "camera_id": "42",
+            "accessory_id": "00000000-0000-0000-0000-000000000004",
+            "username": "02:01:02:03:04:05",
+            "doorbell": true
+          }
+        ],
+        "media_ready": false
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1,
+        "generation": 1,
+        "page_index": 0,
+        "total_pages": 1,
+        "entries": null,
+        "media_ready": false
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1,
+        "generation": 1,
+        "page_index": 0,
+        "total_pages": 1,
+        "entries": {},
+        "media_ready": false
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1,
+        "generation": 1,
+        "page_index": 0,
+        "total_pages": 1,
+        "entries": "front",
+        "media_ready": false
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1,
+        "generation": 1,
+        "page_index": 0,
+        "total_pages": 1,
+        "entries": [
+          {
+            "camera_id": "42",
+            "accessory_id": "00000000-0000-0000-0000-000000000004",
+            "username": "02:01:02:03:04:05",
+            "doorbell": true
+          }
+        ],
+        "media_ready": 1
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1,
+        "generation": 1,
+        "page_index": 0,
+        "total_pages": 1,
+        "entries": [
+          {
+            "camera_id": "42",
+            "accessory_id": "00000000-0000-0000-0000-000000000004",
+            "username": "02:01:02:03:04:05",
+            "doorbell": true
+          }
+        ],
+        "media_ready": "false"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1,
+        "generation": 1,
+        "page_index": 0,
+        "total_pages": 1,
+        "entries": [
+          {
+            "camera_id": "",
+            "accessory_id": "00000000-0000-0000-0000-000000000004",
+            "username": "02:01:02:03:04:05",
+            "doorbell": true
+          }
+        ],
+        "media_ready": false
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1,
+        "generation": 1,
+        "page_index": 0,
+        "total_pages": 1,
+        "entries": [
+          {
+            "camera_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "accessory_id": "00000000-0000-0000-0000-000000000004",
+            "username": "02:01:02:03:04:05",
+            "doorbell": true
+          }
+        ],
+        "media_ready": false
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1,
+        "generation": 1,
+        "page_index": 0,
+        "total_pages": 1,
+        "entries": [
+          {
+            "camera_id": "front\u202edoor",
+            "accessory_id": "00000000-0000-0000-0000-000000000004",
+            "username": "02:01:02:03:04:05",
+            "doorbell": true
+          }
+        ],
+        "media_ready": false
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1,
+        "generation": 1,
+        "page_index": 0,
+        "total_pages": 1,
+        "entries": [
+          {
+            "camera_id": "front\n",
+            "accessory_id": "00000000-0000-0000-0000-000000000004",
+            "username": "02:01:02:03:04:05",
+            "doorbell": true
+          }
+        ],
+        "media_ready": false
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1,
+        "generation": 1,
+        "page_index": 0,
+        "total_pages": 1,
+        "entries": [
+          {
+            "camera_id": 1,
+            "accessory_id": "00000000-0000-0000-0000-000000000004",
+            "username": "02:01:02:03:04:05",
+            "doorbell": true
+          }
+        ],
+        "media_ready": false
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1,
+        "generation": 1,
+        "page_index": 0,
+        "total_pages": 1,
+        "entries": [
+          {
+            "camera_id": "42",
+            "accessory_id": "------------------------------------",
+            "username": "02:01:02:03:04:05",
+            "doorbell": true
+          }
+        ],
+        "media_ready": false
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1,
+        "generation": 1,
+        "page_index": 0,
+        "total_pages": 1,
+        "entries": [
+          {
+            "camera_id": "42",
+            "accessory_id": "00000000-0000-0000-0000-00000000000A",
+            "username": "02:01:02:03:04:05",
+            "doorbell": true
+          }
+        ],
+        "media_ready": false
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1,
+        "generation": 1,
+        "page_index": 0,
+        "total_pages": 1,
+        "entries": [
+          {
+            "camera_id": "42",
+            "accessory_id": "not-a-uuid",
+            "username": "02:01:02:03:04:05",
+            "doorbell": true
+          }
+        ],
+        "media_ready": false
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1,
+        "generation": 1,
+        "page_index": 0,
+        "total_pages": 1,
+        "entries": [
+          {
+            "camera_id": "42",
+            "accessory_id": "00000000-0000-0000-0000-000000000004",
+            "username": "00:01:02:03:04:05",
+            "doorbell": true
+          }
+        ],
+        "media_ready": false
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1,
+        "generation": 1,
+        "page_index": 0,
+        "total_pages": 1,
+        "entries": [
+          {
+            "camera_id": "42",
+            "accessory_id": "00000000-0000-0000-0000-000000000004",
+            "username": "01:01:02:03:04:05",
+            "doorbell": true
+          }
+        ],
+        "media_ready": false
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1,
+        "generation": 1,
+        "page_index": 0,
+        "total_pages": 1,
+        "entries": [
+          {
+            "camera_id": "42",
+            "accessory_id": "00000000-0000-0000-0000-000000000004",
+            "username": "03:01:02:03:04:05",
+            "doorbell": true
+          }
+        ],
+        "media_ready": false
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1,
+        "generation": 1,
+        "page_index": 0,
+        "total_pages": 1,
+        "entries": [
+          {
+            "camera_id": "42",
+            "accessory_id": "00000000-0000-0000-0000-000000000004",
+            "username": "04:01:02:03:04:05",
+            "doorbell": true
+          }
+        ],
+        "media_ready": false
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1,
+        "generation": 1,
+        "page_index": 0,
+        "total_pages": 1,
+        "entries": [
+          {
+            "camera_id": "42",
+            "accessory_id": "00000000-0000-0000-0000-000000000004",
+            "username": "FF:FF:FF:FF:FF:FF",
+            "doorbell": true
+          }
+        ],
+        "media_ready": false
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1,
+        "generation": 1,
+        "page_index": 0,
+        "total_pages": 1,
+        "entries": [
+          {
+            "camera_id": "42",
+            "accessory_id": "00000000-0000-0000-0000-000000000004",
+            "username": "0a:01:02:03:04:05",
+            "doorbell": true
+          }
+        ],
+        "media_ready": false
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1,
+        "generation": 1,
+        "page_index": 0,
+        "total_pages": 1,
+        "entries": [
+          {
+            "camera_id": "42",
+            "accessory_id": "00000000-0000-0000-0000-000000000004",
+            "username": "02:01:02:03:04:0a",
+            "doorbell": true
+          }
+        ],
+        "media_ready": false
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1,
+        "generation": 1,
+        "page_index": 0,
+        "total_pages": 1,
+        "entries": [
+          {
+            "camera_id": "42",
+            "accessory_id": "00000000-0000-0000-0000-000000000004",
+            "username": "02-01-02-03-04-05",
+            "doorbell": true
+          }
+        ],
+        "media_ready": false
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1,
+        "generation": 1,
+        "page_index": 0,
+        "total_pages": 1,
+        "entries": [
+          {
+            "camera_id": "42",
+            "accessory_id": "00000000-0000-0000-0000-000000000004",
+            "username": "02:01:02:03:04:05\n",
+            "doorbell": true
+          }
+        ],
+        "media_ready": false
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1,
+        "generation": 1,
+        "page_index": 0,
+        "total_pages": 1,
+        "entries": [
+          {
+            "camera_id": "42",
+            "accessory_id": "00000000-0000-0000-0000-000000000004",
+            "username": "02:01:02:03:04:05\u2028",
+            "doorbell": true
+          }
+        ],
+        "media_ready": false
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1,
+        "generation": 1,
+        "page_index": 0,
+        "total_pages": 1,
+        "entries": [
+          {
+            "camera_id": "42",
+            "accessory_id": "00000000-0000-0000-0000-000000000004",
+            "username": "02:01:02:03:04:05",
+            "doorbell": "true"
+          }
+        ],
+        "media_ready": false
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1,
+        "generation": 1,
+        "page_index": 0,
+        "total_pages": 1,
+        "entries": [
+          {
+            "camera_id": "42",
+            "accessory_id": "00000000-0000-0000-0000-000000000004",
+            "username": "02:01:02:03:04:05",
+            "doorbell": null
+          }
+        ],
+        "media_ready": false
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1,
+        "generation": 1,
+        "page_index": 0,
+        "total_pages": 1,
+        "entries": [
+          {
+            "camera_id": "0",
+            "accessory_id": "00000000-0000-0000-0000-000000000010",
+            "username": "02:00:00:00:00:00",
+            "doorbell": true
+          },
+          {
+            "camera_id": "1",
+            "accessory_id": "00000000-0000-0000-0000-000000000011",
+            "username": "02:00:00:00:00:01",
+            "doorbell": true
+          },
+          {
+            "camera_id": "2",
+            "accessory_id": "00000000-0000-0000-0000-000000000012",
+            "username": "02:00:00:00:00:02",
+            "doorbell": true
+          },
+          {
+            "camera_id": "3",
+            "accessory_id": "00000000-0000-0000-0000-000000000013",
+            "username": "02:00:00:00:00:03",
+            "doorbell": true
+          },
+          {
+            "camera_id": "4",
+            "accessory_id": "00000000-0000-0000-0000-000000000014",
+            "username": "02:00:00:00:00:04",
+            "doorbell": true
+          },
+          {
+            "camera_id": "5",
+            "accessory_id": "00000000-0000-0000-0000-000000000015",
+            "username": "02:00:00:00:00:05",
+            "doorbell": true
+          },
+          {
+            "camera_id": "6",
+            "accessory_id": "00000000-0000-0000-0000-000000000016",
+            "username": "02:00:00:00:00:06",
+            "doorbell": true
+          },
+          {
+            "camera_id": "7",
+            "accessory_id": "00000000-0000-0000-0000-000000000017",
+            "username": "02:00:00:00:00:07",
+            "doorbell": true
+          },
+          {
+            "camera_id": "8",
+            "accessory_id": "00000000-0000-0000-0000-000000000018",
+            "username": "02:00:00:00:00:08",
+            "doorbell": true
+          },
+          {
+            "camera_id": "9",
+            "accessory_id": "00000000-0000-0000-0000-000000000019",
+            "username": "02:00:00:00:00:09",
+            "doorbell": true
+          },
+          {
+            "camera_id": "10",
+            "accessory_id": "00000000-0000-0000-0000-00000000001a",
+            "username": "02:00:00:00:00:0A",
+            "doorbell": true
+          },
+          {
+            "camera_id": "11",
+            "accessory_id": "00000000-0000-0000-0000-00000000001b",
+            "username": "02:00:00:00:00:0B",
+            "doorbell": true
+          },
+          {
+            "camera_id": "12",
+            "accessory_id": "00000000-0000-0000-0000-00000000001c",
+            "username": "02:00:00:00:00:0C",
+            "doorbell": true
+          },
+          {
+            "camera_id": "13",
+            "accessory_id": "00000000-0000-0000-0000-00000000001d",
+            "username": "02:00:00:00:00:0D",
+            "doorbell": true
+          },
+          {
+            "camera_id": "14",
+            "accessory_id": "00000000-0000-0000-0000-00000000001e",
+            "username": "02:00:00:00:00:0E",
+            "doorbell": true
+          },
+          {
+            "camera_id": "15",
+            "accessory_id": "00000000-0000-0000-0000-00000000001f",
+            "username": "02:00:00:00:00:0F",
+            "doorbell": true
+          },
+          {
+            "camera_id": "16",
+            "accessory_id": "00000000-0000-0000-0000-000000000020",
+            "username": "02:00:00:00:00:10",
+            "doorbell": true
+          },
+          {
+            "camera_id": "17",
+            "accessory_id": "00000000-0000-0000-0000-000000000021",
+            "username": "02:00:00:00:00:11",
+            "doorbell": true
+          },
+          {
+            "camera_id": "18",
+            "accessory_id": "00000000-0000-0000-0000-000000000022",
+            "username": "02:00:00:00:00:12",
+            "doorbell": true
+          },
+          {
+            "camera_id": "19",
+            "accessory_id": "00000000-0000-0000-0000-000000000023",
+            "username": "02:00:00:00:00:13",
+            "doorbell": true
+          },
+          {
+            "camera_id": "20",
+            "accessory_id": "00000000-0000-0000-0000-000000000024",
+            "username": "02:00:00:00:00:14",
+            "doorbell": true
+          },
+          {
+            "camera_id": "21",
+            "accessory_id": "00000000-0000-0000-0000-000000000025",
+            "username": "02:00:00:00:00:15",
+            "doorbell": true
+          },
+          {
+            "camera_id": "22",
+            "accessory_id": "00000000-0000-0000-0000-000000000026",
+            "username": "02:00:00:00:00:16",
+            "doorbell": true
+          },
+          {
+            "camera_id": "23",
+            "accessory_id": "00000000-0000-0000-0000-000000000027",
+            "username": "02:00:00:00:00:17",
+            "doorbell": true
+          },
+          {
+            "camera_id": "24",
+            "accessory_id": "00000000-0000-0000-0000-000000000028",
+            "username": "02:00:00:00:00:18",
+            "doorbell": true
+          },
+          {
+            "camera_id": "25",
+            "accessory_id": "00000000-0000-0000-0000-000000000029",
+            "username": "02:00:00:00:00:19",
+            "doorbell": true
+          },
+          {
+            "camera_id": "26",
+            "accessory_id": "00000000-0000-0000-0000-00000000002a",
+            "username": "02:00:00:00:00:1A",
+            "doorbell": true
+          },
+          {
+            "camera_id": "27",
+            "accessory_id": "00000000-0000-0000-0000-00000000002b",
+            "username": "02:00:00:00:00:1B",
+            "doorbell": true
+          },
+          {
+            "camera_id": "28",
+            "accessory_id": "00000000-0000-0000-0000-00000000002c",
+            "username": "02:00:00:00:00:1C",
+            "doorbell": true
+          },
+          {
+            "camera_id": "29",
+            "accessory_id": "00000000-0000-0000-0000-00000000002d",
+            "username": "02:00:00:00:00:1D",
+            "doorbell": true
+          },
+          {
+            "camera_id": "30",
+            "accessory_id": "00000000-0000-0000-0000-00000000002e",
+            "username": "02:00:00:00:00:1E",
+            "doorbell": true
+          },
+          {
+            "camera_id": "31",
+            "accessory_id": "00000000-0000-0000-0000-00000000002f",
+            "username": "02:00:00:00:00:1F",
+            "doorbell": true
+          },
+          {
+            "camera_id": "32",
+            "accessory_id": "00000000-0000-0000-0000-000000000030",
+            "username": "02:00:00:00:00:20",
+            "doorbell": true
+          }
+        ],
+        "media_ready": false
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config_ack",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1,
+        "generation": 1,
+        "page_index": 0,
+        "accepted": "true",
+        "code": "ok"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config_ack",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1,
+        "generation": 1,
+        "page_index": 0,
+        "accepted": null,
+        "code": "ok"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config_ack",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1,
+        "generation": 1,
+        "page_index": 0,
+        "accepted": true,
+        "code": "traceback and secrets"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config_ack",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1,
+        "generation": 1,
+        "page_index": 0,
+        "accepted": true,
+        "code": ""
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config_ack",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1,
+        "generation": 1,
+        "page_index": 0,
+        "accepted": true,
+        "code": true
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_sync_ack",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "epoch": "synthetic-epoch",
+        "sequence": 0,
+        "accepted": "true",
+        "code": "ok"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_sync_ack",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "epoch": "synthetic-epoch",
+        "sequence": 0,
+        "accepted": null,
+        "code": "ok"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_sync_ack",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "epoch": "synthetic-epoch",
+        "sequence": 0,
+        "accepted": true,
+        "code": "traceback and secrets"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_sync_ack",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "epoch": "synthetic-epoch",
+        "sequence": 0,
+        "accepted": true,
+        "code": ""
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_sync_ack",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "epoch": "synthetic-epoch",
+        "sequence": 0,
+        "accepted": true,
+        "code": true
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_sync",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "epoch": "",
+        "sequence": 0
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_sync",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "epoch": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "sequence": 0
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_sync",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "epoch": "epoch/new",
+        "sequence": 0
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_sync",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "epoch": "epoch+new",
+        "sequence": 0
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_sync",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "epoch": "epoch new",
+        "sequence": 0
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_sync",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "epoch": "\u00e9poch",
+        "sequence": 0
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_sync",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "epoch": "epoch\n",
+        "sequence": 0
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_sync",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "epoch": "epoch\u2028",
+        "sequence": 0
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_sync",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "epoch": 1,
+        "sequence": 0
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_sync_ack",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "epoch": "",
+        "sequence": 0,
+        "accepted": true,
+        "code": "ok"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_sync_ack",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "epoch": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "sequence": 0,
+        "accepted": true,
+        "code": "ok"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_sync_ack",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "epoch": "epoch/new",
+        "sequence": 0,
+        "accepted": true,
+        "code": "ok"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_sync_ack",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "epoch": "epoch+new",
+        "sequence": 0,
+        "accepted": true,
+        "code": "ok"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_sync_ack",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "epoch": "epoch new",
+        "sequence": 0,
+        "accepted": true,
+        "code": "ok"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_sync_ack",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "epoch": "\u00e9poch",
+        "sequence": 0,
+        "accepted": true,
+        "code": "ok"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_sync_ack",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "epoch": "epoch\n",
+        "sequence": 0,
+        "accepted": true,
+        "code": "ok"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_sync_ack",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "epoch": "epoch\u2028",
+        "sequence": 0,
+        "accepted": true,
+        "code": "ok"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_sync_ack",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "epoch": 1,
+        "sequence": 0,
+        "accepted": true,
+        "code": "ok"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_state",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": "",
+        "sequence": 1,
+        "motion": true,
+        "ttl_ms": 30000,
+        "source_state": "connected",
+        "synchronized": true,
+        "expires_at_ms": 30000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_state",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "sequence": 1,
+        "motion": true,
+        "ttl_ms": 30000,
+        "source_state": "connected",
+        "synchronized": true,
+        "expires_at_ms": 30000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_state",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": "epoch/new",
+        "sequence": 1,
+        "motion": true,
+        "ttl_ms": 30000,
+        "source_state": "connected",
+        "synchronized": true,
+        "expires_at_ms": 30000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_state",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": "epoch+new",
+        "sequence": 1,
+        "motion": true,
+        "ttl_ms": 30000,
+        "source_state": "connected",
+        "synchronized": true,
+        "expires_at_ms": 30000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_state",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": "epoch new",
+        "sequence": 1,
+        "motion": true,
+        "ttl_ms": 30000,
+        "source_state": "connected",
+        "synchronized": true,
+        "expires_at_ms": 30000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_state",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": "\u00e9poch",
+        "sequence": 1,
+        "motion": true,
+        "ttl_ms": 30000,
+        "source_state": "connected",
+        "synchronized": true,
+        "expires_at_ms": 30000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_state",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": "epoch\n",
+        "sequence": 1,
+        "motion": true,
+        "ttl_ms": 30000,
+        "source_state": "connected",
+        "synchronized": true,
+        "expires_at_ms": 30000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_state",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": "epoch\u2028",
+        "sequence": 1,
+        "motion": true,
+        "ttl_ms": 30000,
+        "source_state": "connected",
+        "synchronized": true,
+        "expires_at_ms": 30000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_state",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": 1,
+        "sequence": 1,
+        "motion": true,
+        "ttl_ms": 30000,
+        "source_state": "connected",
+        "synchronized": true,
+        "expires_at_ms": 30000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "camera_event",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": "",
+        "sequence": 2,
+        "event_id": "00000000-0000-0000-0000-000000000005",
+        "type": "doorbell",
+        "ttl_ms": 2000,
+        "expires_at_ms": 30000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "camera_event",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "sequence": 2,
+        "event_id": "00000000-0000-0000-0000-000000000005",
+        "type": "doorbell",
+        "ttl_ms": 2000,
+        "expires_at_ms": 30000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "camera_event",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": "epoch/new",
+        "sequence": 2,
+        "event_id": "00000000-0000-0000-0000-000000000005",
+        "type": "doorbell",
+        "ttl_ms": 2000,
+        "expires_at_ms": 30000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "camera_event",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": "epoch+new",
+        "sequence": 2,
+        "event_id": "00000000-0000-0000-0000-000000000005",
+        "type": "doorbell",
+        "ttl_ms": 2000,
+        "expires_at_ms": 30000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "camera_event",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": "epoch new",
+        "sequence": 2,
+        "event_id": "00000000-0000-0000-0000-000000000005",
+        "type": "doorbell",
+        "ttl_ms": 2000,
+        "expires_at_ms": 30000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "camera_event",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": "\u00e9poch",
+        "sequence": 2,
+        "event_id": "00000000-0000-0000-0000-000000000005",
+        "type": "doorbell",
+        "ttl_ms": 2000,
+        "expires_at_ms": 30000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "camera_event",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": "epoch\n",
+        "sequence": 2,
+        "event_id": "00000000-0000-0000-0000-000000000005",
+        "type": "doorbell",
+        "ttl_ms": 2000,
+        "expires_at_ms": 30000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "camera_event",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": "epoch\u2028",
+        "sequence": 2,
+        "event_id": "00000000-0000-0000-0000-000000000005",
+        "type": "doorbell",
+        "ttl_ms": 2000,
+        "expires_at_ms": 30000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "camera_event",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": 1,
+        "sequence": 2,
+        "event_id": "00000000-0000-0000-0000-000000000005",
+        "type": "doorbell",
+        "ttl_ms": 2000,
+        "expires_at_ms": 30000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_sync_ack",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "epoch": null,
+        "sequence": 0,
+        "accepted": true,
+        "code": "ok"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_state",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": "synthetic-epoch",
+        "sequence": 1,
+        "motion": true,
+        "ttl_ms": 30000,
+        "source_state": "connected",
+        "synchronized": true,
+        "expires_at_ms": true
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_state",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": "synthetic-epoch",
+        "sequence": 1,
+        "motion": true,
+        "ttl_ms": 30000,
+        "source_state": "connected",
+        "synchronized": true,
+        "expires_at_ms": -1
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_state",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": "synthetic-epoch",
+        "sequence": 1,
+        "motion": true,
+        "ttl_ms": 30000,
+        "source_state": "connected",
+        "synchronized": true,
+        "expires_at_ms": 9007199254740992
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_state",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": "synthetic-epoch",
+        "sequence": 1,
+        "motion": true,
+        "ttl_ms": 30000,
+        "source_state": "connected",
+        "synchronized": true,
+        "expires_at_ms": 1.5
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_state",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": "synthetic-epoch",
+        "sequence": 1,
+        "motion": true,
+        "ttl_ms": 30000,
+        "source_state": "connected",
+        "synchronized": true,
+        "expires_at_ms": "2000"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_state",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": "synthetic-epoch",
+        "sequence": 1,
+        "motion": true,
+        "ttl_ms": 30000,
+        "source_state": "connected",
+        "synchronized": true,
+        "expires_at_ms": null
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_state",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": "synthetic-epoch",
+        "sequence": 1,
+        "motion": true,
+        "ttl_ms": true,
+        "source_state": "connected",
+        "synchronized": true,
+        "expires_at_ms": 30000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_state",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": "synthetic-epoch",
+        "sequence": 1,
+        "motion": true,
+        "ttl_ms": -1,
+        "source_state": "connected",
+        "synchronized": true,
+        "expires_at_ms": 30000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_state",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": "synthetic-epoch",
+        "sequence": 1,
+        "motion": true,
+        "ttl_ms": 30001,
+        "source_state": "connected",
+        "synchronized": true,
+        "expires_at_ms": 30000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_state",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": "synthetic-epoch",
+        "sequence": 1,
+        "motion": true,
+        "ttl_ms": "100",
+        "source_state": "connected",
+        "synchronized": true,
+        "expires_at_ms": 30000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_state",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 0
+        },
+        "epoch": "synthetic-epoch",
+        "sequence": 1,
+        "motion": true,
+        "ttl_ms": 30000,
+        "source_state": "connected",
+        "synchronized": true,
+        "expires_at_ms": 30000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "camera_event",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": "synthetic-epoch",
+        "sequence": 2,
+        "event_id": "00000000-0000-0000-0000-000000000005",
+        "type": "doorbell",
+        "ttl_ms": 2000,
+        "expires_at_ms": true
+      }
+    },
+    {
+      "v": 1,
+      "kind": "camera_event",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": "synthetic-epoch",
+        "sequence": 2,
+        "event_id": "00000000-0000-0000-0000-000000000005",
+        "type": "doorbell",
+        "ttl_ms": 2000,
+        "expires_at_ms": -1
+      }
+    },
+    {
+      "v": 1,
+      "kind": "camera_event",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": "synthetic-epoch",
+        "sequence": 2,
+        "event_id": "00000000-0000-0000-0000-000000000005",
+        "type": "doorbell",
+        "ttl_ms": 2000,
+        "expires_at_ms": 9007199254740992
+      }
+    },
+    {
+      "v": 1,
+      "kind": "camera_event",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": "synthetic-epoch",
+        "sequence": 2,
+        "event_id": "00000000-0000-0000-0000-000000000005",
+        "type": "doorbell",
+        "ttl_ms": 2000,
+        "expires_at_ms": 1.5
+      }
+    },
+    {
+      "v": 1,
+      "kind": "camera_event",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": "synthetic-epoch",
+        "sequence": 2,
+        "event_id": "00000000-0000-0000-0000-000000000005",
+        "type": "doorbell",
+        "ttl_ms": 2000,
+        "expires_at_ms": "2000"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "camera_event",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": "synthetic-epoch",
+        "sequence": 2,
+        "event_id": "00000000-0000-0000-0000-000000000005",
+        "type": "doorbell",
+        "ttl_ms": 2000,
+        "expires_at_ms": null
+      }
+    },
+    {
+      "v": 1,
+      "kind": "camera_event",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": "synthetic-epoch",
+        "sequence": 2,
+        "event_id": "00000000-0000-0000-0000-000000000005",
+        "type": "doorbell",
+        "ttl_ms": true,
+        "expires_at_ms": 30000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "camera_event",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": "synthetic-epoch",
+        "sequence": 2,
+        "event_id": "00000000-0000-0000-0000-000000000005",
+        "type": "doorbell",
+        "ttl_ms": -1,
+        "expires_at_ms": 30000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "camera_event",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": "synthetic-epoch",
+        "sequence": 2,
+        "event_id": "00000000-0000-0000-0000-000000000005",
+        "type": "doorbell",
+        "ttl_ms": 2001,
+        "expires_at_ms": 30000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "camera_event",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": "synthetic-epoch",
+        "sequence": 2,
+        "event_id": "00000000-0000-0000-0000-000000000005",
+        "type": "doorbell",
+        "ttl_ms": "100",
+        "expires_at_ms": 30000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "camera_event",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 0
+        },
+        "epoch": "synthetic-epoch",
+        "sequence": 2,
+        "event_id": "00000000-0000-0000-0000-000000000005",
+        "type": "doorbell",
+        "ttl_ms": 2000,
+        "expires_at_ms": 30000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_state",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": "synthetic-epoch",
+        "sequence": 1,
+        "motion": 0,
+        "ttl_ms": 30000,
+        "source_state": "connected",
+        "synchronized": true,
+        "expires_at_ms": 30000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_state",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": "synthetic-epoch",
+        "sequence": 1,
+        "motion": "true",
+        "ttl_ms": 30000,
+        "source_state": "connected",
+        "synchronized": true,
+        "expires_at_ms": 30000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_state",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": "synthetic-epoch",
+        "sequence": 1,
+        "motion": true,
+        "ttl_ms": 30000,
+        "source_state": "connected",
+        "synchronized": 0,
+        "expires_at_ms": 30000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_state",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": "synthetic-epoch",
+        "sequence": 1,
+        "motion": true,
+        "ttl_ms": 30000,
+        "source_state": "connected",
+        "synchronized": "true",
+        "expires_at_ms": 30000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_state",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": "synthetic-epoch",
+        "sequence": 1,
+        "motion": true,
+        "ttl_ms": 30000,
+        "source_state": "online",
+        "synchronized": true,
+        "expires_at_ms": 30000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_state",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": "synthetic-epoch",
+        "sequence": 1,
+        "motion": true,
+        "ttl_ms": 30000,
+        "source_state": "ready",
+        "synchronized": true,
+        "expires_at_ms": 30000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "event_state",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": "synthetic-epoch",
+        "sequence": 1,
+        "motion": true,
+        "ttl_ms": 30000,
+        "source_state": null,
+        "synchronized": true,
+        "expires_at_ms": 30000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "camera_event",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": "synthetic-epoch",
+        "sequence": 2,
+        "event_id": "00000000-0000-0000-0000-000000000005",
+        "type": "doorbell",
+        "ttl_ms": 0,
+        "expires_at_ms": 30000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "camera_event",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": "synthetic-epoch",
+        "sequence": 2,
+        "event_id": "00000000-0000-0000-0000-000000000005",
+        "type": "motion",
+        "ttl_ms": 2000,
+        "expires_at_ms": 30000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "camera_event",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "epoch": "synthetic-epoch",
+        "sequence": 2,
+        "event_id": "raw-Ring-private-notification-id",
+        "type": "doorbell",
+        "ttl_ms": 2000,
+        "expires_at_ms": 30000
+      }
     }
   ],
   "semantic_invalid": [
@@ -10199,6 +15139,176 @@
             }
           }
         ]
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1,
+        "generation": 1,
+        "page_index": 0,
+        "total_pages": 1,
+        "entries": [
+          {
+            "camera_id": "0",
+            "accessory_id": "00000000-0000-0000-0000-000000000010",
+            "username": "02:00:00:00:00:00",
+            "doorbell": true
+          },
+          {
+            "camera_id": "0",
+            "accessory_id": "00000000-0000-0000-0000-000000000011",
+            "username": "02:00:00:00:00:01",
+            "doorbell": true
+          }
+        ],
+        "media_ready": false
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1,
+        "generation": 1,
+        "page_index": 0,
+        "total_pages": 1,
+        "entries": [
+          {
+            "camera_id": "0",
+            "accessory_id": "00000000-0000-0000-0000-000000000010",
+            "username": "02:00:00:00:00:00",
+            "doorbell": true
+          },
+          {
+            "camera_id": "1",
+            "accessory_id": "00000000-0000-0000-0000-000000000010",
+            "username": "02:00:00:00:00:01",
+            "doorbell": true
+          }
+        ],
+        "media_ready": false
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1,
+        "generation": 1,
+        "page_index": 0,
+        "total_pages": 1,
+        "entries": [
+          {
+            "camera_id": "0",
+            "accessory_id": "00000000-0000-0000-0000-000000000010",
+            "username": "02:00:00:00:00:00",
+            "doorbell": true
+          },
+          {
+            "camera_id": "1",
+            "accessory_id": "00000000-0000-0000-0000-000000000011",
+            "username": "02:00:00:00:00:00",
+            "doorbell": true
+          }
+        ],
+        "media_ready": false
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": null,
+        "revision": 1,
+        "generation": 1,
+        "page_index": 0,
+        "total_pages": 1,
+        "entries": [
+          {
+            "camera_id": "42",
+            "accessory_id": "00000000-0000-0000-0000-000000000004",
+            "username": "02:01:02:03:04:05",
+            "doorbell": true
+          }
+        ],
+        "media_ready": false
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1,
+        "generation": 1,
+        "page_index": 1,
+        "total_pages": 1,
+        "entries": [
+          {
+            "camera_id": "42",
+            "accessory_id": "00000000-0000-0000-0000-000000000004",
+            "username": "02:01:02:03:04:05",
+            "doorbell": true
+          }
+        ],
+        "media_ready": false
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": null,
+        "revision": 1,
+        "generation": 1,
+        "page_index": 0,
+        "total_pages": 2,
+        "entries": [],
+        "media_ready": false
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": null,
+        "revision": 1,
+        "generation": 1,
+        "page_index": 1,
+        "total_pages": 2,
+        "entries": [],
+        "media_ready": false
       }
     }
   ],

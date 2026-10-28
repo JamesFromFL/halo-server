@@ -54,6 +54,7 @@ class HomeKitBroker:
         self.runtime = None
         self.boot_id: str | None = None
         self._account = None
+        self._selection_keys = ()
         self._retiring_boot = None
         self._resources: dict[str, _Resource] = {}
         self._session_ids: dict[str, float | None] = {}
@@ -73,7 +74,9 @@ class HomeKitBroker:
             ):
                 raise HomeKitOperationError("cleanup_pending")
             self.boot_id = boot_id
-            await self.controller.attach(boot_id, self._selection())
+            selection = tuple(self._selection())
+            await self.controller.attach(boot_id, selection)
+            self._selection_keys = tuple(scope.source_key for scope in selection)
             if self.boot_id != boot_id:
                 raise HomeKitOperationError("boot_changed")
             self._account = _account(self.backend.inventory())
@@ -89,14 +92,22 @@ class HomeKitBroker:
         if boot is None or self.runtime is None:
             return
         account = _account(self.backend.inventory())
-        if account != self._account:
-            await self._close_resources()
-            if self.boot_id != boot:
-                return
+        selection = tuple(self._selection())
+        keys = tuple(scope.source_key for scope in selection)
+        if (
+            account != self._account
+            or keys != self._selection_keys
+            or self.controller.boot_id != boot
+        ):
+            self.controller.fence()
             await self.controller.detach()
             if self.boot_id != boot:
                 return
-            await self.controller.attach(boot, self._selection())
+            await self._close_resources()
+            if self.boot_id != boot:
+                return
+            await self.controller.attach(boot, selection)
+            self._selection_keys = keys
             if self.boot_id != boot:
                 return
             self._account = account

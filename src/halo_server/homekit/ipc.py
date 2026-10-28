@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import math
+import re
 import struct
 import uuid
 from typing import Any
@@ -306,9 +307,90 @@ def _transfer_open(value: Any) -> bool:
     )
 
 
+def _epoch(value):
+    return isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,64}", value) is not None
+
+
+def _username(value):
+    return (
+        isinstance(value, str)
+        and re.fullmatch(r"[0-9A-F][26AE](?::[0-9A-F]{2}){5}", value) is not None
+    )
+
+
+_accessory_entry = _object(
+    camera_id=lambda value: _display_text(value, 128),
+    accessory_id=_uuid,
+    username=_username,
+    doorbell=_boolean,
+)
+_accessory_fields = _object(
+    scope=_nullable(_account),
+    revision=_revision,
+    generation=_positive,
+    page_index=_integer(0, 7),
+    total_pages=_integer(1, 8),
+    entries=lambda value: (
+        isinstance(value, list)
+        and len(value) <= 32
+        and all(_accessory_entry(item) for item in value)
+    ),
+    media_ready=_boolean,
+)
+
+
+def _accessory_config(value):
+    return (
+        _accessory_fields(value)
+        and value["page_index"] < value["total_pages"]
+        and (
+            value["scope"] is not None
+            or not value["entries"]
+            and value["page_index"] == 0
+            and value["total_pages"] == 1
+        )
+        and all(
+            len({item[key] for item in value["entries"]}) == len(value["entries"])
+            for key in ("camera_id", "accessory_id", "username")
+        )
+    )
+
+
 _RESOURCE = dict(scope=_scope, session_id=_uuid)
 _TRANSFER = dict(scope=_scope, operation_id=_uuid, transfer_id=_uuid)
 PAYLOAD_VALIDATORS = {
+    "accessory_config": _accessory_config,
+    "accessory_config_ack": _object(
+        scope=_nullable(_account),
+        revision=_revision,
+        generation=_positive,
+        page_index=_integer(0, 7),
+        accepted=_boolean,
+        code=_code,
+    ),
+    "event_sync": _object(scope=_nullable(_account), epoch=_nullable(_epoch), sequence=_revision),
+    "event_sync_ack": _object(
+        scope=_nullable(_account), epoch=_epoch, sequence=_revision, accepted=_boolean, code=_code
+    ),
+    "event_state": _object(
+        scope=_scope,
+        epoch=_epoch,
+        sequence=_revision,
+        motion=_nullable(_boolean),
+        ttl_ms=_integer(0, 30000),
+        expires_at_ms=_revision,
+        source_state=_enum("connected", "connecting", "offline"),
+        synchronized=_boolean,
+    ),
+    "camera_event": _object(
+        scope=_scope,
+        epoch=_epoch,
+        sequence=_revision,
+        event_id=_uuid,
+        type=_enum("doorbell"),
+        ttl_ms=_integer(1, 2000),
+        expires_at_ms=_revision,
+    ),
     "hello": _object(
         role=_enum("python"),
         build_id=lambda value: _bounded_text(value, 128),
@@ -381,6 +463,10 @@ PAYLOAD_VALIDATORS = {
 KINDS = frozenset(PAYLOAD_VALIDATORS)
 PYTHON_KINDS = frozenset(
     {
+        "accessory_config",
+        "event_sync_ack",
+        "event_state",
+        "camera_event",
         "hello",
         "ping",
         "shutdown",
@@ -398,6 +484,8 @@ PYTHON_KINDS = frozenset(
 )
 HAP_KINDS = frozenset(
     {
+        "accessory_config_ack",
+        "event_sync",
         "hello_ack",
         "pong",
         "shutdown_ack",
@@ -457,6 +545,8 @@ def validate_direction(envelope: dict[str, Any], sender: str) -> dict[str, Any]:
 
 
 REPLY_KINDS = {
+    "accessory_config": "accessory_config_ack",
+    "event_sync": "event_sync_ack",
     "hello": "hello_ack",
     "ping": "pong",
     "shutdown": "shutdown_ack",
@@ -491,6 +581,10 @@ def validate_reply(request: dict[str, Any], reply: dict[str, Any]) -> dict[str, 
     for key in ("scope", "session_id", "job_id", "operation_id", "transfer_id"):
         if key in sent and sent[key] != received.get(key):
             raise HomeKitProtocolError("invalid control reply ownership")
+    if request["kind"] == "accessory_config" and any(
+        sent[key] != received[key] for key in ("revision", "generation", "page_index")
+    ):
+        raise HomeKitProtocolError("invalid accessory configuration correlation")
     if request["kind"] == "inventory_request" and (
         sent["cursor"] != received["cursor"]
         or sent["revision"] != 0

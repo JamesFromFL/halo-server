@@ -7,6 +7,7 @@ export const MAX_FRAMES_PER_CHUNK = 256;
 export const FEATURE = "classic-camera-control-v1";
 
 export const KINDS = [
+  "accessory_config", "accessory_config_ack", "event_sync", "event_sync_ack", "event_state", "camera_event",
   "hello", "hello_ack", "ping", "pong", "shutdown", "shutdown_ack", "status", "error",
   "inventory_reset", "inventory_request", "inventory_page", "camera_status", "policy_update", "policy_ack",
   "lease_request", "lease_result", "lease_renew", "lease_renew_result", "lease_stop", "lease_stop_result",
@@ -175,7 +176,22 @@ const transferOpen: Check = value => transferOpenFields(value) && record(value) 
   (value.total_bytes as number) <= BULK_LIMITS[value.kind as BulkKind] &&
   (value.chunk_bytes as number) <= Math.min(MAX_BULK_CHUNK_BYTES, value.total_bytes as number) &&
   (value.chunk_bytes as number) * (value.window_chunks as number) <= MAX_BULK_WINDOW_BYTES;
+const epoch: Check = value => typeof value === "string" && value.length >= 1 && value.length <= 64 && !/[^A-Za-z0-9_-]/.test(value);
+const username: Check = value => typeof value === "string" && value.length === 17 && /^[0-9A-F][26AE](?::[0-9A-F]{2}){5}$/.test(value);
+const accessoryEntry = object({camera_id:display(128),accessory_id:uuid,username,doorbell:bool});
+const accessoryFields = object({scope:nullable(account),revision,generation:positive,page_index:integer(0,7),total_pages:integer(1,8),
+  entries:value=>Array.isArray(value)&&value.length<=32&&value.every(accessoryEntry),media_ready:bool});
+const accessoryConfig: Check = value => accessoryFields(value) && record(value) &&
+  (value.page_index as number)<(value.total_pages as number) &&
+  (value.scope!==null || ((value.entries as unknown[]).length===0 && value.page_index===0 && value.total_pages===1)) &&
+  ["camera_id","accessory_id","username"].every(key=>new Set((value.entries as JsonObject[]).map(item=>item[key])).size===(value.entries as unknown[]).length);
 const payloadValidators: Record<Kind, Check> = {
+  accessory_config: accessoryConfig,
+  accessory_config_ack: object({scope:nullable(account),revision,generation:positive,page_index:integer(0,7),accepted:bool,code}),
+  event_sync: object({scope:nullable(account),epoch:nullable(epoch),sequence:revision}),
+  event_sync_ack: object({scope:nullable(account),epoch,sequence:revision,accepted:bool,code}),
+  event_state: object({scope,epoch,sequence:revision,motion:nullable(bool),ttl_ms:integer(0,30000),expires_at_ms:revision,source_state:choice("connected","connecting","offline"),synchronized:bool}),
+  camera_event: object({scope,epoch,sequence:revision,event_id:uuid,type:choice("doorbell"),ttl_ms:integer(1,2000),expires_at_ms:revision}),
   hello: object({role: choice("python"), build_id: value => text(value, 128, true), protocol: integer(1, 1)}),
   hello_ack: object({role: choice("hap"), build_id: value => text(value, 128, true), protocol: integer(1, 1),
     features: value => Array.isArray(value) && value.length === 1 && value[0] === FEATURE, pid: positive}),
@@ -200,8 +216,8 @@ const payloadValidators: Record<Kind, Check> = {
   transfer_cancel: object({...transfer, code: choice("cancelled", "invalidated", "timeout", "protocol-error")}),
   transfer_result: object({...transfer, status: choice("complete", "cancelled", "rejected"), code}),
 };
-const pythonKinds: readonly Kind[] = ["hello", "ping", "shutdown", "inventory_reset", "inventory_page", "camera_status", "policy_ack", "lease_result", "lease_renew_result", "lease_stop_result", "snapshot_result", "talkback_result", "control_result"];
-const hapKinds: readonly Kind[] = ["hello_ack", "pong", "shutdown_ack", "inventory_request", "policy_update", "lease_request", "lease_renew", "lease_stop", "snapshot_request", "snapshot_cancel", "talkback_request", "control_request"];
+const pythonKinds: readonly Kind[] = ["accessory_config", "event_sync_ack", "event_state", "camera_event", "hello", "ping", "shutdown", "inventory_reset", "inventory_page", "camera_status", "policy_ack", "lease_result", "lease_renew_result", "lease_stop_result", "snapshot_result", "talkback_result", "control_result"];
+const hapKinds: readonly Kind[] = ["accessory_config_ack", "event_sync", "hello_ack", "pong", "shutdown_ack", "inventory_request", "policy_update", "lease_request", "lease_renew", "lease_stop", "snapshot_request", "snapshot_cancel", "talkback_request", "control_request"];
 export function validateScope(value: unknown): MediaScope {
   if (!scope(value)) throw new ProtocolError("invalid-scope");
   return value as MediaScope;
@@ -228,6 +244,7 @@ export function validateDirection(value: unknown, sender: "python" | "hap"): Env
   return message;
 }
 export const REPLY_KINDS: Partial<Record<Kind, Kind>> = {
+  accessory_config:"accessory_config_ack", event_sync:"event_sync_ack",
   hello: "hello_ack", ping: "pong", shutdown: "shutdown_ack", inventory_request: "inventory_page",
   policy_update: "policy_ack", lease_request: "lease_result", lease_renew: "lease_renew_result",
   lease_stop: "lease_stop_result", snapshot_request: "snapshot_result", talkback_request: "talkback_result",
@@ -241,10 +258,11 @@ export function validateReply(requestValue: unknown, replyValue: unknown): Envel
   for (const key of ["scope", "session_id", "job_id", "operation_id", "transfer_id"]) {
     if (!Object.hasOwn(request.payload, key)) continue;
     const sent = request.payload[key], received = reply.payload[key];
-    const equal = key === "scope" ? record(sent) && record(received) &&
+    const equal = key === "scope" ? sent===null && received===null || record(sent) && record(received) &&
       Object.keys(sent).length === Object.keys(received).length && Object.entries(sent).every(([name, value]) => received[name] === value) : sent === received;
     if (!equal) throw new ProtocolError("invalid-reply-ownership");
   }
+  if (request.kind === "accessory_config" && ["revision","generation","page_index"].some(key=>request.payload[key]!==reply.payload[key])) throw new ProtocolError("invalid-config-correlation");
   if (request.kind === "inventory_request" && (request.payload.cursor !== reply.payload.cursor ||
       (request.payload.revision !== 0 && request.payload.revision !== reply.payload.revision))) {
     throw new ProtocolError("invalid-inventory-revision");

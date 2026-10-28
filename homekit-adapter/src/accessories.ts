@@ -1,0 +1,284 @@
+import { CameraAccessory, type AccessoryIdentity, type MotionState } from "./camera.js";
+import { ProtocolError, type AccountScope, type JsonObject, type MediaScope } from "./protocol.js";
+import type { AdapterSession } from "./session.js";
+import type { PairingStore } from "./storage.js";
+
+export interface AccessoryConfigurationPage {
+  scope: AccountScope | null; revision: number; generation: number; page_index: number;
+  total_pages: number; entries: AccessoryIdentity[]; media_ready: boolean;
+}
+export interface AccessoryPublisher {
+  readonly mediaReady: boolean;
+  publish(camera: CameraAccessory): Promise<void>;
+  unpublish(camera: CameraAccessory): Promise<void>;
+}
+/** S08 has not qualified output. A configuration flag alone cannot bypass this gate. */
+export function hapPublisher(_store: PairingStore): AccessoryPublisher {
+  return {
+    mediaReady: false,
+    async publish(_camera) {
+      throw new ProtocolError("media-not-ready");
+      // Once S08 qualifies live transport, publication belongs here through
+      // public Accessory.publish and store.initialize; never a private HAP API.
+    },
+    async unpublish(camera) { await camera.accessory.unpublish(); },
+  };
+}
+
+interface Configuration extends Omit<AccessoryConfigurationPage, "page_index" | "total_pages"> { }
+interface PendingConfiguration { header: AccessoryConfigurationPage; pages: Map<number, AccessoryConfigurationPage> }
+interface Managed { camera: CameraAccessory; published: boolean; stateTimer: NodeJS.Timeout | null }
+interface EventState extends MotionState { scope: MediaScope; epoch: string; sequence: number; ttl_ms: number; expires_at_ms: number }
+interface ReceivedEventState extends EventState { expiresAt: number }
+interface CameraEvent { scope: MediaScope; epoch: string; sequence: number; event_id: string; type: "doorbell"; ttl_ms: number; expires_at_ms: number }
+interface EventSync { scope: AccountScope | null; epoch: string; sequence: number; accepted: boolean; code: string }
+export interface AccessoryManagerOptions {
+  session: Pick<AdapterSession, "cameras" | "inventoryComplete" | "accountScope">;
+  store?: PairingStore;
+  publisher?: AccessoryPublisher;
+  syncEvents: (scope: AccountScope | null, epoch: string | null, sequence: number) => Promise<JsonObject>;
+  onFailure?: (error: ProtocolError) => void;
+  monotonicNow?: () => number;
+}
+const sameAccount = (left: AccountScope | null, right: AccountScope | null): boolean =>
+  left === null || right === null ? left === right : left.profile_id === right.profile_id && left.account_generation === right.account_generation;
+const key = (scope: MediaScope): string => JSON.stringify([scope.profile_id, scope.account_generation,
+  scope.camera_id, scope.device_generation, scope.privacy_generation]);
+const sameIdentity = (left: AccessoryIdentity, right: AccessoryIdentity): boolean =>
+  left.camera_id === right.camera_id && left.accessory_id === right.accessory_id && left.username === right.username && left.doorbell === right.doorbell;
+const unknownState: MotionState = {motion: null, synchronized: false, source_state: "connecting"};
+
+/** Bounded selected graph. Runtime scopes are never durable pairing identities. */
+export class AccessoryManager {
+  private readonly managed = new Map<string, Managed>();
+  private readonly states = new Map<string, ReceivedEventState>();
+  private readonly lastPress = new Map<string, number>();
+  private readonly pressIds = new Set<string>();
+  private configuration: Configuration | null = null;
+  private pending: PendingConfiguration | null = null;
+  private configurationTimer: NodeJS.Timeout | null = null;
+  private appliedPages = new Map<number, AccessoryConfigurationPage>();
+  private generation = 0;
+  private closed = false;
+  private failed = false;
+  private chain: Promise<void> = Promise.resolve();
+  private closing: Promise<void> | null = null;
+  private syncing: Promise<void> | null = null;
+  private syncAgain = false;
+  private eventEpoch: string | null = null;
+  private eventBaseline = 0;
+  private eventSynchronized = false;
+  private eventToken = 0;
+
+  constructor(private readonly options: AccessoryManagerOptions) { }
+  private now(): number { return this.options.monotonicNow?.() ?? Number(process.hrtime.bigint() / 1_000_000n); }
+  get count(): number { return this.managed.size; }
+  get publishedCount(): number { return [...this.managed.values()].filter(value => value.published).length; }
+  get isFailed(): boolean { return this.failed; }
+  accessories(): CameraAccessory[] { return [...this.managed.values()].map(value => value.camera); }
+
+  async configure(page: AccessoryConfigurationPage): Promise<void> {
+    if (this.closed || this.failed) throw new ProtocolError("accessory-manager-retired");
+    page = structuredClone(page);
+    if (!Number.isSafeInteger(page.generation) || page.generation < 1 || page.generation < this.generation ||
+        !Number.isSafeInteger(page.revision) || page.revision < 0 || !Number.isSafeInteger(page.page_index) ||
+        !Number.isSafeInteger(page.total_pages) || page.total_pages < 1 || page.total_pages > 8 ||
+        page.page_index < 0 || page.page_index >= page.total_pages || !Array.isArray(page.entries) || page.entries.length > 32 ||
+        typeof page.media_ready !== "boolean" || page.scope === null && page.entries.length !== 0) throw new ProtocolError("invalid-accessory-configuration");
+    if (page.generation === this.generation && this.appliedPages.size) {
+      if (JSON.stringify(this.appliedPages.get(page.page_index)) !== JSON.stringify(page)) throw new ProtocolError("accessory-configuration-conflict");
+      return;
+    }
+    if (page.generation > this.generation) {
+      this.generation = page.generation;
+      this.pending = {header: page, pages: new Map()};
+      this.appliedPages.clear();
+      this.invalidate();
+      if (this.configurationTimer) clearTimeout(this.configurationTimer);
+      this.configurationTimer = setTimeout(() => {
+        this.configurationTimer = null; this.failed = true; this.invalidate();
+        this.options.onFailure?.(new ProtocolError("accessory-configuration-timeout"));
+      }, 30_000);
+    }
+    const pending = this.pending;
+    if (!pending || pending.header.revision !== page.revision || pending.header.total_pages !== page.total_pages ||
+        pending.header.media_ready !== page.media_ready || !sameAccount(pending.header.scope, page.scope)) {
+      throw new ProtocolError("accessory-configuration-conflict");
+    }
+    const previous = pending.pages.get(page.page_index);
+    if (previous && JSON.stringify(previous) !== JSON.stringify(page)) throw new ProtocolError("accessory-configuration-conflict");
+    pending.pages.set(page.page_index, page);
+    if (pending.pages.size !== page.total_pages) return;
+    const entries: AccessoryIdentity[] = [];
+    for (let index = 0; index < page.total_pages; index++) entries.push(...pending.pages.get(index)!.entries);
+    if (entries.length > 256 || new Set(entries.map(value => value.camera_id)).size !== entries.length ||
+        new Set(entries.map(value => value.accessory_id)).size !== entries.length ||
+        new Set(entries.map(value => value.username)).size !== entries.length) throw new ProtocolError("duplicate-accessory-identity");
+    if (entries.length && !this.options.store) throw new ProtocolError("pairing-store-unavailable");
+    this.options.store?.preflight();
+    this.configuration = {scope: structuredClone(page.scope), revision: page.revision,
+      generation: page.generation, entries, media_ready: page.media_ready};
+    this.appliedPages = pending.pages; this.pending = null;
+    if (this.configurationTimer) clearTimeout(this.configurationTimer);
+    this.configurationTimer = null;
+    await this.reconcile();
+  }
+
+  /** Fence events synchronously before any queued graph mutation or IPC await. */
+  invalidate(): void {
+    this.eventToken++; this.eventSynchronized = false; this.states.clear(); this.lastPress.clear();
+    for (const managed of this.managed.values()) {
+      if (managed.stateTimer) clearTimeout(managed.stateTimer);
+      managed.stateTimer = null; managed.camera.applyState(unknownState);
+    }
+  }
+
+  reconcile(): Promise<void> {
+    const work = this.chain.then(() => this.reconcileNow());
+    this.chain = work.catch(error => { this.failed = true; this.invalidate();
+      this.options.onFailure?.(error instanceof ProtocolError ? error : new ProtocolError("accessory-reconciliation-failed")); });
+    return work;
+  }
+  private async reconcileNow(): Promise<void> {
+    if (this.failed) throw new ProtocolError("accessory-cleanup-pending");
+    const config = this.configuration;
+    const session = this.options.session;
+    if (this.closed || config === null || config.scope === null || !sameAccount(config.scope, session.accountScope)) {
+      await this.retireAll(); return;
+    }
+    if (this.pending || config.generation !== this.generation) return;
+    const selected = new Map(config.entries.map(entry => [entry.camera_id, entry]));
+    for (const [id, managed] of this.managed) {
+      const identity = selected.get(id);
+      if (!identity || !sameIdentity(identity, managed.camera.identity)) await this.retire(id, managed);
+    }
+    if (!session.inventoryComplete) return;
+    const cameras = new Map(session.cameras().map(camera => [camera.scope.camera_id, camera]));
+    for (const [id, managed] of this.managed) {
+      const camera = cameras.get(id);
+      if (!camera || !sameAccount(camera.scope, config.scope)) await this.retire(id, managed);
+    }
+    for (const identity of config.entries) {
+      if (this.closed || config !== this.configuration || config.generation !== this.generation) return;
+      const camera = cameras.get(identity.camera_id);
+      if (!camera || !sameAccount(camera.scope, config.scope)) continue;
+      let managed = this.managed.get(identity.camera_id);
+      if (managed && key(managed.camera.scope) !== key(camera.scope)) {
+        this.invalidate();
+        managed.camera.update(camera);
+      }
+      if (!managed) {
+        managed = {camera: new CameraAccessory(identity, camera), published: false, stateTimer: null};
+        this.managed.set(identity.camera_id, managed);
+      } else managed.camera.update(camera);
+      if (!managed.published && config.media_ready && this.options.publisher?.mediaReady) {
+        const generation = this.generation;
+        // Retain the claim even when an asynchronous publish partially fails.
+        managed.published = true;
+        try { await this.options.publisher.publish(managed.camera); }
+        catch (error) {
+          // publish may have opened sockets before rejecting. Retain this claim
+          // until compensating unpublish succeeds.
+          await this.options.publisher.unpublish(managed.camera);
+          managed.published = false;
+          throw error;
+        }
+        if (this.closed || generation !== this.generation) await this.retire(identity.camera_id, managed);
+      }
+    }
+    if (!this.closed && this.managed.size && !this.eventSynchronized && !this.syncing) void this.synchronizeEvents().catch(() => {});
+  }
+  private async retire(id: string, managed: Managed): Promise<void> {
+    managed.camera.retire();
+    if (managed.stateTimer) clearTimeout(managed.stateTimer);
+    managed.stateTimer = null;
+    if (managed.published) {
+      if (!this.options.publisher) throw new ProtocolError("accessory-cleanup-pending");
+      await this.options.publisher.unpublish(managed.camera);
+      managed.published = false;
+    }
+    this.managed.delete(id); this.states.delete(id); this.lastPress.delete(id);
+  }
+  private async retireAll(): Promise<void> {
+    for (const [id, managed] of this.managed) await this.retire(id, managed);
+  }
+
+  async synchronizeEvents(): Promise<void> {
+    this.syncAgain = true;
+    if (this.syncing) return this.syncing;
+    this.syncing = (async () => {
+      while (this.syncAgain && !this.closed && !this.failed) {
+        this.syncAgain = false;
+        const config = this.configuration, token = this.eventToken;
+        if (!config?.scope || this.pending || config.generation !== this.generation || !this.options.session.inventoryComplete ||
+            !sameAccount(config.scope, this.options.session.accountScope)) return;
+        this.eventSynchronized = false;
+        const reply = await this.options.syncEvents(config.scope, this.eventEpoch, this.eventBaseline) as unknown as EventSync;
+        if (this.closed || token !== this.eventToken || config !== this.configuration) { this.syncAgain = true; continue; }
+        if (!reply.accepted || reply.code !== "ok" || !sameAccount(reply.scope, config.scope)) throw new ProtocolError("event-sync-rejected");
+        this.eventEpoch = reply.epoch; this.eventBaseline = reply.sequence; this.eventSynchronized = true;
+        for (const [id, state] of this.states) if (state.epoch === this.eventEpoch) this.applyState(id, state);
+      }
+    })().catch(error => { this.eventSynchronized = false;
+      for (const managed of this.managed.values()) managed.camera.applyState(unknownState);
+      throw error;
+    }).finally(() => { this.syncing = null; });
+    return this.syncing;
+  }
+
+  eventState(value: EventState): void {
+    if (this.closed || this.failed) return;
+    const managed = this.managed.get(value.scope.camera_id);
+    if (!managed || key(managed.camera.scope) !== key(value.scope) || !this.options.session.inventoryComplete) return;
+    const previous = this.states.get(value.scope.camera_id);
+    if (previous && previous.epoch === value.epoch && value.sequence < previous.sequence) return;
+    // Python and Node share Linux CLOCK_MONOTONIC. Receipt-relative TTL alone
+    // would revive a stale event after a socket or Node event-loop stall.
+    const state: ReceivedEventState = {...structuredClone(value), expiresAt: Math.min(value.expires_at_ms, this.now() + value.ttl_ms)};
+    this.states.set(value.scope.camera_id, state);
+    if (!state.synchronized) {
+      this.eventSynchronized = false; managed.camera.applyState(unknownState);
+      void this.synchronizeEvents().catch(() => {});
+    } else if (this.eventSynchronized && state.epoch === this.eventEpoch) this.applyState(value.scope.camera_id, state);
+  }
+  private applyState(id: string, state: ReceivedEventState): void {
+    const managed = this.managed.get(id);
+    if (!managed || key(managed.camera.scope) !== key(state.scope)) return;
+    if (managed.stateTimer) clearTimeout(managed.stateTimer);
+    managed.stateTimer = null;
+    const remaining = state.motion === true ? state.expiresAt - this.now() : 0;
+    // Decide expiry before notifying HAP. A transient true followed by false
+    // would still send an obsolete motion alert to Home controllers.
+    managed.camera.applyState(state.motion === true && remaining <= 0 ? {...state, motion: false} : state);
+    if (state.motion === true) {
+      if (remaining > 0) managed.stateTimer = setTimeout(() => {
+        managed.stateTimer = null;
+        if (this.states.get(id) === state && this.eventSynchronized) managed.camera.applyState({...state, motion: false});
+      }, remaining);
+    }
+  }
+  cameraEvent(value: CameraEvent): void {
+    if (this.closed || this.failed || !this.eventSynchronized || value.epoch !== this.eventEpoch ||
+        value.sequence <= this.eventBaseline || value.ttl_ms < 1 || value.ttl_ms > 2000 ||
+        value.expires_at_ms <= this.now() || this.pressIds.has(value.event_id)) return;
+    const managed = this.managed.get(value.scope.camera_id), state = this.states.get(value.scope.camera_id);
+    if (!managed || !managed.camera.identity.doorbell || key(managed.camera.scope) !== key(value.scope) ||
+        !state?.synchronized || state.epoch !== this.eventEpoch || value.sequence <= (this.lastPress.get(value.scope.camera_id) ?? this.eventBaseline)) return;
+    this.lastPress.set(value.scope.camera_id, value.sequence); this.pressIds.add(value.event_id);
+    if (this.pressIds.size > 512) this.pressIds.delete(this.pressIds.values().next().value!);
+    managed.camera.ring();
+  }
+
+  close(): Promise<void> {
+    if (this.closing) return this.closing;
+    this.closed = true; this.invalidate();
+    if (this.configurationTimer) clearTimeout(this.configurationTimer);
+    this.configurationTimer = null;
+    this.closing = (async () => {
+      await this.chain;
+      await this.retireAll();
+      this.options.store?.close();
+    })();
+    return this.closing;
+  }
+}

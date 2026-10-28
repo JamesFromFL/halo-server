@@ -21,6 +21,7 @@ from halo_server.homekit.ipc import (
     validate_reply,
     write_frame,
 )
+from halo_server.homekit.storage_owner import PairingDirectoryOwner
 from halo_server.media.manager import settle_owned
 
 MAX_PENDING_REQUESTS = 32
@@ -69,6 +70,7 @@ class HomeKitRuntime:
         on_request: Callable[[dict[str, Any]], Awaitable[dict[str, Any]]] | None = None,
         on_notice: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
         max_restarts: int = 3,
+        pairing_directory: Path | None = None,
     ) -> None:
         if not node.is_absolute() or not entry.is_absolute():
             raise ValueError("adapter executable and entry paths must be absolute")
@@ -76,6 +78,10 @@ class HomeKitRuntime:
             raise ValueError("adapter build identity is invalid")
         if type(max_restarts) is not int or not 0 <= max_restarts <= 10:
             raise ValueError("adapter restart budget is invalid")
+        if pairing_directory is not None and not pairing_directory.is_absolute():
+            raise ValueError("pairing directory must be absolute")
+        self._pairing_directory = pairing_directory
+        self._pairing_owner: PairingDirectoryOwner | None = None
         self._command = (str(node), str(entry))
         self._build_id = build_id
         self._on_retired = on_retired
@@ -115,13 +121,17 @@ class HomeKitRuntime:
         return self._boot_id
 
     @property
+    def retirement_pending(self) -> bool:
+        return self._boot_id is not None or self._pairing_owner is not None
+
+    @property
     def bulk_channel(self) -> BulkChannel | None:
         """The private binary transport for the current boot, never a raw socket."""
         return self._bulk
 
     async def start(self) -> None:
         if self._supervisor is None:
-            if self._boot_id is not None:
+            if self.retirement_pending:
                 raise HomeKitRuntimeError("Previous HomeKit adapter retirement is incomplete")
             self._stopping.clear()
             self.restart_count = 0
@@ -158,11 +168,18 @@ class HomeKitRuntime:
         if self._supervisor is not None:
             await settle_owned(self._supervisor)
             self._supervisor = None
-        if self._boot_id is not None:
+        if self.retirement_pending:
             await self._cleanup()
         self.state = "stopped"
 
-    async def send(self, kind: str, payload: dict[str, Any], request_id: str | None = None) -> None:
+    async def send(
+        self,
+        kind: str,
+        payload: dict[str, Any],
+        request_id: str | None = None,
+        *,
+        admission: Callable[[], bool] | None = None,
+    ) -> None:
         """Send metadata only; bulk transfers own their separate correlation."""
         boot_id = self._boot_id
         if boot_id is None:
@@ -174,10 +191,13 @@ class HomeKitRuntime:
                 "boot_id": boot_id,
                 "request_id": str(uuid.uuid4()) if request_id is None else request_id,
                 "payload": payload,
-            }
+            },
+            admission=admission,
         )
 
-    async def _send_envelope(self, envelope: dict[str, Any]) -> None:
+    async def _send_envelope(
+        self, envelope: dict[str, Any], *, admission: Callable[[], bool] | None = None
+    ) -> None:
         validate_direction(envelope, "python")
         async with self._write_lock:
             writer = self._writer
@@ -187,6 +207,8 @@ class HomeKitRuntime:
             # handler's successful response. Shutdown itself remains writable.
             if self._stopping.is_set() and envelope["kind"] != "shutdown":
                 raise HomeKitRuntimeError("HomeKit adapter is stopping")
+            if admission is not None and not admission():
+                raise HomeKitRuntimeError("HomeKit notification authority was retired")
             async with asyncio.timeout(REQUEST_SECONDS):
                 await write_frame(writer, envelope)
 
@@ -270,6 +292,10 @@ class HomeKitRuntime:
 
         if not Path(self._command[0]).is_file() or not Path(self._command[1]).is_file():
             raise _AdapterArtifactsUnavailable("Bundled HomeKit adapter artifacts are unavailable")
+        if self._pairing_directory is not None:
+            if self._pairing_owner is not None:
+                raise HomeKitRuntimeError("Previous pairing store ownership is incomplete")
+            self._pairing_owner = PairingDirectoryOwner.acquire(self._pairing_directory)
         parent, child = socket.socketpair()
         try:
             bulk_parent, bulk_child = socket.socketpair()
@@ -291,10 +317,16 @@ class HomeKitRuntime:
                 "HALO_PARENT_PID": str(os.getpid()),
             }
         )
+        inherited = (child.fileno(), bulk_child.fileno())
+        if self._pairing_owner is not None:
+            env["HALO_PAIRING_FD"] = str(self._pairing_owner.directory_fd)
+            env["HALO_PAIRING_LOCK_FD"] = str(self._pairing_owner.lock_fd)
+            inherited += (self._pairing_owner.directory_fd, self._pairing_owner.lock_fd)
         spawn = asyncio.create_task(
             asyncio.create_subprocess_exec(
                 *self._command,
-                pass_fds=(child.fileno(), bulk_child.fileno()),
+                pass_fds=inherited,
+                umask=0o077,
                 env=env,
                 stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.DEVNULL,
@@ -534,7 +566,10 @@ class HomeKitRuntime:
         if self._boot_id is not None:
             boot_id = self._boot_id
             await self._on_retired(boot_id)
-            self._boot_id = None
+        if self._pairing_owner is not None:
+            self._pairing_owner.close()
+            self._pairing_owner = None
+        self._boot_id = None
         self._retired_requests.clear()
         self._child_history.clear()
         self._active_child_ids.clear()

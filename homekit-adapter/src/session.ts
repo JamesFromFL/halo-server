@@ -25,6 +25,8 @@ export interface SessionOptions {
   requestTimeoutMs?: number;
   maximumPendingRequests?: number;
   onFailure?: (error: ProtocolError) => void;
+  onInventory?: () => void;
+  onInvalidate?: () => void;
 }
 interface Pending {
   request: Envelope; timer: NodeJS.Timeout;
@@ -81,6 +83,10 @@ export class AdapterSession {
   get pendingRequests(): number { return this.pending.size; }
   get inventoryComplete(): boolean { return this.complete; }
   get inventoryRevision(): number { return this.revision; }
+  get accountScope(): AccountScope | null { return this.account === null ? null : {...this.account}; }
+  synchronizeEvents(scope: AccountScope | null, epoch: string | null, sequence: number): Promise<JsonObject> {
+    return this.request("event_sync", {scope, epoch, sequence}).then(reply => reply.payload);
+  }
   cameras(): NativeCamera[] { return [...this.entries.values()].map(entry => structuredClone(entry.camera)); }
   camera(cameraId: string): CameraDelegate {
     const entry = this.entries.get(cameraId);
@@ -190,6 +196,7 @@ export class AdapterSession {
             policy: unchanged ? old.policy : null});
         }
         this.revision = revision; this.complete = complete === true;
+        this.options.onInventory?.();
         return;
       }
       if (cursors.has(next) || devices.length === 0 || collected.length >= total) {
@@ -399,6 +406,7 @@ export class AdapterSession {
   }
   private invalidate(): void {
     this.complete = false;
+    this.options.onInvalidate?.();
     for (const entry of this.entries.values()) this.retireCamera(entry.camera.scope);
   }
   private fail(error: ProtocolError): ProtocolError {
@@ -408,6 +416,7 @@ export class AdapterSession {
   close(): void {
     if (this.closed) return;
     this.closed = true; this.complete = false; this.noticeEpoch += 1;
+    this.options.onInvalidate?.();
     for (const item of this.pending.values()) { clearTimeout(item.timer); item.reject(new ProtocolError("session-closed")); }
     this.pending.clear();
     for (const [id] of this.snapshots) this.cancelSnapshot(id, "session-closed");

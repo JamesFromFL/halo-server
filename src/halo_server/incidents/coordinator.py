@@ -54,6 +54,8 @@ class IncidentSnapshot:
     media_ready: bool
     motion_published: bool
     failure: str | None
+    motion_deadline: float | None
+    motion_known: bool
 
 
 class IncidentCoordinator:
@@ -72,12 +74,9 @@ class IncidentCoordinator:
         dedupe_window: float = 300.0,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
-        if quiet_period <= 0:
-            raise ValueError("quiet period must be positive")
-        if readiness_timeout <= 0:
-            raise ValueError("readiness timeout must be positive")
-        if dedupe_window <= 0:
-            raise ValueError("dedupe window must be positive")
+        for duration in (quiet_period, readiness_timeout, dedupe_window):
+            if type(duration) not in {int, float} or not math.isfinite(duration) or duration <= 0:
+                raise ValueError("incident durations must be finite and positive")
         self._quiet_period = quiet_period
         self._readiness_timeout = readiness_timeout
         self._dedupe_window = dedupe_window
@@ -91,6 +90,8 @@ class IncidentCoordinator:
         self._readiness_deadline: float | None = None
         self._media_ready = False
         self._motion_published = False
+        self._motion_deadline: float | None = None
+        self._motion_known = False
         self._failure: str | None = None
         self._recent_events: dict[tuple[str, str], float] = {}
 
@@ -106,6 +107,8 @@ class IncidentCoordinator:
                 media_ready=self._media_ready,
                 motion_published=self._motion_published,
                 failure=self._failure,
+                motion_deadline=self._motion_deadline,
+                motion_known=self._motion_known,
             )
 
     def on_motion(
@@ -113,10 +116,27 @@ class IncidentCoordinator:
         event_id: str | int,
         *,
         is_update: bool = False,
+        expires_in: float | None = None,
+        received_at: float | None = None,
         now: float | None = None,
     ) -> list[IncidentAction]:
-        """Accept one Ring motion signal and extend the active incident."""
-        return self._on_signal("motion", str(event_id), is_update=is_update, now=now)
+        """Publish source motion immediately, independently of capture readiness."""
+        if expires_in is not None and (
+            type(expires_in) not in {int, float} or not math.isfinite(expires_in) or expires_in < 0
+        ):
+            raise ValueError("motion expiry must be finite and non-negative")
+        current_time = self._now(now)
+        if received_at is not None:
+            if type(received_at) not in {int, float} or not math.isfinite(received_at):
+                raise ValueError("motion receipt time must be finite")
+            expires_in = max(
+                0.0,
+                min(self._quiet_period, self._quiet_period if expires_in is None else expires_in)
+                - max(0.0, current_time - received_at),
+            )
+        return self._on_signal(
+            "motion", str(event_id), is_update=is_update, now=current_time, expires_in=expires_in
+        )
 
     def on_doorbell(
         self,
@@ -146,6 +166,7 @@ class IncidentCoordinator:
             self._media_ready = True
             self._failure = None
             self._phase = IncidentPhase.ACTIVE
+            self._readiness_deadline = None
             actions.append(
                 IncidentAction(
                     IncidentActionType.MEDIA_READY,
@@ -153,15 +174,6 @@ class IncidentCoordinator:
                     "first_decodable_media",
                 )
             )
-            if not self._motion_published:
-                self._motion_published = True
-                actions.append(
-                    IncidentAction(
-                        IncidentActionType.MOTION_ON,
-                        self._generation,
-                        "media_ready",
-                    )
-                )
             return actions
 
     def on_media_failed(
@@ -179,6 +191,7 @@ class IncidentCoordinator:
                 return actions
             self._failure = failure
             self._phase = IncidentPhase.DEGRADED
+            self._readiness_deadline = None
             actions.append(
                 IncidentAction(
                     IncidentActionType.MEDIA_FAILED,
@@ -207,9 +220,15 @@ class IncidentCoordinator:
         with self._lock:
             if self._phase is IncidentPhase.IDLE:
                 return None
-            deadlines = [deadline for deadline in (self._quiet_deadline,) if deadline is not None]
-            if not self._motion_published and self._readiness_deadline is not None:
-                deadlines.append(self._readiness_deadline)
+            deadlines = [
+                deadline
+                for deadline in (
+                    self._quiet_deadline,
+                    self._readiness_deadline,
+                    self._motion_deadline,
+                )
+                if deadline is not None
+            ]
             return min(deadlines) if deadlines else None
 
     def _on_signal(
@@ -219,6 +238,7 @@ class IncidentCoordinator:
         *,
         is_update: bool,
         now: float | None,
+        expires_in: float | None = None,
     ) -> list[IncidentAction]:
         current_time = self._now(now)
         with self._lock:
@@ -226,6 +246,14 @@ class IncidentCoordinator:
             key = (kind, event_id)
             self._prune_events_locked(current_time)
             if key in self._recent_events:
+                return actions
+            self._recent_events[key] = current_time
+            while len(self._recent_events) > 1024:
+                self._recent_events.pop(next(iter(self._recent_events)))
+            # SDK updates may describe a press from before attachment. A button
+            # edge is never recovered as a fresh press; expired motion cannot
+            # wake capture or clear a newer signal either.
+            if kind == "doorbell" and is_update or kind == "motion" and expires_in == 0:
                 return actions
 
             if self._phase is IncidentPhase.IDLE:
@@ -239,9 +267,24 @@ class IncidentCoordinator:
                     )
                 )
 
-            self._recent_events[key] = current_time
             self._last_signal_at = current_time
             self._quiet_deadline = current_time + self._quiet_period
+            if kind == "motion":
+                self._motion_known = True
+                self._motion_deadline = current_time + min(
+                    self._quiet_period,
+                    self._quiet_period if expires_in is None else expires_in,
+                )
+                if not self._motion_published:
+                    self._motion_published = True
+                    actions.append(
+                        IncidentAction(
+                            IncidentActionType.MOTION_ON,
+                            self._generation,
+                            "ring_update_recovery" if is_update else "ring_push",
+                            event_id,
+                        )
+                    )
             if kind == "doorbell":
                 actions.append(
                     IncidentAction(
@@ -262,22 +305,27 @@ class IncidentCoordinator:
             self._reset_locked()
             return actions
 
-        if (
-            not self._motion_published
-            and self._readiness_deadline is not None
-            and now >= self._readiness_deadline
-        ):
-            self._motion_published = True
+        actions = []
+        if self._motion_deadline is not None and now >= self._motion_deadline:
+            self._motion_deadline = None
+            if self._motion_published:
+                self._motion_published = False
+                actions.append(
+                    IncidentAction(
+                        IncidentActionType.MOTION_OFF, self._generation, "motion_expired"
+                    )
+                )
+        if self._readiness_deadline is not None and now >= self._readiness_deadline:
+            self._readiness_deadline = None
             if not self._media_ready:
                 self._phase = IncidentPhase.DEGRADED
-            return [
-                IncidentAction(
-                    IncidentActionType.MOTION_ON,
-                    self._generation,
-                    "readiness_timeout",
+                self._failure = "readiness_timeout"
+                actions.append(
+                    IncidentAction(
+                        IncidentActionType.MEDIA_FAILED, self._generation, "readiness_timeout"
+                    )
                 )
-            ]
-        return []
+        return actions
 
     def _start_locked(self, now: float) -> None:
         self._generation += 1
@@ -288,6 +336,7 @@ class IncidentCoordinator:
         self._readiness_deadline = now + self._readiness_timeout
         self._media_ready = False
         self._motion_published = False
+        self._motion_deadline = None
         self._failure = None
 
     def _stop_actions_locked(self, reason: str) -> list[IncidentAction]:
@@ -317,6 +366,7 @@ class IncidentCoordinator:
         self._readiness_deadline = None
         self._media_ready = False
         self._motion_published = False
+        self._motion_deadline = None
         self._failure = None
 
     def _prune_events_locked(self, now: float) -> None:
