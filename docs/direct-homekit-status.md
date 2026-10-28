@@ -7,14 +7,15 @@ Engineering record, 2026-10-28. Foundation committed locally as
 `d89ad9436a0e3cd354cb8b9870e867ff81071559`. S08 is committed locally as
 `90c8832f8ef317117e9dc633f51f194b1df7ae76`. S09 is committed locally as
 `17077c7182e863b1dd0881f526fb92e433ccf136`. S10 is committed locally as
-`e115f11344edf1ea08fce474163f5410c37b3da1`. S11 builds on those commits.
+`e115f11344edf1ea08fce474163f5410c37b3da1`. S11 is committed as `1b70c1ea67c01b9fe9a103ed0d87f644f78ba361`; S12 builds on those commits.
 
 The approved architecture keeps Python as the sole Ring account, push-event,
 shared capture and speaker owner. A supervised Node adapter uses released public
 HAP APIs for HomeKit. Native media will be delivered directly from Python rather
 than through RTSP. The existing plugin/RTSP integration remains functional during
 development. Direct video, negotiated Opus audio and shared talkback are implemented as development paths.
-Owner pairing management, HKSV and real Apple qualification remain gated.
+S12 adds scoped HKSV delivery through the approved bounded HAP transport extension.
+Owner pairing administration, release packaging and real Apple qualification remain later gates.
 
 ## Implemented foundation
 
@@ -453,3 +454,50 @@ physical connection admission and proven hard-close ownership. A separate
 review-only transport proposal exists; no HAP fork, beta upgrade, cryptography
 replacement or FFmpeg executable backend is adopted. Owner administration,
 release/service packaging and real Apple/Ring qualification remain later gates.
+
+
+## S12: scoped HKSV delivery and approved transport extension
+
+The user approved the narrow HAP transport extension. The dependency is now an
+immutable vendored2.2.3-halo.1 package rebuilt from exact official2.2.3 source
+plus a reviewable transport patch. No crypto, mDNS or pairing storage replacement
+is included. License, source pin, patch and package hashes accompany the package.
+The public API verifier rejects a different library version or missing transport
+methods; startup never runs npm.
+
+Recording delegates now consume bounded Python init/fragment output over scoped
+private RPC/bulk IPC. Frozen codec choices survive ordinary quality changes;
+active/audio-off/source/privacy changes fence delivery. HDS cancellation uses its
+unique AbortSignal, and numeric stream IDs alone never authorize local cleanup.
+One-fragment lookahead delivers the whole final tail with truthful EOS. Wrong or
+early ACKs are ignored; missing ACKs retire the physical connection as well as
+the logical stream. Full-queue CLOSE and failed initial OPEN still run their
+synchronous cancellation fences. Multi-chunk initialization retains its data type.
+
+Every encrypted send reserves two-frame/532480byte capacity before finite
+serialization; recording writes await callback and drain. Aborting a write closes
+the physical connection, preventing encrypted counter gaps. Global16/per-camera4
+physical owners release only on actual close, including failed-close retries.
+Node server admission bounds connections before HDS object creation. Generic
+legacy HAP messages retain their format under the same writer/serializer bounds.
+
+Warm recording defaults off and requires trusted owner opt-in, selected current
+scope, positively classified mains-only hardware, saved HomeKit settings and
+actual four-second decodable history. Unknown/battery/shared-power kinds stay
+denied; SDK battery=false alone is insufficient. Budgets allow two warm owners
+and two active jobs globally, one active job per camera. Failed cleanup remains
+charged and finite warm rollover honestly re-enters buffering.
+
+Ring incident time, never a child-provided timestamp or delayed OPEN time, defines
+pre-event history. Missing pre-event history is rejected. Trusted incident quiet
+completion includes two seconds of tail; a150second natural finish precedes the
+180second hard lifetime. Native finish freezes admitted input and drains the
+final MP4 fragment. Selected keyframe intervals are honored by both eligible copy
+and native adaptation. AAC-LC is mono VBR16/24/48kHz; audio-off init omits audio.
+
+Private protocolv1 negotiates hksv-recording-v1; public pluginv2/v3 schemas and
+fixtures are unchanged. Default settings perform no automatic camera wake. These
+are tested software/transport capabilities; actual Ring capture, Apple pairing,
+Home timeline playback and performance remain S15 acceptance work. S13 closes
+owner CLI/TUI/diagnostics and controls; S14 closes installed resources, service
+packaging and pairing/revocation durability before real acceptance.

@@ -9,14 +9,14 @@ import {
 import { verifyPublicApi } from "../src/public-api.js";
 import { inheritedDescriptors } from "../src/main.js";
 
-test("released public API imports/compiles without publication or pairing storage", context => {
+test("pinned public transport API imports/compiles without publication or pairing storage", context => {
   let publishes = 0;
   context.mock.method(createServer().constructor.prototype, "listen", () => {
     publishes++;
     throw new Error("network publication forbidden");
   });
   const before = existsSync("persist");
-  assert.equal(verifyPublicApi(), "2.2.3");
+  assert.equal(verifyPublicApi(), "2.2.3-halo.1");
   const delegate: CameraStreamingDelegate = {
     handleSnapshotRequest(_request, callback) { callback(new Error("synthetic-only")); },
     prepareStream(_request, callback) { callback(new Error("synthetic-only")); },

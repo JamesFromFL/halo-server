@@ -18,6 +18,7 @@ interface OwnedVideo {
 export interface VideoCameraOptions {
   active: () => boolean;
   audio?: () => AccessoryAudio | null;
+  policy?: () => CameraPolicy;
   forceStop: (hapId: string) => void;
   failure: () => void;
 }
@@ -59,6 +60,7 @@ export class HapVideoDelegate implements CameraStreamingDelegate {
   get count(): number { return this.sessions.size; }
 
   private policy(): CameraPolicy {
+    if (this.options.policy) return this.options.policy();
     const capabilities = this.native.info.capabilities;
     return streamingPolicy(this.options.active(), capabilities.snapshot, this.options.audio?.() ?? null, capabilities.talkback);
   }

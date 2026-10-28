@@ -637,6 +637,15 @@ class RecordingCaptureManager:
             raise HomeKitOperationError("cleanup_pending")
         self._closed = False
 
+    async def stop(self, boot, scope, session_id):
+        """Retry one exact capture's retirement without stopping other consumers."""
+        capture = self._captures.get((boot, session_id))
+        if capture is None:
+            return
+        if capture.scope != scope:
+            raise HomeKitOperationError("session_conflict")
+        await capture.close()
+
     async def open(
         self,
         boot,

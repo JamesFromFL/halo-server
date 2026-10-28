@@ -47,7 +47,8 @@ const sameAccount = (left: AccountScope | null, right: AccountScope | null): boo
 const key = (scope: MediaScope): string => JSON.stringify([scope.profile_id, scope.account_generation,
   scope.camera_id, scope.device_generation, scope.privacy_generation]);
 const sameIdentity = (left: AccessoryIdentity, right: AccessoryIdentity): boolean =>
-  left.camera_id === right.camera_id && left.accessory_id === right.accessory_id && left.username === right.username && left.doorbell === right.doorbell;
+  left.camera_id === right.camera_id && left.accessory_id === right.accessory_id && left.username === right.username && left.doorbell === right.doorbell &&
+  (left.recording?.enabled === true) === (right.recording?.enabled === true);
 const unknownState: MotionState = {motion: null, synchronized: false, source_state: "connecting"};
 
 /** Bounded selected graph. Runtime scopes are never durable pairing identities. */
@@ -183,6 +184,7 @@ export class AccessoryManager {
       } else {
         managed.camera.update(camera);
         await managed.camera.updateAudio(identity.audio ?? null);
+        await managed.camera.updateRecording(identity.recording ?? null);
       }
       await managed.camera.synchronizePolicy();
       if (this.closed || config !== this.configuration || config.generation !== this.generation) return;

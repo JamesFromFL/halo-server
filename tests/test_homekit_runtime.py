@@ -128,7 +128,7 @@ socket.on('data', chunk => {
   const message = JSON.parse(input.subarray(4).toString());
   message.kind = 'hello_ack';
   message.payload = {role:'hap',build_id:'wrong-build',protocol:1,
-    features:['classic-camera-control-v1','bulk-cancel-v1'],pid:process.pid};
+    features:['classic-camera-control-v1','bulk-cancel-v1','hksv-recording-v1'],pid:process.pid};
   const body = Buffer.from(JSON.stringify(message));
   const frame = Buffer.alloc(body.length + 4); frame.writeUInt32BE(body.length);body.copy(frame,4);
   socket.write(frame);
@@ -288,7 +288,7 @@ socket.on('data', chunk => {
     if (message.kind !== 'hello') continue;
     message.kind = 'hello_ack';
     message.payload = {role:'hap',build_id:message.payload.build_id,protocol:1,
-      features:['classic-camera-control-v1','bulk-cancel-v1'],pid:process.pid};
+      features:['classic-camera-control-v1','bulk-cancel-v1','hksv-recording-v1'],pid:process.pid};
     const body = Buffer.from(JSON.stringify(message));
     const frame = Buffer.alloc(body.length + 4);frame.writeUInt32BE(body.length);body.copy(frame,4);
     socket.write(frame);

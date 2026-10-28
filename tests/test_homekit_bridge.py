@@ -60,7 +60,7 @@ async def test_daemon_real_compiled_child_is_control_ready_without_publishing(tm
         await wait_until(lambda: service.status()["homekit"]["transport_ready"], timeout=25)
         status = service.status()["homekit"]
         assert status["state"] == "control_ready"
-        assert status["reason"] == "recording_transport_unavailable"
+        assert status["reason"] == "recording_disabled"
         assert status["camera_ready"] is False
         runtime = service._homekit_bridge._runtime
         process = runtime._process
@@ -112,7 +112,7 @@ channel.on('message',message=>{void(async()=>{
     session=new AdapterSession(boot,{send:m=>channel.send(m),bulk:binary});
     await channel.send({...message,kind:'hello_ack',payload:{
       role:'hap',build_id:message.payload.build_id,
-      protocol:1,features:['classic-camera-control-v1','bulk-cancel-v1'],pid:process.pid}});return;
+      protocol:1,features:['classic-camera-control-v1','bulk-cancel-v1','hksv-recording-v1'],pid:process.pid}});return;
   }
   if(message.kind==='ping'){await channel.send({...message,kind:'pong',payload:{}});return;}
   if(message.kind==='shutdown'){

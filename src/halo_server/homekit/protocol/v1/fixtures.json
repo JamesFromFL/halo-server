@@ -24,7 +24,8 @@
         "protocol": 1,
         "features": [
           "classic-camera-control-v1",
-          "bulk-cancel-v1"
+          "bulk-cancel-v1",
+          "hksv-recording-v1"
         ],
         "pid": 123
       }
@@ -2865,6 +2866,407 @@
         "width": 1920,
         "height": 1080,
         "reason": "unknown"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_settings_update",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "expected_revision": 0,
+        "active": true,
+        "audio_active": true,
+        "configuration": {
+          "video": {
+            "width": 1280,
+            "height": 720,
+            "fps": 15,
+            "profile": "main",
+            "level": "3.1",
+            "max_bit_rate": 2000
+          },
+          "audio": {
+            "sample_rate": 24000,
+            "bit_rate": 32000,
+            "channels": 1,
+            "bitrate_mode": "vbr"
+          },
+          "fragment_length_ms": 4000,
+          "i_frame_interval_ms": 1000
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_settings_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "accepted": true,
+        "code": "ok",
+        "revision": 1
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_open",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "configuration": {
+          "video": {
+            "width": 1280,
+            "height": 720,
+            "fps": 15,
+            "profile": "main",
+            "level": "3.1",
+            "max_bit_rate": 2000
+          },
+          "audio": {
+            "sample_rate": 24000,
+            "bit_rate": 32000,
+            "channels": 1,
+            "bitrate_mode": "vbr"
+          },
+          "fragment_length_ms": 4000,
+          "i_frame_interval_ms": 1000
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_open_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "status": "accepted",
+        "code": "ok"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_next",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "sequence": 0
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_next_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "status": "ready",
+        "code": "ok",
+        "transfer_id": "00000000-0000-0000-0000-000000000005",
+        "kind": "init",
+        "sequence": 0,
+        "total_bytes": 1024,
+        "duration_ms": 0
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_next_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "status": "ready",
+        "code": "ok",
+        "transfer_id": "00000000-0000-0000-0000-000000000005",
+        "kind": "fragment",
+        "sequence": 1,
+        "total_bytes": 2048,
+        "duration_ms": 2000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_next_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "status": "eos",
+        "code": "ok",
+        "transfer_id": null,
+        "kind": null,
+        "sequence": 2,
+        "total_bytes": 0,
+        "duration_ms": 0
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_stop",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_stop_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "status": "stopped",
+        "code": "ok"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_settings_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "accepted": false,
+        "code": "not-ready",
+        "revision": 1
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_open_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "status": "rejected",
+        "code": "not-ready"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_next_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "status": "rejected",
+        "code": "not-ready",
+        "transfer_id": null,
+        "kind": null,
+        "sequence": 0,
+        "total_bytes": 0,
+        "duration_ms": 0
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_stop_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "status": "rejected",
+        "code": "not-ready"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_open",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "configuration": {
+          "video": {
+            "width": 1280,
+            "height": 720,
+            "fps": 15,
+            "profile": "main",
+            "level": "3.1",
+            "max_bit_rate": 2000
+          },
+          "audio": null,
+          "fragment_length_ms": 4000,
+          "i_frame_interval_ms": 1000
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_settings_update",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "expected_revision": 0,
+        "active": false,
+        "audio_active": true,
+        "configuration": null
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1,
+        "generation": 1,
+        "page_index": 0,
+        "total_pages": 1,
+        "entries": [
+          {
+            "camera_id": "42",
+            "accessory_id": "00000000-0000-0000-0000-000000000004",
+            "username": "02:01:02:03:04:05",
+            "doorbell": true,
+            "audio": null,
+            "recording": {
+              "revision": 1,
+              "enabled": true,
+              "active": false,
+              "audio_active": true,
+              "configuration": {
+                "video": {
+                  "width": 1280,
+                  "height": 720,
+                  "fps": 15,
+                  "profile": "main",
+                  "level": "3.1",
+                  "max_bit_rate": 2000
+                },
+                "audio": {
+                  "sample_rate": 24000,
+                  "bit_rate": 32000,
+                  "channels": 1,
+                  "bitrate_mode": "vbr"
+                },
+                "fragment_length_ms": 4000,
+                "i_frame_interval_ms": 1000
+              }
+            }
+          }
+        ],
+        "media_ready": false
       }
     }
   ],
@@ -18603,6 +19005,2943 @@
         "status": "cancelled",
         "code": "ok",
         "transfer_id": null
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_settings_update",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "expected_revision": 0,
+        "active": true,
+        "audio_active": true,
+        "configuration": {
+          "video": {
+            "width": 1280,
+            "height": 720,
+            "fps": 15,
+            "profile": "main",
+            "level": "3.1",
+            "max_bit_rate": 2000
+          },
+          "audio": {
+            "sample_rate": 24000,
+            "bit_rate": 32000,
+            "channels": 1,
+            "bitrate_mode": "vbr"
+          },
+          "fragment_length_ms": 4000,
+          "i_frame_interval_ms": 1000
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_settings_update",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "active": true,
+        "audio_active": true,
+        "configuration": {
+          "video": {
+            "width": 1280,
+            "height": 720,
+            "fps": 15,
+            "profile": "main",
+            "level": "3.1",
+            "max_bit_rate": 2000
+          },
+          "audio": {
+            "sample_rate": 24000,
+            "bit_rate": 32000,
+            "channels": 1,
+            "bitrate_mode": "vbr"
+          },
+          "fragment_length_ms": 4000,
+          "i_frame_interval_ms": 1000
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_settings_update",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "expected_revision": 0,
+        "audio_active": true,
+        "configuration": {
+          "video": {
+            "width": 1280,
+            "height": 720,
+            "fps": 15,
+            "profile": "main",
+            "level": "3.1",
+            "max_bit_rate": 2000
+          },
+          "audio": {
+            "sample_rate": 24000,
+            "bit_rate": 32000,
+            "channels": 1,
+            "bitrate_mode": "vbr"
+          },
+          "fragment_length_ms": 4000,
+          "i_frame_interval_ms": 1000
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_settings_update",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "expected_revision": 0,
+        "active": true,
+        "configuration": {
+          "video": {
+            "width": 1280,
+            "height": 720,
+            "fps": 15,
+            "profile": "main",
+            "level": "3.1",
+            "max_bit_rate": 2000
+          },
+          "audio": {
+            "sample_rate": 24000,
+            "bit_rate": 32000,
+            "channels": 1,
+            "bitrate_mode": "vbr"
+          },
+          "fragment_length_ms": 4000,
+          "i_frame_interval_ms": 1000
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_settings_update",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "expected_revision": 0,
+        "active": true,
+        "audio_active": true
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_settings_update",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "expected_revision": 0,
+        "active": true,
+        "audio_active": true,
+        "configuration": {
+          "video": {
+            "width": 1280,
+            "height": 720,
+            "fps": 15,
+            "profile": "main",
+            "level": "3.1",
+            "max_bit_rate": 2000
+          },
+          "audio": {
+            "sample_rate": 24000,
+            "bit_rate": 32000,
+            "channels": 1,
+            "bitrate_mode": "vbr"
+          },
+          "fragment_length_ms": 4000,
+          "i_frame_interval_ms": 1000
+        },
+        "token": "forbidden"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_settings_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "accepted": true,
+        "code": "ok",
+        "revision": 1
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_settings_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "code": "ok",
+        "revision": 1
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_settings_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "accepted": true,
+        "revision": 1
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_settings_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "accepted": true,
+        "code": "ok"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_settings_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "accepted": true,
+        "code": "ok",
+        "revision": 1,
+        "token": "forbidden"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_open",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "configuration": {
+          "video": {
+            "width": 1280,
+            "height": 720,
+            "fps": 15,
+            "profile": "main",
+            "level": "3.1",
+            "max_bit_rate": 2000
+          },
+          "audio": {
+            "sample_rate": 24000,
+            "bit_rate": 32000,
+            "channels": 1,
+            "bitrate_mode": "vbr"
+          },
+          "fragment_length_ms": 4000,
+          "i_frame_interval_ms": 1000
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_open",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "configuration": {
+          "video": {
+            "width": 1280,
+            "height": 720,
+            "fps": 15,
+            "profile": "main",
+            "level": "3.1",
+            "max_bit_rate": 2000
+          },
+          "audio": {
+            "sample_rate": 24000,
+            "bit_rate": 32000,
+            "channels": 1,
+            "bitrate_mode": "vbr"
+          },
+          "fragment_length_ms": 4000,
+          "i_frame_interval_ms": 1000
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_open",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_open",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "configuration": {
+          "video": {
+            "width": 1280,
+            "height": 720,
+            "fps": 15,
+            "profile": "main",
+            "level": "3.1",
+            "max_bit_rate": 2000
+          },
+          "audio": {
+            "sample_rate": 24000,
+            "bit_rate": 32000,
+            "channels": 1,
+            "bitrate_mode": "vbr"
+          },
+          "fragment_length_ms": 4000,
+          "i_frame_interval_ms": 1000
+        },
+        "token": "forbidden"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_open_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "status": "accepted",
+        "code": "ok"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_open_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "status": "accepted",
+        "code": "ok"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_open_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "code": "ok"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_open_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "status": "accepted"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_open_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "status": "accepted",
+        "code": "ok",
+        "token": "forbidden"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_next",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "sequence": 0
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_next",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "sequence": 0
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_next",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_next",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "sequence": 0,
+        "token": "forbidden"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_next_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "status": "ready",
+        "code": "ok",
+        "transfer_id": "00000000-0000-0000-0000-000000000005",
+        "kind": "init",
+        "sequence": 0,
+        "total_bytes": 1024,
+        "duration_ms": 0
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_next_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "status": "ready",
+        "code": "ok",
+        "transfer_id": "00000000-0000-0000-0000-000000000005",
+        "kind": "init",
+        "sequence": 0,
+        "total_bytes": 1024,
+        "duration_ms": 0
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_next_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "code": "ok",
+        "transfer_id": "00000000-0000-0000-0000-000000000005",
+        "kind": "init",
+        "sequence": 0,
+        "total_bytes": 1024,
+        "duration_ms": 0
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_next_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "status": "ready",
+        "transfer_id": "00000000-0000-0000-0000-000000000005",
+        "kind": "init",
+        "sequence": 0,
+        "total_bytes": 1024,
+        "duration_ms": 0
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_next_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "status": "ready",
+        "code": "ok",
+        "kind": "init",
+        "sequence": 0,
+        "total_bytes": 1024,
+        "duration_ms": 0
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_next_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "status": "ready",
+        "code": "ok",
+        "transfer_id": "00000000-0000-0000-0000-000000000005",
+        "sequence": 0,
+        "total_bytes": 1024,
+        "duration_ms": 0
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_next_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "status": "ready",
+        "code": "ok",
+        "transfer_id": "00000000-0000-0000-0000-000000000005",
+        "kind": "init",
+        "total_bytes": 1024,
+        "duration_ms": 0
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_next_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "status": "ready",
+        "code": "ok",
+        "transfer_id": "00000000-0000-0000-0000-000000000005",
+        "kind": "init",
+        "sequence": 0,
+        "duration_ms": 0
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_next_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "status": "ready",
+        "code": "ok",
+        "transfer_id": "00000000-0000-0000-0000-000000000005",
+        "kind": "init",
+        "sequence": 0,
+        "total_bytes": 1024
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_next_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "status": "ready",
+        "code": "ok",
+        "transfer_id": "00000000-0000-0000-0000-000000000005",
+        "kind": "init",
+        "sequence": 0,
+        "total_bytes": 1024,
+        "duration_ms": 0,
+        "token": "forbidden"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_next_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "status": "ready",
+        "code": "ok",
+        "transfer_id": "00000000-0000-0000-0000-000000000005",
+        "kind": "fragment",
+        "sequence": 1,
+        "total_bytes": 2048,
+        "duration_ms": 2000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_next_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "status": "ready",
+        "code": "ok",
+        "transfer_id": "00000000-0000-0000-0000-000000000005",
+        "kind": "fragment",
+        "sequence": 1,
+        "total_bytes": 2048,
+        "duration_ms": 2000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_next_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "code": "ok",
+        "transfer_id": "00000000-0000-0000-0000-000000000005",
+        "kind": "fragment",
+        "sequence": 1,
+        "total_bytes": 2048,
+        "duration_ms": 2000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_next_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "status": "ready",
+        "transfer_id": "00000000-0000-0000-0000-000000000005",
+        "kind": "fragment",
+        "sequence": 1,
+        "total_bytes": 2048,
+        "duration_ms": 2000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_next_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "status": "ready",
+        "code": "ok",
+        "kind": "fragment",
+        "sequence": 1,
+        "total_bytes": 2048,
+        "duration_ms": 2000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_next_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "status": "ready",
+        "code": "ok",
+        "transfer_id": "00000000-0000-0000-0000-000000000005",
+        "sequence": 1,
+        "total_bytes": 2048,
+        "duration_ms": 2000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_next_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "status": "ready",
+        "code": "ok",
+        "transfer_id": "00000000-0000-0000-0000-000000000005",
+        "kind": "fragment",
+        "total_bytes": 2048,
+        "duration_ms": 2000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_next_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "status": "ready",
+        "code": "ok",
+        "transfer_id": "00000000-0000-0000-0000-000000000005",
+        "kind": "fragment",
+        "sequence": 1,
+        "duration_ms": 2000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_next_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "status": "ready",
+        "code": "ok",
+        "transfer_id": "00000000-0000-0000-0000-000000000005",
+        "kind": "fragment",
+        "sequence": 1,
+        "total_bytes": 2048
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_next_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "status": "ready",
+        "code": "ok",
+        "transfer_id": "00000000-0000-0000-0000-000000000005",
+        "kind": "fragment",
+        "sequence": 1,
+        "total_bytes": 2048,
+        "duration_ms": 2000,
+        "token": "forbidden"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_next_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "status": "eos",
+        "code": "ok",
+        "transfer_id": null,
+        "kind": null,
+        "sequence": 2,
+        "total_bytes": 0,
+        "duration_ms": 0
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_next_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "status": "eos",
+        "code": "ok",
+        "transfer_id": null,
+        "kind": null,
+        "sequence": 2,
+        "total_bytes": 0,
+        "duration_ms": 0
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_next_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "code": "ok",
+        "transfer_id": null,
+        "kind": null,
+        "sequence": 2,
+        "total_bytes": 0,
+        "duration_ms": 0
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_next_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "status": "eos",
+        "transfer_id": null,
+        "kind": null,
+        "sequence": 2,
+        "total_bytes": 0,
+        "duration_ms": 0
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_next_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "status": "eos",
+        "code": "ok",
+        "kind": null,
+        "sequence": 2,
+        "total_bytes": 0,
+        "duration_ms": 0
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_next_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "status": "eos",
+        "code": "ok",
+        "transfer_id": null,
+        "sequence": 2,
+        "total_bytes": 0,
+        "duration_ms": 0
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_next_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "status": "eos",
+        "code": "ok",
+        "transfer_id": null,
+        "kind": null,
+        "total_bytes": 0,
+        "duration_ms": 0
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_next_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "status": "eos",
+        "code": "ok",
+        "transfer_id": null,
+        "kind": null,
+        "sequence": 2,
+        "duration_ms": 0
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_next_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "status": "eos",
+        "code": "ok",
+        "transfer_id": null,
+        "kind": null,
+        "sequence": 2,
+        "total_bytes": 0
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_next_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "status": "eos",
+        "code": "ok",
+        "transfer_id": null,
+        "kind": null,
+        "sequence": 2,
+        "total_bytes": 0,
+        "duration_ms": 0,
+        "token": "forbidden"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_stop",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "job_id": "00000000-0000-0000-0000-000000000004"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_stop",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_stop",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "token": "forbidden"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_stop_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "status": "stopped",
+        "code": "ok"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_stop_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "status": "stopped",
+        "code": "ok"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_stop_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "code": "ok"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_stop_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "status": "stopped"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_stop_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "status": "stopped",
+        "code": "ok",
+        "token": "forbidden"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_settings_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "accepted": false,
+        "code": "not-ready",
+        "revision": 1
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_settings_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "code": "not-ready",
+        "revision": 1
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_settings_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "accepted": false,
+        "revision": 1
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_settings_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "accepted": false,
+        "code": "not-ready"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_settings_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "accepted": false,
+        "code": "not-ready",
+        "revision": 1,
+        "token": "forbidden"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_open_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "status": "rejected",
+        "code": "not-ready"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_open_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "status": "rejected",
+        "code": "not-ready"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_open_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "code": "not-ready"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_open_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "status": "rejected"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_open_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "status": "rejected",
+        "code": "not-ready",
+        "token": "forbidden"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_next_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "status": "rejected",
+        "code": "not-ready",
+        "transfer_id": null,
+        "kind": null,
+        "sequence": 0,
+        "total_bytes": 0,
+        "duration_ms": 0
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_next_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "status": "rejected",
+        "code": "not-ready",
+        "transfer_id": null,
+        "kind": null,
+        "sequence": 0,
+        "total_bytes": 0,
+        "duration_ms": 0
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_next_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "code": "not-ready",
+        "transfer_id": null,
+        "kind": null,
+        "sequence": 0,
+        "total_bytes": 0,
+        "duration_ms": 0
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_next_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "status": "rejected",
+        "transfer_id": null,
+        "kind": null,
+        "sequence": 0,
+        "total_bytes": 0,
+        "duration_ms": 0
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_next_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "status": "rejected",
+        "code": "not-ready",
+        "kind": null,
+        "sequence": 0,
+        "total_bytes": 0,
+        "duration_ms": 0
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_next_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "status": "rejected",
+        "code": "not-ready",
+        "transfer_id": null,
+        "sequence": 0,
+        "total_bytes": 0,
+        "duration_ms": 0
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_next_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "status": "rejected",
+        "code": "not-ready",
+        "transfer_id": null,
+        "kind": null,
+        "total_bytes": 0,
+        "duration_ms": 0
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_next_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "status": "rejected",
+        "code": "not-ready",
+        "transfer_id": null,
+        "kind": null,
+        "sequence": 0,
+        "duration_ms": 0
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_next_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "status": "rejected",
+        "code": "not-ready",
+        "transfer_id": null,
+        "kind": null,
+        "sequence": 0,
+        "total_bytes": 0
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_next_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "status": "rejected",
+        "code": "not-ready",
+        "transfer_id": null,
+        "kind": null,
+        "sequence": 0,
+        "total_bytes": 0,
+        "duration_ms": 0,
+        "token": "forbidden"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_stop_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "status": "rejected",
+        "code": "not-ready"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_stop_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "status": "rejected",
+        "code": "not-ready"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_stop_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "code": "not-ready"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_stop_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "status": "rejected"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_stop_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "status": "rejected",
+        "code": "not-ready",
+        "token": "forbidden"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_open",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "configuration": {
+          "video": {
+            "width": 1280,
+            "height": 720,
+            "fps": 15,
+            "profile": "main",
+            "level": "3.1",
+            "max_bit_rate": 2000
+          },
+          "audio": null,
+          "fragment_length_ms": 4000,
+          "i_frame_interval_ms": 1000
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_open",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "configuration": {
+          "video": {
+            "width": 1280,
+            "height": 720,
+            "fps": 15,
+            "profile": "main",
+            "level": "3.1",
+            "max_bit_rate": 2000
+          },
+          "audio": null,
+          "fragment_length_ms": 4000,
+          "i_frame_interval_ms": 1000
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_open",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_open",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "configuration": {
+          "video": {
+            "width": 1280,
+            "height": 720,
+            "fps": 15,
+            "profile": "main",
+            "level": "3.1",
+            "max_bit_rate": 2000
+          },
+          "audio": null,
+          "fragment_length_ms": 4000,
+          "i_frame_interval_ms": 1000
+        },
+        "token": "forbidden"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_settings_update",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "expected_revision": 0,
+        "active": false,
+        "audio_active": true,
+        "configuration": null
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_settings_update",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "active": false,
+        "audio_active": true,
+        "configuration": null
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_settings_update",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "expected_revision": 0,
+        "audio_active": true,
+        "configuration": null
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_settings_update",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "expected_revision": 0,
+        "active": false,
+        "configuration": null
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_settings_update",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "expected_revision": 0,
+        "active": false,
+        "audio_active": true
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_settings_update",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "expected_revision": 0,
+        "active": false,
+        "audio_active": true,
+        "configuration": null,
+        "token": "forbidden"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "revision": 1,
+        "generation": 1,
+        "page_index": 0,
+        "total_pages": 1,
+        "entries": [
+          {
+            "camera_id": "42",
+            "accessory_id": "00000000-0000-0000-0000-000000000004",
+            "username": "02:01:02:03:04:05",
+            "doorbell": true,
+            "audio": null,
+            "recording": {
+              "revision": 1,
+              "enabled": true,
+              "active": false,
+              "audio_active": true,
+              "configuration": {
+                "video": {
+                  "width": 1280,
+                  "height": 720,
+                  "fps": 15,
+                  "profile": "main",
+                  "level": "3.1",
+                  "max_bit_rate": 2000
+                },
+                "audio": {
+                  "sample_rate": 24000,
+                  "bit_rate": 32000,
+                  "channels": 1,
+                  "bitrate_mode": "vbr"
+                },
+                "fragment_length_ms": 4000,
+                "i_frame_interval_ms": 1000
+              }
+            }
+          }
+        ],
+        "media_ready": false
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "generation": 1,
+        "page_index": 0,
+        "total_pages": 1,
+        "entries": [
+          {
+            "camera_id": "42",
+            "accessory_id": "00000000-0000-0000-0000-000000000004",
+            "username": "02:01:02:03:04:05",
+            "doorbell": true,
+            "audio": null,
+            "recording": {
+              "revision": 1,
+              "enabled": true,
+              "active": false,
+              "audio_active": true,
+              "configuration": {
+                "video": {
+                  "width": 1280,
+                  "height": 720,
+                  "fps": 15,
+                  "profile": "main",
+                  "level": "3.1",
+                  "max_bit_rate": 2000
+                },
+                "audio": {
+                  "sample_rate": 24000,
+                  "bit_rate": 32000,
+                  "channels": 1,
+                  "bitrate_mode": "vbr"
+                },
+                "fragment_length_ms": 4000,
+                "i_frame_interval_ms": 1000
+              }
+            }
+          }
+        ],
+        "media_ready": false
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1,
+        "page_index": 0,
+        "total_pages": 1,
+        "entries": [
+          {
+            "camera_id": "42",
+            "accessory_id": "00000000-0000-0000-0000-000000000004",
+            "username": "02:01:02:03:04:05",
+            "doorbell": true,
+            "audio": null,
+            "recording": {
+              "revision": 1,
+              "enabled": true,
+              "active": false,
+              "audio_active": true,
+              "configuration": {
+                "video": {
+                  "width": 1280,
+                  "height": 720,
+                  "fps": 15,
+                  "profile": "main",
+                  "level": "3.1",
+                  "max_bit_rate": 2000
+                },
+                "audio": {
+                  "sample_rate": 24000,
+                  "bit_rate": 32000,
+                  "channels": 1,
+                  "bitrate_mode": "vbr"
+                },
+                "fragment_length_ms": 4000,
+                "i_frame_interval_ms": 1000
+              }
+            }
+          }
+        ],
+        "media_ready": false
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1,
+        "generation": 1,
+        "total_pages": 1,
+        "entries": [
+          {
+            "camera_id": "42",
+            "accessory_id": "00000000-0000-0000-0000-000000000004",
+            "username": "02:01:02:03:04:05",
+            "doorbell": true,
+            "audio": null,
+            "recording": {
+              "revision": 1,
+              "enabled": true,
+              "active": false,
+              "audio_active": true,
+              "configuration": {
+                "video": {
+                  "width": 1280,
+                  "height": 720,
+                  "fps": 15,
+                  "profile": "main",
+                  "level": "3.1",
+                  "max_bit_rate": 2000
+                },
+                "audio": {
+                  "sample_rate": 24000,
+                  "bit_rate": 32000,
+                  "channels": 1,
+                  "bitrate_mode": "vbr"
+                },
+                "fragment_length_ms": 4000,
+                "i_frame_interval_ms": 1000
+              }
+            }
+          }
+        ],
+        "media_ready": false
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1,
+        "generation": 1,
+        "page_index": 0,
+        "entries": [
+          {
+            "camera_id": "42",
+            "accessory_id": "00000000-0000-0000-0000-000000000004",
+            "username": "02:01:02:03:04:05",
+            "doorbell": true,
+            "audio": null,
+            "recording": {
+              "revision": 1,
+              "enabled": true,
+              "active": false,
+              "audio_active": true,
+              "configuration": {
+                "video": {
+                  "width": 1280,
+                  "height": 720,
+                  "fps": 15,
+                  "profile": "main",
+                  "level": "3.1",
+                  "max_bit_rate": 2000
+                },
+                "audio": {
+                  "sample_rate": 24000,
+                  "bit_rate": 32000,
+                  "channels": 1,
+                  "bitrate_mode": "vbr"
+                },
+                "fragment_length_ms": 4000,
+                "i_frame_interval_ms": 1000
+              }
+            }
+          }
+        ],
+        "media_ready": false
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1,
+        "generation": 1,
+        "page_index": 0,
+        "total_pages": 1,
+        "media_ready": false
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1,
+        "generation": 1,
+        "page_index": 0,
+        "total_pages": 1,
+        "entries": [
+          {
+            "camera_id": "42",
+            "accessory_id": "00000000-0000-0000-0000-000000000004",
+            "username": "02:01:02:03:04:05",
+            "doorbell": true,
+            "audio": null,
+            "recording": {
+              "revision": 1,
+              "enabled": true,
+              "active": false,
+              "audio_active": true,
+              "configuration": {
+                "video": {
+                  "width": 1280,
+                  "height": 720,
+                  "fps": 15,
+                  "profile": "main",
+                  "level": "3.1",
+                  "max_bit_rate": 2000
+                },
+                "audio": {
+                  "sample_rate": 24000,
+                  "bit_rate": 32000,
+                  "channels": 1,
+                  "bitrate_mode": "vbr"
+                },
+                "fragment_length_ms": 4000,
+                "i_frame_interval_ms": 1000
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1,
+        "generation": 1,
+        "page_index": 0,
+        "total_pages": 1,
+        "entries": [
+          {
+            "camera_id": "42",
+            "accessory_id": "00000000-0000-0000-0000-000000000004",
+            "username": "02:01:02:03:04:05",
+            "doorbell": true,
+            "audio": null,
+            "recording": {
+              "revision": 1,
+              "enabled": true,
+              "active": false,
+              "audio_active": true,
+              "configuration": {
+                "video": {
+                  "width": 1280,
+                  "height": 720,
+                  "fps": 15,
+                  "profile": "main",
+                  "level": "3.1",
+                  "max_bit_rate": 2000
+                },
+                "audio": {
+                  "sample_rate": 24000,
+                  "bit_rate": 32000,
+                  "channels": 1,
+                  "bitrate_mode": "vbr"
+                },
+                "fragment_length_ms": 4000,
+                "i_frame_interval_ms": 1000
+              }
+            }
+          }
+        ],
+        "media_ready": false,
+        "token": "forbidden"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_open",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "configuration": {
+          "video": {
+            "width": 1280,
+            "height": 720,
+            "fps": 15,
+            "profile": "main",
+            "level": "3.1",
+            "max_bit_rate": 2000
+          },
+          "audio": {
+            "sample_rate": 24000,
+            "bit_rate": 32000,
+            "channels": 1,
+            "bitrate_mode": "vbr"
+          },
+          "fragment_length_ms": 2000,
+          "i_frame_interval_ms": 1000
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_open",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "configuration": {
+          "video": {
+            "width": 1280,
+            "height": 720,
+            "fps": 15,
+            "profile": "main",
+            "level": "3.1",
+            "max_bit_rate": 2000
+          },
+          "audio": {
+            "sample_rate": 24000,
+            "bit_rate": 32000,
+            "channels": 1,
+            "bitrate_mode": "vbr"
+          },
+          "fragment_length_ms": 4000,
+          "i_frame_interval_ms": 0
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_open",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "configuration": {
+          "video": {
+            "width": 1280,
+            "height": 720,
+            "fps": 15,
+            "profile": "main",
+            "level": "3.1",
+            "max_bit_rate": 2000
+          },
+          "audio": {
+            "sample_rate": 24000,
+            "bit_rate": 32000,
+            "channels": 1,
+            "bitrate_mode": "vbr"
+          },
+          "fragment_length_ms": 4000,
+          "i_frame_interval_ms": 66
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_open",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "configuration": {
+          "video": {
+            "width": 1280,
+            "height": 720,
+            "fps": 15,
+            "profile": "main",
+            "level": "3.1",
+            "max_bit_rate": 2000
+          },
+          "audio": {
+            "sample_rate": 8000,
+            "bit_rate": 32000,
+            "channels": 1,
+            "bitrate_mode": "vbr"
+          },
+          "fragment_length_ms": 4000,
+          "i_frame_interval_ms": 1000
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_open",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "configuration": {
+          "video": {
+            "width": 1280,
+            "height": 720,
+            "fps": 15,
+            "profile": "main",
+            "level": "3.1",
+            "max_bit_rate": 2000
+          },
+          "audio": {
+            "sample_rate": 24000,
+            "bit_rate": 32,
+            "channels": 1,
+            "bitrate_mode": "vbr"
+          },
+          "fragment_length_ms": 4000,
+          "i_frame_interval_ms": 1000
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_open",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "configuration": {
+          "video": {
+            "width": 1280,
+            "height": 720,
+            "fps": 15,
+            "profile": "main",
+            "level": "3.1",
+            "max_bit_rate": 2000
+          },
+          "audio": {
+            "sample_rate": 24000,
+            "bit_rate": 32000,
+            "channels": 2,
+            "bitrate_mode": "vbr"
+          },
+          "fragment_length_ms": 4000,
+          "i_frame_interval_ms": 1000
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_open",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "configuration": {
+          "video": {
+            "width": 1280,
+            "height": 720,
+            "fps": 15,
+            "profile": "main",
+            "level": "3.1",
+            "max_bit_rate": 2000
+          },
+          "audio": {
+            "sample_rate": 24000,
+            "bit_rate": 32000,
+            "channels": 1,
+            "bitrate_mode": "cbr"
+          },
+          "fragment_length_ms": 4000,
+          "i_frame_interval_ms": 1000
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_open",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "configuration": {
+          "video": {
+            "width": 1279,
+            "height": 720,
+            "fps": 15,
+            "profile": "main",
+            "level": "3.1",
+            "max_bit_rate": 2000
+          },
+          "audio": {
+            "sample_rate": 24000,
+            "bit_rate": 32000,
+            "channels": 1,
+            "bitrate_mode": "vbr"
+          },
+          "fragment_length_ms": 4000,
+          "i_frame_interval_ms": 1000
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_open",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "configuration": {
+          "video": {
+            "width": 1280,
+            "height": 721,
+            "fps": 15,
+            "profile": "main",
+            "level": "3.1",
+            "max_bit_rate": 2000
+          },
+          "audio": {
+            "sample_rate": 24000,
+            "bit_rate": 32000,
+            "channels": 1,
+            "bitrate_mode": "vbr"
+          },
+          "fragment_length_ms": 4000,
+          "i_frame_interval_ms": 1000
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_open",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "configuration": {
+          "video": {
+            "width": 1280,
+            "height": 720,
+            "fps": 31,
+            "profile": "main",
+            "level": "3.1",
+            "max_bit_rate": 2000
+          },
+          "audio": {
+            "sample_rate": 24000,
+            "bit_rate": 32000,
+            "channels": 1,
+            "bitrate_mode": "vbr"
+          },
+          "fragment_length_ms": 4000,
+          "i_frame_interval_ms": 1000
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_open",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "configuration": {
+          "video": {
+            "width": 1280,
+            "height": 720,
+            "fps": 15,
+            "profile": "main",
+            "level": "3.1",
+            "max_bit_rate": 20001
+          },
+          "audio": {
+            "sample_rate": 24000,
+            "bit_rate": 32000,
+            "channels": 1,
+            "bitrate_mode": "vbr"
+          },
+          "fragment_length_ms": 4000,
+          "i_frame_interval_ms": 1000
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_next_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "status": "ready",
+        "code": "ok",
+        "transfer_id": null,
+        "kind": "init",
+        "sequence": 0,
+        "total_bytes": 1024,
+        "duration_ms": 0
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_next_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "status": "ready",
+        "code": "not-ready",
+        "transfer_id": "00000000-0000-0000-0000-000000000005",
+        "kind": "init",
+        "sequence": 0,
+        "total_bytes": 1024,
+        "duration_ms": 0
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_next_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "status": "ready",
+        "code": "ok",
+        "transfer_id": "00000000-0000-0000-0000-000000000005",
+        "kind": "init",
+        "sequence": 0,
+        "total_bytes": 1048577,
+        "duration_ms": 0
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_next_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "status": "ready",
+        "code": "ok",
+        "transfer_id": "00000000-0000-0000-0000-000000000005",
+        "kind": "init",
+        "sequence": 0,
+        "total_bytes": 1024,
+        "duration_ms": 1
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_next_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "status": "ready",
+        "code": "ok",
+        "transfer_id": "00000000-0000-0000-0000-000000000005",
+        "kind": "init",
+        "sequence": 1,
+        "total_bytes": 1024,
+        "duration_ms": 0
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_next_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "status": "ready",
+        "code": "ok",
+        "transfer_id": "00000000-0000-0000-0000-000000000005",
+        "kind": "fragment",
+        "sequence": 0,
+        "total_bytes": 2048,
+        "duration_ms": 2000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_next_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "status": "ready",
+        "code": "ok",
+        "transfer_id": "00000000-0000-0000-0000-000000000005",
+        "kind": "fragment",
+        "sequence": 1,
+        "total_bytes": 2048,
+        "duration_ms": 0
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_next_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "status": "ready",
+        "code": "ok",
+        "transfer_id": "00000000-0000-0000-0000-000000000005",
+        "kind": "fragment",
+        "sequence": 1,
+        "total_bytes": 8388609,
+        "duration_ms": 2000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_next_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "status": "eos",
+        "code": "ok",
+        "transfer_id": "00000000-0000-0000-0000-000000000005",
+        "kind": null,
+        "sequence": 2,
+        "total_bytes": 0,
+        "duration_ms": 0
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_next_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "status": "eos",
+        "code": "ok",
+        "transfer_id": null,
+        "kind": null,
+        "sequence": 2,
+        "total_bytes": 1,
+        "duration_ms": 0
+      }
+    },
+    {
+      "v": 1,
+      "kind": "recording_next_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "status": "eos",
+        "code": "unavailable",
+        "transfer_id": null,
+        "kind": null,
+        "sequence": 2,
+        "total_bytes": 0,
+        "duration_ms": 0
       }
     }
   ],

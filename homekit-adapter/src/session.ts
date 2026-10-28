@@ -4,7 +4,7 @@ import {
   BULK_LIMITS, MAX_INVENTORY_DEVICES, MAX_INVENTORY_PAGE, ProtocolError, REPLY_KINDS,
   validateDirection, validateReply, type AccountScope, type CameraPolicy, type Envelope,
   type JsonObject, type Kind, type MediaScope, type VideoConfiguration, type VideoPrepare, type VideoEndpoint,
-  type AudioConfiguration, type AudioSettings,
+  type AudioConfiguration, type AudioSettings, type RecordingConfiguration,
 } from "./protocol.js";
 
 export const MAX_SESSION_REQUESTS = 16;
@@ -14,6 +14,9 @@ export const SNAPSHOT_TIMEOUT_MS = 20_000;
 export const SNAPSHOT_REPLY_TIMEOUT_MS = 17_000;
 export type SnapshotReason = "periodic" | "event" | "explicit" | "unknown";
 const MAX_LIVE_SESSIONS = 8;
+const MAX_RECORDINGS = 2;
+const RECORDING_CLEANUP_MS = 60_000;
+export const RECORDING_LIFETIME_MS = 180_000;
 
 export interface NativeCamera {
   scope: MediaScope;
@@ -46,6 +49,41 @@ interface SnapshotJob {
   resolve: (value: Buffer) => void; reject: (error: Error) => void;
   result: Promise<Buffer>; timer: NodeJS.Timeout; receiver: ReceiveHandle | null; cleanupTimer: NodeJS.Timeout | null;
 }
+export interface NativeRecordingPacket {
+  kind: "init" | "fragment";
+  data: Buffer;
+  sequence: number;
+  durationMs: number;
+}
+interface RecordingPull {
+  sequence: number;
+  transferId: string | null;
+  kind: "init" | "fragment" | null;
+  totalBytes: number;
+  durationMs: number;
+  receiver: ReceiveHandle | null;
+  chunks: Buffer[];
+  length: number;
+  result: Promise<NativeRecordingPacket | null>;
+  resolve: (packet: NativeRecordingPacket | null) => void;
+  reject: (error: Error) => void;
+}
+interface RecordingJob {
+  scope: MediaScope;
+  configuration: RecordingConfiguration;
+  sequence: number;
+  retired: boolean;
+  finished: boolean;
+  cleanupProven: boolean;
+  pull: RecordingPull | null;
+  stopping: Promise<void> | null;
+  failure: Promise<never>;
+  reject: (error: Error) => void;
+  signal: AbortSignal | undefined;
+  abort: (() => void) | null;
+  cleanupTimer: NodeJS.Timeout | null;
+  timer: NodeJS.Timeout;
+}
 const sourceKey = (scope: MediaScope): string => JSON.stringify([
   scope.profile_id, scope.account_generation, scope.camera_id, scope.device_generation,
 ]);
@@ -62,6 +100,7 @@ export class AdapterSession {
   private readonly live = new Map<string, Resource>();
   private readonly speakers = new Map<string, Resource>();
   private readonly snapshots = new Map<string, SnapshotJob>();
+  private readonly recordings = new Map<string, RecordingJob>();
   private readonly policyChanges = new Set<string>();
   private readonly policySynchronization = new Map<string, Promise<void>>();
   private readonly videos = new Map<string, VideoResource>();
@@ -89,6 +128,7 @@ export class AdapterSession {
 
   get isClosed(): boolean { return this.closed; }
   get pendingRequests(): number { return this.pending.size; }
+  get activeRecordings(): number {return [...this.recordings.values()].filter(job=>!job.finished&&(!job.retired||!job.cleanupProven)).length;}
   get inventoryComplete(): boolean { return this.complete; }
   get inventoryRevision(): number { return this.revision; }
   get accountScope(): AccountScope | null { return this.account === null ? null : {...this.account}; }
@@ -139,8 +179,9 @@ export class AdapterSession {
     }
     if (message.kind.startsWith("transfer_")) {
       if (!this.options.bulk) throw this.fail(new ProtocolError("bulk-unavailable"));
-      if (message.kind === "transfer_open") this.authorizeSnapshot(message);
-      return this.options.bulk.handleControl(message);
+      if (message.kind === "transfer_open" && message.payload.kind === "snapshot") this.authorizeSnapshot(message);
+      try{return await this.options.bulk.handleControl(message);}
+      catch{throw this.fail(new ProtocolError("bulk-protocol-failed"));}
     }
     if (!pending) return false;
     if (message.kind === "error") {
@@ -215,6 +256,10 @@ export class AdapterSession {
           const current = this.entries.get(video.scope.camera_id);
           if (!current || !sameScope(current.camera.scope, video.scope)) this.retireVideo(id, video);
         }
+        if (this.complete) for(const [id,job] of this.recordings) {
+          const current=this.entries.get(job.scope.camera_id);
+          if(!current||!sameScope(current.camera.scope,job.scope))void this.stopRecording(id).catch(()=>{});
+        }
         this.options.onInventory?.();
         return;
       }
@@ -233,7 +278,7 @@ export class AdapterSession {
     const message = structuredClone(validateDirection({v: 1, kind, boot_id: this.bootId, request_id: randomUUID(), payload}, "hap"));
     return new Promise<Envelope>((resolve, reject) => {
       const timer = setTimeout(() => {
-        if (kind === "snapshot_request") {
+        if (kind === "snapshot_request" || kind === "recording_next" || kind === "recording_open") {
           // A cancelled image can still have a READY already queued by the
           // parent. Keep only this bounded correlation for cleanup admission.
           item.timer = setTimeout(() => this.retirePending(message.request_id), 60_000); item.timer.unref();
@@ -307,6 +352,236 @@ export class AdapterSession {
     await this.refresh(); this.entry(cameraId, identity);
     if (reply.payload.accepted !== true || reply.payload.code !== "ok") throw new ProtocolError("audio-settings-rejected");
     return reply.payload.revision as number;
+  }
+
+  async updateRecordingSettings(scope: MediaScope, expectedRevision: number, active: boolean, audioActive: boolean, configuration: RecordingConfiguration | null): Promise<JsonObject> {
+    const current = this.entry(scope.camera_id, sourceKey(scope));
+    if (!sameScope(current.camera.scope, scope))
+      throw new ProtocolError("stale-camera");
+    const payload = { scope: { ...scope }, expected_revision: expectedRevision, active, audio_active: audioActive,
+      configuration: structuredClone(configuration) };
+    validateDirection({ v: 1, kind: "recording_settings_update", boot_id: this.bootId, request_id: randomUUID(), payload }, "hap");
+    for (const [id, job] of this.recordings)
+      if (sameScope(job.scope, scope) &&
+        (!active || configuration === null || !audioActive && job.configuration.audio !== null))
+        void this.stopRecording(id).catch(() => { });
+    const reply = await this.request("recording_settings_update", payload);
+    await this.refresh();
+    this.entry(scope.camera_id, sourceKey(scope));
+    if (reply.payload.accepted !== true || reply.payload.code !== "ok")
+      throw new ProtocolError("recording-settings-rejected");
+    return reply.payload;
+  }
+
+  async openRecording(scope: MediaScope, configuration: RecordingConfiguration, signal?: AbortSignal): Promise<NativeRecording> {
+    const current = this.entry(scope.camera_id, sourceKey(scope), "recording");
+    if (!sameScope(current.camera.scope, scope))
+      throw new ProtocolError("recording-retired");
+    if (configuration.audio !== null)
+      this.entry(scope.camera_id, sourceKey(scope), "recording_audio");
+    if (signal?.aborted)
+      throw new ProtocolError("recording-cancelled");
+    if (!this.options.bulk)
+      throw new ProtocolError("bulk-unavailable");
+    if (this.activeRecordings >= MAX_RECORDINGS || this.recordings.size >= MAX_SESSION_REQUESTS ||
+      [...this.recordings.values()].some(job => !job.finished && (!job.retired || !job.cleanupProven) && sameScope(job.scope, scope)))
+      throw new ProtocolError("recording-capacity");
+    const jobId = randomUUID(), payload = { scope: { ...scope }, job_id: jobId, configuration: structuredClone(configuration) };
+    validateDirection({ v: 1, kind: "recording_open", boot_id: this.bootId, request_id: randomUUID(), payload }, "hap");
+    let reject!: (error: Error) => void;
+    const failure = new Promise<never>((_, no) => { reject = no; });
+    void failure.catch(() => { });
+    const job: RecordingJob = { scope: { ...scope }, configuration: structuredClone(configuration), sequence: 0, retired: false,
+      finished: false, cleanupProven: false, pull: null, stopping: null, failure, reject, signal, abort: null, cleanupTimer: null,
+      timer: setTimeout(() => { void this.stopRecording(jobId).catch(() => { }); }, RECORDING_LIFETIME_MS) };
+    this.recordings.set(jobId, job);
+    if (signal) {
+      job.abort = () => { void this.stopRecording(jobId).catch(() => { }); };
+      signal.addEventListener("abort", job.abort, { once: true });
+    }
+    try {
+      const reply = await Promise.race([this.request("recording_open", payload), failure]);
+      this.recording(jobId);
+      if (reply.payload.status !== "accepted" || reply.payload.code !== "ok")
+        throw new ProtocolError("recording-open-rejected");
+      return new NativeRecording(this, jobId, scope);
+    }
+    catch (error) {
+      await this.stopRecording(jobId);
+      throw error;
+    }
+  }
+  private recording(id: string): RecordingJob {
+    const job = this.recordings.get(id);
+    if (!job || job.retired)
+      throw new ProtocolError("recording-retired");
+    const current = this.entry(job.scope.camera_id, sourceKey(job.scope), "recording");
+    if (!sameScope(current.camera.scope, job.scope))
+      throw new ProtocolError("recording-retired");
+    if (job.configuration.audio !== null)
+      this.entry(job.scope.camera_id, sourceKey(job.scope), "recording_audio");
+    return job;
+  }
+  recordingCurrent(id: string): boolean {
+    try {
+      this.recording(id);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  async nextRecording(id: string, signal?: AbortSignal): Promise<NativeRecordingPacket | null> {
+    const job = this.recording(id);
+    if (signal?.aborted) {
+      await this.stopRecording(id);
+      throw new ProtocolError("recording-cancelled");
+    }
+    if (job.finished)
+      return null;
+    if (job.pull)
+      throw new ProtocolError("recording-next-busy");
+    let resolve!: (packet: NativeRecordingPacket | null) => void, reject!: (error: Error) => void;
+    const result = new Promise<NativeRecordingPacket | null>((ok, no) => { resolve = ok; reject = no; });
+    void result.catch(() => { });
+    const pull: RecordingPull = { sequence: job.sequence, transferId: null, kind: null, totalBytes: 0, durationMs: 0,
+      receiver: null, chunks: [], length: 0, result, resolve, reject };
+    job.pull = pull;
+    const abort = (): void => { void this.stopRecording(id).catch(() => { }); };
+    signal?.addEventListener("abort", abort, { once: true });
+    const request = this.request("recording_next", { scope: job.scope, job_id: id, sequence: pull.sequence }, message => { if (message.payload.status === "ready")
+      this.authorizeRecording(id, job, pull, message); });
+    void request.then(reply => {
+      if (reply.payload.status === "eos") {
+        job.finished = true;
+        pull.resolve(null);
+      }
+      else if (reply.payload.status !== "ready") {
+        pull.reject(new ProtocolError("recording-next-rejected"));
+      }
+    }).catch(error => pull.reject(error as Error));
+    try {
+      const packet = await result;
+      this.recording(id);
+      if (signal?.aborted)
+        throw new ProtocolError("recording-cancelled");
+      if (packet !== null)
+        job.sequence += 1;
+      if (job.pull === pull)
+        job.pull = null;
+      return packet;
+    }
+    catch (error) {
+      await this.stopRecording(id);
+      throw error;
+    }
+    finally {
+      signal?.removeEventListener("abort", abort);
+    }
+  }
+  private authorizeRecording(id: string, job: RecordingJob, pull: RecordingPull, message: Envelope): void {
+    const payload = message.payload;
+    if (this.recordings.get(id) !== job || job.pull !== pull || pull.transferId !== null || !this.options.bulk)
+      throw new ProtocolError("unsolicited-recording-ready");
+    pull.transferId = payload.transfer_id as string;
+    pull.kind = payload.kind as "init" | "fragment";
+    pull.totalBytes = payload.total_bytes as number;
+    pull.durationMs = payload.duration_ms as number;
+    const valid = (): boolean => !job.retired && job.pull === pull && this.recordingCurrent(id);
+    if (!valid() && !job.retired)
+      this.retireRecording(id, job, new ProtocolError("recording-retired"));
+    const receiver = this.options.bulk.authorizeReceive({ scope: job.scope, operationId: id, transferId: pull.transferId,
+      kind: pull.kind === "init" ? "recording_init" : "recording_fragment", totalBytes: pull.totalBytes,
+      valid: job.retired ? () => true : valid,
+      sink: async (chunk) => {
+        if (!valid())
+          throw new ProtocolError("recording-retired");
+        pull.length += chunk.length;
+        if (pull.length > pull.totalBytes)
+          throw new ProtocolError("recording-capacity");
+        pull.chunks.push(Buffer.from(chunk));
+      },
+      onClose: async (code) => { if (code !== "ok") {
+        pull.chunks.length = 0;
+        pull.length = 0;
+        pull.reject(new ProtocolError("recording-transfer-failed"));
+      } } });
+    pull.receiver = receiver;
+    if (job.retired)
+      void receiver.cancel("invalidated").catch(() => { this.fail(new ProtocolError("recording-cleanup-failed")); });
+    void receiver.wait().then(() => {
+      if (!valid())
+        throw new ProtocolError("recording-retired");
+      const data = Buffer.concat(pull.chunks, pull.length);
+      pull.chunks.length = 0;
+      pull.length = 0;
+      pull.resolve({ kind: pull.kind!, sequence: pull.sequence, durationMs: pull.durationMs, data });
+    }).catch(() => pull.reject(new ProtocolError("recording-transfer-failed"))).finally(() => { pull.chunks.length = 0; pull.length = 0; });
+  }
+  private retireRecording(id: string, job: RecordingJob, error: Error): void {
+    if (job.retired)
+      return;
+    job.retired = true;
+    job.reject(error);
+    clearTimeout(job.timer);
+    for (const [requestId, pending] of this.pending)
+      if (pending.request.payload.job_id === id &&
+        (pending.request.kind === "recording_open" || pending.request.kind === "recording_next")) {
+        clearTimeout(pending.timer);
+        pending.reject(error);
+        pending.timer = setTimeout(() => this.retirePending(requestId), RECORDING_CLEANUP_MS);
+        pending.timer.unref();
+      }
+    if (job.signal && job.abort)
+      job.signal.removeEventListener("abort", job.abort);
+    job.abort = null;
+    job.signal = undefined;
+    if (job.pull) {
+      const pull = job.pull;
+      pull.reject(error);
+      pull.chunks.length = 0;
+      pull.length = 0;
+      // Deny-only late READY correlation retains identity/counters, never media
+      // through a settled promise or its resolver closures.
+      pull.result = Promise.resolve(null);
+      pull.resolve = () => { };
+      pull.reject = () => { };
+    }
+    job.cleanupTimer = setTimeout(() => this.finishRecording(id, job), RECORDING_CLEANUP_MS);
+    job.cleanupTimer.unref();
+  }
+  private finishRecording(id: string, job: RecordingJob): void {
+    if (this.recordings.get(id) !== job)
+      return;
+    clearTimeout(job.timer);
+    if (job.cleanupTimer)
+      clearTimeout(job.cleanupTimer);
+    if (job.signal && job.abort)
+      job.signal.removeEventListener("abort", job.abort);
+    job.pull = null;
+    this.recordings.delete(id);
+  }
+  stopRecording(id: string): Promise<void> {
+    const job = this.recordings.get(id);
+    if (!job)
+      return Promise.resolve();
+    if (job.stopping)
+      return job.stopping;
+    this.retireRecording(id, job, new ProtocolError("recording-retired"));
+    const receiver = job.pull?.receiver;
+    if (this.closed) {
+      if (receiver)
+        void receiver.cancel("invalidated").catch(() => { });
+      return Promise.resolve();
+    }
+    job.stopping = Promise.all([
+      this.request("recording_stop", { scope: job.scope, job_id: id }, undefined, Math.min(this.timeout, 20000)).then(reply => {
+        if (reply.payload.status !== "stopped" || reply.payload.code !== "ok")
+          throw new ProtocolError("recording-stop-rejected");
+      }),
+      receiver?.cancel("invalidated") ?? Promise.resolve(),
+    ]).then(() => { job.cleanupProven = true; }).catch(error => { throw this.fail(error instanceof ProtocolError ? error : new ProtocolError("recording-cleanup-failed")); });
+    void job.stopping.catch(() => { });
+    return job.stopping;
   }
 
   async prepareVideo(cameraId: string, identity: string, sessionId: string, options: VideoPrepare, ended: () => void): Promise<VideoDelegate> {
@@ -528,6 +803,7 @@ export class AdapterSession {
       this.speakers.delete(id); void this.request("talkback_request", {scope: resource.scope, session_id: id, action: "stop"}).catch(() => {});
     }
     for (const [id, job] of this.snapshots) if (sourceKey(job.scope) === sourceKey(scope)) this.cancelSnapshot(id, "resource-retired");
+    for(const [id,job] of this.recordings)if(sourceKey(job.scope)===sourceKey(scope))void this.stopRecording(id).catch(()=>{});
   }
   private invalidate(): void {
     this.complete = false;
@@ -549,6 +825,7 @@ export class AdapterSession {
     this.videos.clear(); this.policySynchronization.clear();
     for (const [id] of this.snapshots) this.cancelSnapshot(id, "session-closed");
     for (const [id, job] of this.snapshots) this.finishSnapshot(id, job);
+    for(const [id,job] of this.recordings){this.retireRecording(id,job,new ProtocolError("session-closed"));this.finishRecording(id,job);}
     this.entries.clear(); this.live.clear(); this.speakers.clear(); this.policyChanges.clear();
     void this.options.bulk?.close("cancelled").catch(() => this.options.onFailure?.(new ProtocolError("bulk-cleanup-failed")));
   }
@@ -562,6 +839,12 @@ export class CameraDelegate {
   ensurePolicy(policy: CameraPolicy): Promise<void> { return this.session.ensurePolicy(this.cameraId, this.identity, policy); }
   updateAudioSettings(expectedRevision: number, settings: AudioSettings): Promise<number> {
     return this.session.updateAudioSettings(this.cameraId, this.identity, expectedRevision, settings);
+  }
+  async updateRecordingSettings(expectedRevision: number, active: boolean, audioActive: boolean, configuration: RecordingConfiguration | null): Promise<number> {
+    return (await this.session.updateRecordingSettings(this.info.scope, expectedRevision, active, audioActive, configuration)).revision as number;
+  }
+  openRecording(configuration: RecordingConfiguration, signal?: AbortSignal): Promise<NativeRecording> {
+    return this.session.openRecording(this.info.scope, configuration, signal);
   }
   prepareVideo(sessionId: string, options: VideoPrepare, ended: () => void): Promise<VideoDelegate> {
     return this.session.prepareVideo(this.cameraId, this.identity, sessionId, options, ended);
@@ -595,4 +878,13 @@ export class TalkbackDelegate {
   constructor(private readonly session: AdapterSession, readonly sessionId: string) {}
   writePcm(pcm: Buffer): Promise<void> { return this.session.sendPcm(this.sessionId, pcm); }
   close(): Promise<void> { return this.session.stopTalkback(this.sessionId); }
+}
+
+export class NativeRecording {
+  private readonly frozenScope: MediaScope;
+  constructor(private readonly session: AdapterSession, readonly jobId: string, scope: MediaScope) { this.frozenScope = { ...scope }; }
+  get scope(): MediaScope { return { ...this.frozenScope }; }
+  isCurrent(): boolean { return this.session.recordingCurrent(this.jobId); }
+  next(signal?: AbortSignal): Promise<NativeRecordingPacket | null> { return this.session.nextRecording(this.jobId, signal); }
+  stop(): Promise<void> { return this.session.stopRecording(this.jobId); }
 }

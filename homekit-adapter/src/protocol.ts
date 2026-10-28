@@ -5,9 +5,11 @@ export const MAX_FRAME_BYTES = 65_536;
 export const MAX_JSON_DEPTH = 32;
 export const MAX_FRAMES_PER_CHUNK = 256;
 export const FEATURE = "classic-camera-control-v1";
-export const FEATURES = [FEATURE, "bulk-cancel-v1"] as const;
+export const FEATURES = [FEATURE, "bulk-cancel-v1", "hksv-recording-v1"] as const;
 
 export const KINDS = [
+  "recording_settings_update", "recording_settings_result", "recording_open", "recording_open_result",
+  "recording_next", "recording_next_result", "recording_stop", "recording_stop_result",
   "audio_settings_update", "audio_settings_result",
   "video_prepare", "video_prepare_result", "video_start", "video_start_result", "video_reconfigure", "video_reconfigure_result", "video_stop", "video_stop_result", "video_ended",
   "accessory_config", "accessory_config_ack", "event_sync", "event_sync_ack", "event_state", "camera_event",
@@ -94,6 +96,16 @@ export interface AudioEndpoint {port: number; ssrc: number; key: string; salt: s
 export interface VideoConfiguration {
   width: number; height: number; fps: number; profile: "baseline" | "main" | "high"; level: "3.1" | "3.2" | "4.0";
   max_bit_rate: number; payload_type: number; rtcp_interval: number; mtu: number;
+}
+export interface RecordingConfiguration {
+  video: Pick<VideoConfiguration, "width" | "height" | "fps" | "profile" | "level" | "max_bit_rate">;
+  audio: {sample_rate: 16000 | 24000 | 48000; bit_rate: number; channels: 1; bitrate_mode: "vbr"} | null;
+  fragment_length_ms: 4000;
+  i_frame_interval_ms: number;
+}
+export interface AccessoryRecording {
+  revision: number; enabled: boolean; active: boolean; audio_active: boolean;
+  configuration: RecordingConfiguration | null;
 }
 export interface VideoPrepare {
   source_address: string; target_address: string; address_version: "ipv4" | "ipv6"; target_port: number; key: string; salt: string;
@@ -204,7 +216,31 @@ const audioSettingsFields = {microphone_muted:bool,speaker_muted:bool,microphone
 const audioSettings = object(audioSettingsFields);
 const accessoryAudioFields = object({...audioSettingsFields,microphone:bool,speaker:bool,revision});
 const accessoryAudio: Check = value => accessoryAudioFields(value) && record(value) && (!value.speaker || value.microphone === true);
-const accessoryEntry = object({camera_id:display(128),accessory_id:uuid,username,doorbell:bool,audio:nullable(accessoryAudio)});
+const recordingVideoFields = object({width:value=>integer(2,1920)(value) && (value as number)%2===0,
+  height:value=>integer(2,1080)(value) && (value as number)%2===0,fps:integer(1,30),
+  profile:choice("baseline","main","high"),level:choice("3.1","3.2","4.0"),max_bit_rate:integer(1,20000)});
+const recordingVideo: Check = value => {
+  if(!recordingVideoFields(value)||!record(value))return false;
+  const limits:{[key:string]:readonly[number,number]}={"3.1":[3600,108000],"3.2":[5120,216000],"4.0":[8192,245760]};
+  const [frame,rate]=limits[value.level as string]!;
+  const blocks=Math.ceil((value.width as number)/16)*Math.ceil((value.height as number)/16);
+  return blocks<=frame && blocks*(value.fps as number)<=rate &&
+    (value.level!=="3.1" || (value.max_bit_rate as number)<=(value.profile==="high"?17500:14000));
+};
+const recordingAudio = object({sample_rate:value=>[16000,24000,48000].includes(value as number),
+  bit_rate:integer(16000,128000),channels:integer(1,1),bitrate_mode:choice("vbr")});
+const recordingConfigurationFields = object({video:recordingVideo,audio:nullable(recordingAudio),
+  fragment_length_ms:integer(4000,4000),i_frame_interval_ms:integer(1,4000)});
+export const recordingConfiguration: Check = value => recordingConfigurationFields(value) && record(value) &&
+  (value.i_frame_interval_ms as number)*((value.video as JsonObject).fps as number)>=1000;
+const accessoryRecording = object({revision,enabled:bool,active:bool,audio_active:bool,configuration:nullable(recordingConfiguration)});
+const accessoryEntryFields = object({camera_id:display(128),accessory_id:uuid,username,doorbell:bool,audio:nullable(accessoryAudio)});
+const accessoryEntry: Check = value => {
+  if(!record(value))return false;
+  if(!Object.hasOwn(value,"recording"))return accessoryEntryFields(value);
+  const {recording,...entry}=value;
+  return accessoryRecording(recording)&&accessoryEntryFields(entry);
+};
 const accessoryFields = object({scope:nullable(account),revision,generation:positive,page_index:integer(0,7),total_pages:integer(1,8),
   entries:value=>Array.isArray(value)&&value.length<=32&&value.every(accessoryEntry),media_ready:bool});
 const accessoryConfig: Check = value => accessoryFields(value) && record(value) &&
@@ -229,7 +265,27 @@ const videoResult: Check = value => videoResultFields(value) && record(value) &&
 const videoPrepareResultFields = object({...resource,status:choice("accepted","rejected"),code,endpoint:nullable(endpoint)});
 const videoPrepareResult: Check = value => videoPrepareResultFields(value) && record(value) &&
   ((value.status === "accepted") === (value.code === "ok")) && ((value.status === "accepted") === (value.endpoint !== null));
+const recordingJob={scope,job_id:uuid};
+const recordingNextFields=object({...recordingJob,status:choice("ready","eos","rejected"),code,
+  transfer_id:nullable(uuid),kind:nullable(choice("init","fragment")),sequence:integer(0,0xffffffff),
+  total_bytes:integer(0,BULK_LIMITS.recording_fragment),duration_ms:integer(0,4000)});
+const recordingNextResult: Check = value => {
+  if(!recordingNextFields(value)||!record(value))return false;
+  if(value.status!=="ready")return (value.status==="eos")===(value.code==="ok") &&
+    value.transfer_id===null&&value.kind===null&&value.total_bytes===0&&value.duration_ms===0;
+  if(value.code!=="ok"||value.transfer_id===null||value.kind===null)return false;
+  if(value.kind==="init")return value.sequence===0&&(value.total_bytes as number)>=1&&
+    (value.total_bytes as number)<=BULK_LIMITS.recording_init&&value.duration_ms===0;
+  return (value.sequence as number)>=1&&(value.total_bytes as number)>=1&&(value.duration_ms as number)>=1;
+};
 const payloadValidators: Record<Kind, Check> = {
+  recording_settings_update:object({scope,expected_revision:revision,active:bool,audio_active:bool,configuration:nullable(recordingConfiguration)}),
+  recording_settings_result:value=>object({scope,accepted:bool,code,revision})(value)&&record(value)&&((value.accepted===true)===(value.code==="ok")),
+  recording_open:object({...recordingJob,configuration:recordingConfiguration}),
+  recording_open_result:value=>object({...recordingJob,status:choice("accepted","rejected"),code})(value)&&record(value)&&((value.status==="accepted")===(value.code==="ok")),
+  recording_next:object({...recordingJob,sequence:integer(0,0xffffffff)}),recording_next_result:recordingNextResult,
+  recording_stop:object(recordingJob),
+  recording_stop_result:value=>object({...recordingJob,status:choice("stopped","rejected"),code})(value)&&record(value)&&((value.status==="stopped")===(value.code==="ok")),
   audio_settings_update:object({scope,expected_revision:revision,settings:audioSettings}),
   audio_settings_result:value=>object({scope,accepted:bool,code,revision})(value) && record(value) && ((value.accepted===true)===(value.code==="ok")),
   video_prepare:object({...resource,source_address:address,target_address:address,address_version:choice("ipv4","ipv6"),target_port:integer(1,65535),key:secret(16),salt:secret(14),audio:nullable(audioPrepare)}),
@@ -270,8 +326,8 @@ const payloadValidators: Record<Kind, Check> = {
   transfer_fence_ack: object({...transfer, sequence_count: integer(0, 2 ** 32 - 1), sent_bytes: integer(0, 8 * 1024 * 1024), code: choice("cancelled", "invalidated", "timeout")}),
   transfer_result: object({...transfer, status: choice("complete", "cancelled", "rejected"), code}),
 };
-const pythonKinds: readonly Kind[] = ["audio_settings_result", "video_prepare_result", "video_start_result", "video_reconfigure_result", "video_stop_result", "video_ended", "accessory_config", "event_sync_ack", "event_state", "camera_event", "hello", "ping", "shutdown", "inventory_reset", "inventory_page", "camera_status", "policy_ack", "lease_result", "lease_renew_result", "lease_stop_result", "snapshot_result", "talkback_result", "control_result"];
-const hapKinds: readonly Kind[] = ["audio_settings_update", "video_prepare", "video_start", "video_reconfigure", "video_stop", "accessory_config_ack", "event_sync", "hello_ack", "pong", "shutdown_ack", "inventory_request", "policy_update", "lease_request", "lease_renew", "lease_stop", "snapshot_request", "snapshot_cancel", "talkback_request", "control_request"];
+const pythonKinds: readonly Kind[] = ["recording_settings_result", "recording_open_result", "recording_next_result", "recording_stop_result", "audio_settings_result", "video_prepare_result", "video_start_result", "video_reconfigure_result", "video_stop_result", "video_ended", "accessory_config", "event_sync_ack", "event_state", "camera_event", "hello", "ping", "shutdown", "inventory_reset", "inventory_page", "camera_status", "policy_ack", "lease_result", "lease_renew_result", "lease_stop_result", "snapshot_result", "talkback_result", "control_result"];
+const hapKinds: readonly Kind[] = ["recording_settings_update", "recording_open", "recording_next", "recording_stop", "audio_settings_update", "video_prepare", "video_start", "video_reconfigure", "video_stop", "accessory_config_ack", "event_sync", "hello_ack", "pong", "shutdown_ack", "inventory_request", "policy_update", "lease_request", "lease_renew", "lease_stop", "snapshot_request", "snapshot_cancel", "talkback_request", "control_request"];
 export function validateScope(value: unknown): MediaScope {
   if (!scope(value)) throw new ProtocolError("invalid-scope");
   return value as MediaScope;
@@ -298,6 +354,7 @@ export function validateDirection(value: unknown, sender: "python" | "hap"): Env
   return message;
 }
 export const REPLY_KINDS: Partial<Record<Kind, Kind>> = {
+  recording_settings_update:"recording_settings_result",recording_open:"recording_open_result",recording_next:"recording_next_result",recording_stop:"recording_stop_result",
   audio_settings_update:"audio_settings_result",
   video_prepare:"video_prepare_result",video_start:"video_start_result",video_reconfigure:"video_reconfigure_result",video_stop:"video_stop_result",
   accessory_config:"accessory_config_ack", event_sync:"event_sync_ack",
@@ -319,8 +376,9 @@ export function validateReply(requestValue: unknown, replyValue: unknown): Envel
     if (!equal) throw new ProtocolError("invalid-reply-ownership");
   }
   if (request.kind === "transfer_fence" && ["sequence_count", "sent_bytes", "code"].some(key => request.payload[key] !== reply.payload[key])) throw new ProtocolError("invalid-fence-correlation");
-  if (request.kind === "audio_settings_update" && reply.payload.accepted === true &&
+  if (["audio_settings_update","recording_settings_update"].includes(request.kind) && reply.payload.accepted === true &&
       reply.payload.revision !== request.payload.expected_revision && reply.payload.revision !== (request.payload.expected_revision as number) + 1) throw new ProtocolError("invalid-audio-correlation");
+  if (request.kind === "recording_next" && request.payload.sequence !== reply.payload.sequence) throw new ProtocolError("invalid-recording-sequence");
   if (request.kind === "accessory_config" && ["revision","generation","page_index"].some(key=>request.payload[key]!==reply.payload[key])) throw new ProtocolError("invalid-config-correlation");
   if (request.kind === "inventory_request" && (request.payload.cursor !== reply.payload.cursor ||
       (request.payload.revision !== 0 && request.payload.revision !== reply.payload.revision))) {

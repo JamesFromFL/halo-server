@@ -16,7 +16,11 @@ export const IDLE_TIMEOUT_MS = 15_000;
 
 /** Ending closes admission, while already owned cleanup RPCs must still settle. */
 export async function receiveTerminalCleanup(session: AdapterSession, boot: string, message: Envelope): Promise<boolean> {
-  if (message.boot_id !== boot || !["video_stop_result", "lease_stop_result"].includes(message.kind)) return false;
+  // Late READY/OPEN can only match retained admission identities. They must be
+  // consumed to fence the wire and let the parent join its actual source owner.
+  const cleanup = ["video_stop_result", "lease_stop_result", "snapshot_result", "recording_open_result",
+    "recording_next_result", "recording_stop_result"].includes(message.kind) || message.kind.startsWith("transfer_");
+  if (message.boot_id !== boot || !cleanup) return false;
   return session.receive(message);
 }
 

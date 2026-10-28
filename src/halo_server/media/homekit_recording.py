@@ -73,6 +73,9 @@ class RecordingStream:
     def __init__(self, owner, job):
         self._owner, self._job = owner, job
 
+    def is_current(self):
+        return self._owner._valid(self._job)
+
     @property
     def history_ready(self):
         return self._job.history is not None and self._job.history.ready
@@ -426,6 +429,16 @@ class HomeKitRecordingManager:
             job.failure = None
             if self._jobs.get(job.identity) is job:
                 self._jobs.pop(job.identity)
+
+    async def stop(self, boot, scope, job_id):
+        _uuid(boot)
+        _uuid(job_id)
+        job = self._jobs.get(job_id)
+        if job is None:
+            return
+        if job.boot != boot or job.scope != scope:
+            raise HomeKitOperationError("session_conflict")
+        await self._close_job(job)
 
     async def retired(self, boot):
         jobs = [job for job in self._jobs.values() if job.boot == boot]

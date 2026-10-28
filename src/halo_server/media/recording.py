@@ -59,6 +59,7 @@ class RecordingConfiguration:
     video: VideoConfiguration
     audio: RecordingAudioConfiguration | None = None
     fragment_length_ms: int = 4000
+    i_frame_interval_ms: int = 2000
 
     def __post_init__(self):
         if (
@@ -66,6 +67,8 @@ class RecordingConfiguration:
             or (self.audio is not None and not isinstance(self.audio, RecordingAudioConfiguration))
             or type(self.fragment_length_ms) is not int
             or self.fragment_length_ms != 4000
+            or type(self.i_frame_interval_ms) is not int
+            or not math_ceil(Fraction(1000, self.video.fps)) <= self.i_frame_interval_ms <= 4000
         ):
             raise RecordingError("invalid_configuration")
 
@@ -128,6 +131,7 @@ class RecordingWorker:
             "video": asdict(configuration.video),
             "audio": asdict(configuration.audio) if configuration.audio else None,
             "fragment_length_ms": configuration.fragment_length_ms,
+            "i_frame_interval_ms": configuration.i_frame_interval_ms,
             "video_sps": video_sps.hex(),
             "video_pps": video_pps.hex(),
             "clocks": [

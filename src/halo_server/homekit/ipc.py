@@ -15,6 +15,7 @@ from typing import Any
 from halo_server.homekit.text import literal_text
 
 PROTOCOL_VERSION = 1
+FEATURES = ("classic-camera-control-v1", "bulk-cancel-v1", "hksv-recording-v1")
 MAX_CONTROL_BYTES = 65536
 MAX_JSON_DEPTH = 32
 IO_TIMEOUT_SECONDS = 5.0
@@ -344,13 +345,81 @@ def _audio_birth(value):
     return _audio_birth_fields(value) and (not value["speaker"] or value["microphone"])
 
 
-_accessory_entry = _object(
+_recording_video_fields = _object(
+    width=lambda value: _integer(2, 1920)(value) and value % 2 == 0,
+    height=lambda value: _integer(2, 1080)(value) and value % 2 == 0,
+    fps=_integer(1, 30),
+    profile=_enum("baseline", "main", "high"),
+    level=_enum("3.1", "3.2", "4.0"),
+    max_bit_rate=_integer(1, 20000),
+)
+
+
+def _recording_video(value):
+    if not _recording_video_fields(value):
+        return False
+    maximum_frame, maximum_rate = {
+        "3.1": (3600, 108000),
+        "3.2": (5120, 216000),
+        "4.0": (8192, 245760),
+    }[value["level"]]
+    macroblocks = math.ceil(value["width"] / 16) * math.ceil(value["height"] / 16)
+    return (
+        macroblocks <= maximum_frame
+        and macroblocks * value["fps"] <= maximum_rate
+        and (
+            value["level"] != "3.1"
+            or value["max_bit_rate"] <= (17500 if value["profile"] == "high" else 14000)
+        )
+    )
+
+
+_recording_audio = _object(
+    sample_rate=lambda value: _integer(16000, 48000)(value) and value in {16000, 24000, 48000},
+    bit_rate=_integer(16000, 128000),
+    channels=_integer(1, 1),
+    bitrate_mode=_enum("vbr"),
+)
+_recording_configuration_fields = _object(
+    video=_recording_video,
+    audio=_nullable(_recording_audio),
+    fragment_length_ms=_integer(4000, 4000),
+    i_frame_interval_ms=_integer(1, 4000),
+)
+
+
+def _recording_configuration(value):
+    return _recording_configuration_fields(value) and (
+        value["i_frame_interval_ms"] * value["video"]["fps"] >= 1000
+    )
+
+
+_accessory_recording = _object(
+    revision=_revision,
+    enabled=_boolean,
+    active=_boolean,
+    audio_active=_boolean,
+    configuration=_nullable(_recording_configuration),
+)
+_accessory_entry_fields = _object(
     camera_id=lambda value: _display_text(value, 128),
     accessory_id=_uuid,
     username=_username,
     doorbell=_boolean,
     audio=_nullable(_audio_birth),
 )
+
+
+def _accessory_entry(value):
+    if not isinstance(value, dict):
+        return False
+    if "recording" not in value:
+        return _accessory_entry_fields(value)
+    return _accessory_recording(value["recording"]) and _accessory_entry_fields(
+        {key: item for key, item in value.items() if key != "recording"}
+    )
+
+
 _accessory_fields = _object(
     scope=_nullable(_account),
     revision=_revision,
@@ -479,7 +548,64 @@ def _video_result(value):
     )
 
 
+_recording_job = dict(scope=_scope, job_id=_uuid)
+_recording_next_fields = _object(
+    **_recording_job,
+    status=_enum("ready", "eos", "rejected"),
+    code=_code,
+    transfer_id=_nullable(_uuid),
+    kind=_nullable(_enum("init", "fragment")),
+    sequence=_integer(0, 2**32 - 1),
+    total_bytes=_integer(0, BULK_LIMITS["recording_fragment"]),
+    duration_ms=_integer(0, 4000),
+)
+
+
+def _recording_next_result(value):
+    if not _recording_next_fields(value):
+        return False
+    if value["status"] != "ready":
+        return (
+            (value["status"] == "eos") == (value["code"] == "ok")
+            and value["transfer_id"] is None
+            and value["kind"] is None
+            and value["total_bytes"] == value["duration_ms"] == 0
+        )
+    if value["code"] != "ok" or value["transfer_id"] is None or value["kind"] is None:
+        return False
+    if value["kind"] == "init":
+        return (
+            value["sequence"] == 0
+            and 1 <= value["total_bytes"] <= BULK_LIMITS["recording_init"]
+            and value["duration_ms"] == 0
+        )
+    return value["sequence"] >= 1 and value["total_bytes"] >= 1 and value["duration_ms"] >= 1
+
+
 PAYLOAD_VALIDATORS = {
+    "recording_settings_update": _object(
+        scope=_scope,
+        expected_revision=_revision,
+        active=_boolean,
+        audio_active=_boolean,
+        configuration=_nullable(_recording_configuration),
+    ),
+    "recording_settings_result": lambda value: (
+        _object(scope=_scope, accepted=_boolean, code=_code, revision=_revision)(value)
+        and value["accepted"] == (value["code"] == "ok")
+    ),
+    "recording_open": _object(**_recording_job, configuration=_recording_configuration),
+    "recording_open_result": lambda value: (
+        _object(**_recording_job, status=_enum("accepted", "rejected"), code=_code)(value)
+        and (value["status"] == "accepted") == (value["code"] == "ok")
+    ),
+    "recording_next": _object(**_recording_job, sequence=_integer(0, 2**32 - 1)),
+    "recording_next_result": _recording_next_result,
+    "recording_stop": _object(**_recording_job),
+    "recording_stop_result": lambda value: (
+        _object(**_recording_job, status=_enum("stopped", "rejected"), code=_code)(value)
+        and (value["status"] == "stopped") == (value["code"] == "ok")
+    ),
     "audio_settings_update": _object(
         **dict(scope=_scope), expected_revision=_revision, settings=_audio_preferences
     ),
@@ -548,7 +674,7 @@ PAYLOAD_VALIDATORS = {
         role=_enum("hap"),
         build_id=lambda value: _bounded_text(value, 128),
         protocol=_integer(1, 1),
-        features=lambda value: value == ["classic-camera-control-v1", "bulk-cancel-v1"],
+        features=lambda value: value == list(FEATURES),
         pid=_positive,
     ),
     "ping": _object(),
@@ -623,6 +749,10 @@ PAYLOAD_VALIDATORS = {
 KINDS = frozenset(PAYLOAD_VALIDATORS)
 PYTHON_KINDS = frozenset(
     {
+        "recording_settings_result",
+        "recording_open_result",
+        "recording_next_result",
+        "recording_stop_result",
         "audio_settings_result",
         "video_prepare_result",
         "video_start_result",
@@ -650,6 +780,10 @@ PYTHON_KINDS = frozenset(
 )
 HAP_KINDS = frozenset(
     {
+        "recording_settings_update",
+        "recording_open",
+        "recording_next",
+        "recording_stop",
         "audio_settings_update",
         "video_prepare",
         "video_start",
@@ -716,6 +850,10 @@ def validate_direction(envelope: dict[str, Any], sender: str) -> dict[str, Any]:
 
 
 REPLY_KINDS = {
+    "recording_settings_update": "recording_settings_result",
+    "recording_open": "recording_open_result",
+    "recording_next": "recording_next_result",
+    "recording_stop": "recording_stop_result",
     "audio_settings_update": "audio_settings_result",
     "video_prepare": "video_prepare_result",
     "video_start": "video_start_result",
@@ -756,7 +894,7 @@ def validate_reply(request: dict[str, Any], reply: dict[str, Any]) -> dict[str, 
         raise HomeKitProtocolError("invalid control reply correlation")
     sent, received = request["payload"], reply["payload"]
     if (
-        request["kind"] == "audio_settings_update"
+        request["kind"] in {"audio_settings_update", "recording_settings_update"}
         and received["accepted"]
         and received["revision"]
         not in (
@@ -765,6 +903,8 @@ def validate_reply(request: dict[str, Any], reply: dict[str, Any]) -> dict[str, 
         )
     ):
         raise HomeKitProtocolError("invalid audio settings revision correlation")
+    if request["kind"] == "recording_next" and sent["sequence"] != received["sequence"]:
+        raise HomeKitProtocolError("invalid recording sequence correlation")
     if request["kind"] == "video_prepare" and received["status"] == "accepted":
         endpoint = received["endpoint"]
         if (

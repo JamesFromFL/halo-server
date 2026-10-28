@@ -1,0 +1,55 @@
+{
+  "schema": 1,
+  "name": "@homebridge/hap-nodejs",
+  "version": "2.2.3-halo.1",
+  "upstream": {
+    "repository": "https://github.com/homebridge/HAP-NodeJS",
+    "commit": "25e8bea26a64309a47184dec478479483fbdd50c",
+    "version": "2.2.3",
+    "npm_tarball": "https://registry.npmjs.org/@homebridge/hap-nodejs/-/hap-nodejs-2.2.3.tgz",
+    "npm_sha1": "a8280d609599181455484b2bde69a0ab84289f9e",
+    "npm_integrity": "sha512-7aML96ZSjHcUunb5d3mYRIzoH4m//hb7NBT6LXNqAWHnHRjlVEbqIiV2knjYrNrFOvD4ib8+f4fXhJ4a3fFupw=="
+  },
+  "archive": {
+    "file": "hap-nodejs-2.2.3-halo.1.tgz",
+    "sha256": "6fbd832aa677ec6ef733b0726626e0af36c5c289ba97dc8654151816031f1caf",
+    "integrity": "sha512-Hb/va7Ibu+rkcQ3d4Q8Jo0GO2oz8OFLb+OBTAF3uqDi2lGam5ZtiP65B284uqgrMobqUgZBwiKfEwIAULmjHCQ=="
+  },
+  "patch": {
+    "file": "hap-nodejs-2.2.3-halo.1.patch",
+    "sha256": "59eaf78e0edf7289a2baf23c11ba9661c2eb4fe09e89a1b7c1a359415a9aa048"
+  },
+  "license": {
+    "id": "Apache-2.0",
+    "file": "HAP-NodeJS-LICENSE",
+    "sha256": "59899c6091b540582ed617e8eeaac4919dc985ccfc35459ee9752b699be5205b"
+  },
+  "toolchain": {
+    "node": "26.12.1",
+    "npm": "12.2.1",
+    "typescript": "6.0.3",
+    "python": "3.14.8",
+    "zlib": "1.3.2"
+  },
+  "reproducible": {
+    "clean_builds": 2,
+    "byte_identical": true,
+    "normalized_tar_metadata": true,
+    "gzip_mtime": 0,
+    "install_payload_matches_archive": true
+  },
+  "crypto": {
+    "encryption_block_sha256": "5a9202d8bbd57b0953c89c6d25de64130bd257ac733d32d5c39e327f9c502def",
+    "hapCrypto_source_sha256": "61e66d500a3cd95516e7592fda9bac2cfb99fa0f44334df7561709a43c8b09b8",
+    "unchanged": true
+  },
+  "scope": "bounded HDS transport, serializer admission, physical lifecycle, recording chunk metadata and ACK validation; no mDNS, pairing format, storage or crypto changes",
+  "tests": {
+    "official_supported_host_suites": 25,
+    "official_supported_host_tests": 908,
+    "official_unavailable_tests": 3,
+    "unavailable_reason": "eventedhttp.spec.ts explicitly dials IPv6 loopback ::1, EADDRNOTAVAIL on this host",
+    "network_guard": "no network or child attempts in focused Node tests",
+    "real_transport": "IPv4 loopback cap2,21 attempts,18 refused before HDS allocation,0 final owners"
+  }
+}

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
+import math
 from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
@@ -12,6 +14,7 @@ from uuid import uuid4
 
 from halo_server.homekit.controller import HomeKitController
 from halo_server.homekit.ipc import (
+    BULK_LIMITS,
     MAX_INVENTORY_PAGE,
     HomeKitProtocolError,
     encode_frame,
@@ -24,6 +27,27 @@ CURSOR_SECONDS = 10.0
 MAX_WRITE_OPERATIONS = 4096
 MAX_SESSION_IDENTITIES = 512
 RETIRED_SESSION_SECONDS = 60.0
+RECORDING_POSTROLL_SECONDS = 2.0
+RECORDING_EVENT_SECONDS = 150.0
+
+
+@dataclass(frozen=True)
+class RecordingEvent:
+    generation: int
+    event_at: float
+    end_at: float
+
+    def __post_init__(self):
+        if (
+            type(self.generation) is not int
+            or self.generation < 1
+            or any(
+                type(value) not in {int, float} or not math.isfinite(value)
+                for value in (self.event_at, self.end_at)
+            )
+            or not 0 <= self.event_at <= self.end_at
+        ):
+            raise HomeKitOperationError("invalid_event")
 
 
 @dataclass
@@ -49,6 +73,26 @@ class _SnapshotDelivery:
     cleanup_failed: bool = False
 
 
+@dataclass
+class _RecordingJob:
+    boot: str
+    scope: MediaScope
+    identity: str
+    configuration: Any
+    privacy_signature: tuple
+    event: RecordingEvent
+    opened_at: float
+    finish_requested: bool = False
+    stream: Any = field(default=None, repr=False)
+    request_task: asyncio.Task | None = None
+    pulling: asyncio.Task | None = None
+    delivery: _SnapshotDelivery | None = None
+    sequence: int = 0
+    cancelled: bool = False
+    cleanup_failed: bool = False
+    closing: asyncio.Lock = field(default_factory=asyncio.Lock)
+
+
 class HomeKitBroker:
     """Own private leases, with no accessory publication or implicit selection.
 
@@ -67,6 +111,10 @@ class HomeKitBroker:
         live_manager=None,
         snapshot_manager=None,
         audio_settings: Callable | None = None,
+        recording_manager=None,
+        recording_authority: Callable | None = None,
+        recording_policy=None,
+        recording_event: Callable | None = None,
     ) -> None:
         self.controller, self.backend = controller, backend
         self._selection, self._changed = selection, changed
@@ -74,6 +122,12 @@ class HomeKitBroker:
         self.snapshot_manager = snapshot_manager
         self._snapshot_jobs: dict[str, _SnapshotDelivery] = {}
         self._audio_settings = audio_settings
+        self.recording_manager = recording_manager
+        self._recording_authority = recording_authority
+        self.recording_policy = recording_policy
+        self._recording_event = recording_event
+        self._recording_jobs: dict[str, _RecordingJob] = {}
+        self._recording_history: dict[str, tuple[MediaScope, float]] = {}
         self.runtime = None
         self.boot_id: str | None = None
         self._account = None
@@ -87,6 +141,14 @@ class HomeKitBroker:
         self._refresh_lock = asyncio.Lock()
         self.cleanup_failed = False
 
+    @property
+    def recording_resources(self):
+        return len(self._recording_jobs)
+
+    @property
+    def recording_cleanup_failures(self):
+        return sum(job.cleanup_failed for job in self._recording_jobs.values())
+
     async def ready(self, boot_id: str) -> None:
         async with self._refresh_lock:
             if (
@@ -94,6 +156,7 @@ class HomeKitBroker:
                 or self._retiring_boot is not None
                 or self._resources
                 or self._snapshot_jobs
+                or self._recording_jobs
                 or self.cleanup_failed
             ):
                 raise HomeKitOperationError("cleanup_pending")
@@ -172,9 +235,14 @@ class HomeKitBroker:
                 raise ExceptionGroup("HomeKit resource retirement incomplete", failures)
             self._retiring_boot = None
             self._session_ids.clear()
+            self._recording_history.clear()
 
     async def _close_resources(self) -> None:
         failures = []
+        try:
+            await self._close_recordings()
+        except Exception as exc:
+            failures.append(exc)
         try:
             await self._close_snapshots()
         except Exception as exc:
@@ -196,6 +264,46 @@ class HomeKitBroker:
                 await asyncio.sleep(0.1)
                 now = asyncio.get_running_loop().time()
                 current = {camera.scope for camera in self.controller.inventory().cameras}
+                for job in tuple(self._recording_jobs.values()):
+                    if not self._recording_current(job):
+                        # A natural terminal pull retires native input before
+                        # returning StopAsyncIteration. Keep its EOS reply
+                        # owned while teardown joins; privacy remains fenced.
+                        if (
+                            job.finish_requested
+                            and job.pulling is not None
+                            and self._recording_authorized(job)
+                        ):
+                            continue
+                        try:
+                            await self._stop_recording(job)
+                        except Exception:
+                            self.cleanup_failed = True
+                            self._changed()
+                            return
+                    elif job.stream is not None and not job.finish_requested:
+                        event = self._recording_event(job.scope) if self._recording_event else None
+                        if (
+                            isinstance(event, RecordingEvent)
+                            and event.generation == job.event.generation
+                        ):
+                            job.event = event
+                        if (
+                            isinstance(event, RecordingEvent)
+                            and event.generation != job.event.generation
+                            or now >= job.event.end_at + RECORDING_POSTROLL_SECONDS
+                            or now - job.opened_at >= RECORDING_EVENT_SECONDS
+                        ):
+                            try:
+                                job.stream.finish()
+                                job.finish_requested = True
+                            except HomeKitOperationError:
+                                try:
+                                    await self._stop_recording(job)
+                                except Exception:
+                                    self.cleanup_failed = True
+                                    self._changed()
+                                    return
                 for delivery in tuple(self._snapshot_jobs.values()):
                     if not self._snapshot_current(delivery) and not delivery.cancelled:
                         try:
@@ -231,6 +339,8 @@ class HomeKitBroker:
         kind, data = envelope["kind"], envelope["payload"]
         if kind in {"video_prepare", "video_start", "video_reconfigure", "video_stop"}:
             return await self._video_request(boot, kind, data)
+        if kind in {"recording_open", "recording_next", "recording_stop"}:
+            return await self._recording_request(boot, kind, data)
         if kind == "inventory_request":
             try:
                 return self._inventory(envelope)
@@ -240,10 +350,13 @@ class HomeKitBroker:
             try:
                 scope, policy = _scope(data), CameraPolicy(**data["policy"])
                 self._authorize_audio_policy(scope, policy)
-                await self.controller.update_policy(boot, scope, policy)
+                self._authorize_recording_policy(scope, policy)
+                updated = await self.controller.update_policy(boot, scope, policy)
             except HomeKitOperationError as exc:
                 return {"scope": data["scope"], "accepted": False, "code": _code(exc)}
             self._pages.clear()
+            if updated != scope:
+                self._changed()
             return {"scope": data["scope"], "accepted": True, "code": "ok"}
         if kind in {"lease_request", "lease_renew", "lease_stop", "talkback_request"}:
             return await self._resource_request(boot, kind, data)
@@ -327,6 +440,18 @@ class HomeKitBroker:
 
     async def replied(self, message, reply):
         """Called only after the validated operation reply has been flushed."""
+        if message["kind"] == "recording_next":
+            job = self._recording_jobs.get(message["payload"]["job_id"])
+            delivery = job.delivery if job is not None else None
+            if (
+                delivery is not None
+                and delivery.boot == message["boot_id"]
+                and delivery.scope == _scope(message["payload"])
+                and reply["payload"].get("transfer_id") == delivery.transfer_id
+                and reply["payload"].get("sequence") == message["payload"]["sequence"]
+            ):
+                delivery.ready.set()
+            return
         if message["kind"] != "snapshot_request":
             return
         delivery = self._snapshot_jobs.get(message["payload"]["job_id"])
@@ -440,6 +565,308 @@ class HomeKitBroker:
             )
         ):
             raise HomeKitOperationError("policy_denied")
+
+    def _authorize_recording_policy(self, scope, policy):
+        if self._recording_authority is None:
+            return
+        state = self._recording_authority(scope)
+        if (
+            policy.recording
+            and (state is None or not state.active or state.configuration is None)
+            or policy.recording_audio
+            and (state is None or not state.audio_active)
+        ):
+            raise HomeKitOperationError("policy_denied")
+
+    def _recording_authorized(self, job):
+        if (
+            job.cancelled
+            or self.boot_id != job.boot
+            or self.cleanup_failed
+            or self._recording_jobs.get(job.identity) is not job
+        ):
+            return False
+        try:
+            self.controller.authorize(job.boot, job.scope, "recording")
+            if job.configuration.audio is not None:
+                self.controller.authorize(job.boot, job.scope, "recording_audio")
+            state = self._recording_authority(job.scope) if self._recording_authority else None
+            return state is not None and state.capture_signature == job.privacy_signature
+        except HomeKitOperationError:
+            return False
+
+    def _recording_current(self, job):
+        return self._recording_authorized(job) and (job.stream is None or job.stream.is_current())
+
+    def _prune_recording_history(self):
+        now = asyncio.get_running_loop().time()
+        self._recording_history = {
+            identity: value for identity, value in self._recording_history.items() if value[1] > now
+        }
+
+    def _forget_recording(self, job):
+        if self._recording_jobs.get(job.identity) is job:
+            self._recording_jobs.pop(job.identity)
+            self._recording_history[job.identity] = (
+                job.scope,
+                asyncio.get_running_loop().time() + RETIRED_SESSION_SECONDS,
+            )
+
+    async def _recording_request(self, boot, kind, data):
+        from halo_server.homekit.bulk import BulkTransferError
+        from halo_server.media.recording import RecordingError
+
+        scope, identity = _scope(data), data["job_id"]
+        result = {"scope": data["scope"], "job_id": identity}
+        if kind == "recording_next":
+            result |= {
+                "transfer_id": None,
+                "kind": None,
+                "sequence": data["sequence"],
+                "total_bytes": 0,
+                "duration_ms": 0,
+            }
+        self._prune_recording_history()
+        job = self._recording_jobs.get(identity)
+        try:
+            if job is not None and (job.boot != boot or job.scope != scope):
+                raise HomeKitOperationError("session_conflict")
+            if kind == "recording_stop":
+                if job is not None:
+                    await self._stop_recording(job)
+                else:
+                    previous = self._recording_history.get(identity)
+                    if previous is not None and previous[0] != scope:
+                        raise HomeKitOperationError("session_conflict")
+                    if previous is None:
+                        if (
+                            len(self._recording_history) + len(self._recording_jobs)
+                            >= MAX_SESSION_IDENTITIES
+                        ):
+                            raise HomeKitOperationError("busy")
+                        self._recording_history[identity] = (
+                            scope,
+                            asyncio.get_running_loop().time() + RETIRED_SESSION_SECONDS,
+                        )
+                    # A deny-only tombstone grants no media authority. Privacy
+                    # may already have advanced before a cancelled OPEN arrived;
+                    # retire the exact older tuple rather than rejecting cleanup.
+                    if self.recording_manager is not None:
+                        await self.recording_manager.stop(boot, scope, identity)
+                return result | {"status": "stopped", "code": "ok"}
+            manager = self.recording_manager
+            if manager is None or not manager.ready:
+                raise HomeKitOperationError("not_ready")
+            if kind == "recording_open":
+                if identity in self._recording_history or job is not None:
+                    raise HomeKitOperationError("session_conflict")
+                if (
+                    len(self._recording_jobs) >= 2
+                    or len(self._recording_history) + len(self._recording_jobs)
+                    >= MAX_SESSION_IDENTITIES
+                    or any(
+                        j.scope.source_key == scope.source_key
+                        for j in self._recording_jobs.values()
+                    )
+                ):
+                    raise HomeKitOperationError("busy")
+                configuration = recording_configuration(data["configuration"])
+                state = self._recording_authority(scope) if self._recording_authority else None
+                if (
+                    state is None
+                    or not state.active
+                    or state.effective_configuration != configuration
+                ):
+                    raise HomeKitOperationError("policy_denied")
+                self.controller.authorize(boot, scope, "recording")
+                if configuration.audio is not None:
+                    self.controller.authorize(boot, scope, "recording_audio")
+                if self.recording_policy is None:
+                    raise HomeKitOperationError("not_ready")
+                self.recording_policy.authorize_open(boot, scope, configuration)
+                event = self._recording_event(scope) if self._recording_event else None
+                now = asyncio.get_running_loop().time()
+                if (
+                    not isinstance(event, RecordingEvent)
+                    or not 0 <= event.event_at <= now
+                    or now - event.event_at > 12
+                ):
+                    raise HomeKitOperationError("not_ready")
+                job = _RecordingJob(
+                    boot, scope, identity, configuration, state.capture_signature, event, now
+                )
+                job.request_task = asyncio.current_task()
+                self._recording_jobs[identity] = job
+                try:
+                    job.stream = await manager.open(
+                        boot, scope, identity, configuration, event_at=event.event_at
+                    )
+                    if not self._recording_current(job):
+                        raise HomeKitOperationError("cancelled")
+                except BaseException:
+                    if not job.cancelled:
+                        with contextlib.suppress(Exception):
+                            await self._stop_recording(job)
+                    raise
+                finally:
+                    if job.request_task is asyncio.current_task():
+                        job.request_task = None
+                return result | {"status": "accepted", "code": "ok"}
+            if job is None or not self._recording_current(job):
+                raise HomeKitOperationError("expired")
+            if job.pulling is not None:
+                raise HomeKitOperationError("busy")
+            delivery = job.delivery
+            if delivery is not None:
+                # The peer may request its next packet immediately after the
+                # successful transfer result, before this producer resumes.
+                # Its validated normal ACK permits joining this exact tail;
+                # actual source retirement still precedes the next pull.
+                if (
+                    not (delivery.prepared.peer_completed or delivery.prepared.retirement_complete)
+                    or delivery.task is None
+                ):
+                    raise HomeKitOperationError("busy")
+                done, _ = await asyncio.wait({delivery.task}, timeout=5.0)
+                if not done:
+                    raise HomeKitOperationError("cleanup_pending")
+                await asyncio.shield(delivery.task)
+                if not self._recording_current(job):
+                    raise HomeKitOperationError("expired")
+                if job.pulling is not None or job.delivery is not None:
+                    raise HomeKitOperationError("busy")
+            if data["sequence"] != job.sequence:
+                raise HomeKitOperationError("session_conflict")
+            channel = self.runtime.bulk_channel if self.runtime is not None else None
+            if channel is None:
+                raise HomeKitOperationError("not_ready")
+            job.pulling = asyncio.current_task()
+            try:
+                packet = await anext(job.stream)
+                if not self._recording_current(job):
+                    raise HomeKitOperationError("cancelled")
+                if (
+                    packet.sequence != job.sequence
+                    or packet.kind not in {"init", "fragment"}
+                    or not isinstance(packet.payload, bytes)
+                    or not 0
+                    < len(packet.payload)
+                    <= BULK_LIMITS[
+                        "recording_init" if packet.kind == "init" else "recording_fragment"
+                    ]
+                    or type(packet.duration_ms) is not int
+                    or (packet.kind == "init" and (packet.sequence != 0 or packet.duration_ms != 0))
+                    or (packet.kind == "fragment" and not 1 <= packet.duration_ms <= 4000)
+                ):
+                    raise HomeKitOperationError("invalid_recording_output")
+                delivery = _SnapshotDelivery(boot, scope, identity, str(uuid4()), image=packet)
+                delivery.prepared = channel.prepare_send(
+                    scope=data["scope"],
+                    operation_id=identity,
+                    transfer_id=delivery.transfer_id,
+                    kind="recording_init" if packet.kind == "init" else "recording_fragment",
+                    total_bytes=len(packet.payload),
+                    valid=lambda: self._recording_current(job),
+                )
+                job.delivery = delivery
+                job.sequence += 1
+                delivery.task = asyncio.create_task(
+                    self._deliver_recording(job, delivery), name="homekit-recording-delivery"
+                )
+                delivery.task.add_done_callback(self._snapshot_done)
+                return result | {
+                    "status": "ready",
+                    "code": "ok",
+                    "transfer_id": delivery.transfer_id,
+                    "kind": packet.kind,
+                    "total_bytes": len(packet.payload),
+                    "duration_ms": packet.duration_ms,
+                }
+            except StopAsyncIteration:
+                await self._stop_recording(job)
+                return result | {"status": "eos", "code": "ok"}
+            except BaseException:
+                if not job.cancelled:
+                    with contextlib.suppress(Exception):
+                        await self._stop_recording(job)
+                raise
+            finally:
+                if job.pulling is asyncio.current_task():
+                    job.pulling = None
+        except HomeKitOperationError as error:
+            return result | {"status": "rejected", "code": _code(error)}
+        except (RecordingError, ValueError, TypeError):
+            return result | {"status": "rejected", "code": "unsupported"}
+        except BulkTransferError as error:
+            return result | {"status": "rejected", "code": error.code}
+
+    async def _deliver_recording(self, job, delivery):
+        async def chunks():
+            payload = delivery.image.payload
+            for offset in range(0, len(payload), 65536):
+                yield memoryview(payload)[offset : offset + 65536]
+
+        try:
+            await asyncio.wait_for(delivery.ready.wait(), 5.0)
+            if not self._recording_current(job):
+                raise HomeKitOperationError("cancelled")
+            await delivery.prepared.send(chunks())
+            if not delivery.prepared.retirement_complete:
+                raise HomeKitOperationError("cleanup_pending")
+            if job.delivery is delivery:
+                job.delivery = None
+        except asyncio.CancelledError:
+            if not job.cancelled:
+                await self._stop_recording(job)
+            raise
+        except Exception:
+            if not job.cancelled:
+                await self._stop_recording(job)
+
+    async def _stop_recording(self, job):
+        job.cancelled = True  # Privacy/delivery fence before any cleanup await.
+        async with job.closing:
+            failures = []
+            delivery = job.delivery
+            if delivery is not None:
+                delivery.cancelled = True
+                delivery.ready.set()
+                try:
+                    await delivery.prepared.cancel("cancelled")
+                    if not delivery.prepared.retirement_complete:
+                        raise HomeKitOperationError("cleanup_pending")
+                except BaseException as error:
+                    failures.append(error)
+            if self.recording_manager is not None:
+                try:
+                    await self.recording_manager.stop(job.boot, job.scope, job.identity)
+                except BaseException as error:
+                    failures.append(error)
+            tasks = {
+                task
+                for task in (job.request_task, job.pulling, delivery.task if delivery else None)
+                if task is not None and task is not asyncio.current_task() and not task.done()
+            }
+            for task in tasks:
+                task.cancel()
+            if tasks:
+                _, pending = await asyncio.wait(tasks, timeout=5.0)
+                if pending:
+                    failures.append(HomeKitOperationError("cleanup_pending"))
+            if failures:
+                job.cleanup_failed = True
+                raise HomeKitOperationError("cleanup_pending")
+            job.delivery = job.stream = None
+            job.cleanup_failed = False
+            self._forget_recording(job)
+
+    async def _close_recordings(self):
+        results = await asyncio.gather(
+            *(self._stop_recording(job) for job in tuple(self._recording_jobs.values())),
+            return_exceptions=True,
+        )
+        if any(isinstance(result, BaseException) for result in results):
+            raise HomeKitOperationError("cleanup_pending")
 
     async def _video_request(self, boot: str, kind: str, data: dict) -> dict:
         from halo_server.media.h264 import H264Error, VideoConfiguration
@@ -733,6 +1160,31 @@ def _scope(data: dict) -> MediaScope:
     return MediaScope(**data["scope"])
 
 
+def recording_configuration(value):
+    """Construct only recording codec choices, never peer RTP/session settings."""
+    from halo_server.media.h264 import VideoConfiguration
+    from halo_server.media.recording import RecordingAudioConfiguration, RecordingConfiguration
+
+    if (
+        not isinstance(value, dict)
+        or set(value) != {"video", "audio", "fragment_length_ms", "i_frame_interval_ms"}
+        or not isinstance(value["video"], dict)
+        or set(value["video"]) != {"width", "height", "fps", "profile", "level", "max_bit_rate"}
+        or value["audio"] is not None
+        and (
+            not isinstance(value["audio"], dict)
+            or set(value["audio"]) != {"sample_rate", "bit_rate", "channels", "bitrate_mode"}
+        )
+    ):
+        raise HomeKitOperationError("invalid_request")
+    return RecordingConfiguration(
+        VideoConfiguration(**value["video"]),
+        RecordingAudioConfiguration(**value["audio"]) if value["audio"] is not None else None,
+        fragment_length_ms=value["fragment_length_ms"],
+        i_frame_interval_ms=value["i_frame_interval_ms"],
+    )
+
+
 def _code(error: HomeKitOperationError) -> str:
     if error.code in {"busy", "timeout", "expired", "cancelled", "unsupported", "unauthorized"}:
         return error.code
@@ -744,7 +1196,13 @@ def _code(error: HomeKitOperationError) -> str:
         return "conflict"
     if error.code in {"capability_unsupported", "snapshot_unsupported", "intercom_unsupported"}:
         return "unsupported"
-    if error.code in {"cleanup_failed", "cleanup_pending", "closed", "not_ready"}:
+    if error.code in {
+        "cleanup_failed",
+        "cleanup_pending",
+        "closed",
+        "not_ready",
+        "prebuffer_unavailable",
+    }:
         return "not-ready"
     if error.code in {"invalid_request", "invalid_dimensions"}:
         return "invalid-request"

@@ -122,6 +122,15 @@ class Recording:
         self.audio_config = config["audio"]
         self.sps, self.pps = bytes.fromhex(config["video_sps"]), bytes.fromhex(config["video_pps"])
         self.source = h264.parse_sps(self.sps)
+        interval = config["i_frame_interval_ms"]
+        if (
+            type(interval) is not int
+            or not (1000 + self.video.fps - 1) // self.video.fps <= interval <= 4000
+        ):
+            raise ValueError
+        self.key_interval = min(Fraction(interval, 1000), Fraction(19, 5))
+        self.encoder_gop = max(1, self.video.fps * min(2000, interval) // 1000)
+        self.source_key = None
         if h264.pps_sequence_id(self.pps) != self.source.sequence_id:
             raise ValueError
         clocks = {clock["kind"]: clock for clock in config["clocks"]}
@@ -231,10 +240,10 @@ class Recording:
                 raise ValueError
             self.last_key = pts
         elif key:
-            if pts - self.last_key > Fraction(19, 5):
+            if pts - self.last_key > self.key_interval:
                 raise ValueError
             self.last_key = pts
-        elif pts - self.last_key > Fraction(19, 5):
+        elif pts - self.last_key > self.key_interval:
             raise ValueError
         packet = av.Packet(payload)
         packet.pts = packet.dts = round(pts * 90000)
@@ -269,7 +278,7 @@ class Recording:
             )
             self.encoder.thread_count, self.encoder.max_b_frames = 1, 0
             self.encoder.gop_size, self.encoder.bit_rate = (
-                self.video.fps * 2,
+                max(2, self.encoder_gop),
                 self.video.max_bit_rate * 1000,
             )
             self.encoder.options = {
@@ -278,12 +287,19 @@ class Recording:
                 "profile": self.video.profile,
                 "level": self.video.level,
                 "x264-params": (
-                    f"bframes=0:scenecut=0:repeat-headers=1:keyint={self.video.fps * 2}:"
+                    f"bframes=0:scenecut=0:repeat-headers=1:keyint={max(2, self.encoder_gop)}:"
                     f"threads=1:vbv-maxrate={self.video.max_bit_rate}:"
                     f"vbv-bufsize={self.video.max_bit_rate}"
                 ),
             }
+            if self.encoder_gop == 1:
+                # x264's keyint=1 switches to High Intra SPS and omits the
+                # explicit zero-reorder VUI. Keep the normal selected profile
+                # and VUI, while forcing an actual IDR for every picture.
+                self.encoder.options["forced-idr"] = "1"
             self.encoder.open()
+            if self.encoder.options:
+                raise ValueError
         for payload, pts, key in buffered:
             self.convert_video(payload, pts, key)
 
@@ -296,6 +312,13 @@ class Recording:
         if not slices:
             return
         key = any(nal[0] & 31 == 5 for nal in slices)
+        # Measure the source's keyframe cadence before selecting copy. A short
+        # selected interval cannot inherit an older source's longer GOP.
+        key_gap = pts - self.source_key if self.source_key is not None else Fraction(0)
+        if key:
+            self.source_key = pts
+        if key_gap > self.key_interval:
+            self.copy_possible = False
         reordered = any(slice_kind(nal) not in {0, 2} for nal in slices)
         if self.first_video is None:
             if not key:
@@ -380,6 +403,8 @@ class Recording:
         if frame is None:
             raise ValueError
         frame.pts, frame.time_base = round(pts * 90000), Fraction(1, 90000)
+        if self.encoder_gop == 1:
+            frame.pict_type = av.video.frame.PictureType.I
         for packet in self.encoder.encode(frame):
             if packet.pts != packet.dts or len(bytes(packet)) > 2 * 1024 * 1024:
                 raise ValueError

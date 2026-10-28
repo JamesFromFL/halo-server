@@ -170,6 +170,19 @@ class SendHandle:
         self._channel, self._state = channel, state
 
     @property
+    def peer_completed(self) -> bool:
+        """An exact normal result was validated; native cleanup may remain.
+
+        A cancellation/fence acknowledgement never supplies this proof. Callers
+        must still join actual retirement before reusing source ownership.
+        """
+        return (
+            self._state.normal_result
+            and self._state.wire_done.done()
+            and self._state.cancelled is None
+        )
+
+    @property
     def retirement_complete(self) -> bool:
         """The source has actually retired; a fence ACK alone is insufficient."""
         return (

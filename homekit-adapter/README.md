@@ -1,13 +1,24 @@
 # Halo private HAP adapter groundwork
 
-This package implements **S04 dependency checks, S05 contracts, S06 supervised channels and S07 stable accessory/events and S08 public live-video delegates, S09 negotiated audio/talkback and S10 snapshots**. It publishes explicitly selected development accessories only after Python qualifies native video output. Python owns Ring, UDP/SRTP and video bytes. Owner pairing management and HKSV are later slices. A `hello_ack` and the feature marker `classic-camera-control-v1` mean only that this initial private control protocol is understood.
+The supervised adapter implements classic HomeKit camera graphs, live video,
+negotiated audio/talkback, snapshots, motion/doorbell events and the S12 HKSV
+recording path. Python owns Ring accounts, shared capture and native media;
+Node owns public HAP delegates, pairing state and bounded encrypted HDS output.
+Explicit selection and native qualification gate publication. HKSV also requires
+owner opt-in, positively classified mains-only hardware, current HomeKit recording
+settings and four seconds of actual decodable pre-event history. It defaults off.
 
-The Python daemon remains the Ring/session owner. The intended future adapter uses the released HAP public API; it does not embed Scrypted, require Homebridge, or import HAP private paths. Stable selected camera/doorbell graphs, pairing-store preflight and state-plus-cursor event delivery are implemented. Publication stays gated on the qualified Python video catalogue. HKSV remains a later slice. No unpublished scratchpad dependency or HAP fork is used here.
+The adapter uses the approved narrow transport extension to pinned HAP-NodeJS.
+It requires neither Scrypted nor Homebridge and imports no private HAP paths.
+The `classic-camera-control-v1`, `bulk-cancel-v1` and `hksv-recording-v1` markers
+negotiate private protocol support; they do not prove successful Apple pairing or
+Home timeline playback. Owner setup, immutable release packaging and actual
+Apple/Ring acceptance remain separate implementation/qualification gates.
 
 ## Pinned toolchain
 
 - Node **26.12.1**; npm **12.2.1**.
-- `@homebridge/hap-nodejs` **2.2.3** (Apache-2.0), exact npm integrity recorded in `package-lock.json`.
+- `@homebridge/hap-nodejs` **2.2.3-halo.1** (Apache-2.0), immutable vendored tarball and lock integrity. [Patch, license and provenance](vendor/) accompany the dependency; `tools/build_hap_dependency.py` rebuilds the exact official source pin plus patch.
 - TypeScript **6.0.3** and `@types/node` **26.2.0**.
 
 `package-lock.json` fixes transitive versions and integrity. `.npmrc` disables lifecycle scripts, automatic audit/network extras and floating direct saves. A normal daemon launch never runs npm or resolves dependencies. The current package is private development groundwork, not a complete release installer or a bundled Node binary.
@@ -106,13 +117,44 @@ Normal successful cancellation preserves unrelated transfers; failed framing or
 frontier deadlines still close the shared channel. Native cleanup can remain
 owned after its wire bytes are drained. Terminal history contains minimal
 metadata,4096 entries/60seconds, and never retains image buffers or sink closures.
-These are private IPC guarantees; released HDS backpressure remains an HKSV gate.
+These are private IPC guarantees; the independent HDS transport bounds are described below.
 
-## S11 Python recording preparation
+## Recording and encrypted HDS
 
-Python now owns separate recording capture, measured pre-event history and a
-killable native H.264/AAC fragmented-MP4 path. This adapter still publishes no
-HKSV recording capability. Released HDS transport bounds require an independent
-public API extension decision and qualification; no dependency/fork was changed.
-Warm capture is not automatically activated. Native sample readiness and actual
-HomeKit recording delivery readiness are reported separately.
+Python owns independent recording/warm leases, the bounded prebuffer and native
+H.264/AAC fMP4 workers. The child requests one scoped init/fragment at a time;
+exact READY metadata authorizes the bounded bulk transfer before OPEN. One
+fragment of lookahead marks the real final fragment as EOS. Trusted Ring incident
+time defines pre-roll; a delayed controller request cannot relabel later footage
+as pre-event history. Quiet completion includes two seconds of tail; a150second
+natural cutoff precedes the180second absolute job limit. Missing history/events
+fail closed. Ordinary quality changes apply to the next job; privacy/audio-off
+changes immediately fence affected delivery. Audio-off MP4 has no audio track.
+
+The shared policy preserves independent live and recording permissions.
+HomeKitCameraActive disables all camera media. A unique transport AbortSignal
+owns recording cancellation; a reusable numeric stream ID cannot cancel a newer
+job. Wrong, early or non-EOS ACKs do not complete a recording. Missing final ACK
+closes both the logical stream and its physical connection after the finite
+acknowledgement interval, even if the peer keeps draining without replying. Parent durable CAS
+acknowledgement is required for effective recording authority, even though the
+released Active/configuration callbacks themselves return void.
+
+Every HDS output reserves capacity before bounded serialization. The selected
+limits are266240bytes/frame, two pending frames and532480charged bytes per
+connection, a five-second write deadline, finite graceful/hard close,16 global
+physical connections, four per camera and16 prepared sessions per camera.
+Admission drops excess connections before HDS allocation. Recording DATA awaits
+local callback and required drain; that proves local progress rather than peer
+receipt. Abort closes the physical encrypted connection and releases ownership
+only after actual close. Cryptography, framing and nonce construction retain the
+official implementation. Strict recording metadata validation does not alter
+other released dataSend uses.
+
+Warm capture requires positive hardware evidence; false SDK battery capability,
+display model text, absent battery percentage or a plugged-in battery model is
+insufficient. Initial budgets are two warm captures and two active recording
+jobs globally, one job per camera. Failed cleanup remains charged. Finite warm
+lease rollover closes the old claim before rebuffering. Readiness reports actual
+history and capacity; native sample qualification is separate from Apple HKSV
+interoperability. No normal daemon launch installs dependencies or patches HAP.

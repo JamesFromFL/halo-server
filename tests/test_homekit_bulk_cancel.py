@@ -120,6 +120,7 @@ async def test_producer_cancel_stubborn_source_retains_cleanup_without_holding_w
         assert sender.counts == (0, 1) and sender.cleanup_pending == 1
         assert sender.pending_resources == 1 and not producer.closed
         assert not prepared.retirement_complete
+        assert not prepared.peer_completed
         assert not sender.closed and not receiver.closed
         await roundtrip(sender, receiver)
         release.set()
@@ -127,6 +128,46 @@ async def test_producer_cancel_stubborn_source_retains_cleanup_without_holding_w
         await sender.cancel_transfer(info["transfer_id"])
         assert producer.closed and sender.counts == (0, 0) and sender.cleanup_pending == 0
         assert prepared.retirement_complete
+        assert not prepared.peer_completed
+
+
+@pytest.mark.asyncio
+async def test_normal_peer_completion_proof_precedes_actual_source_close_retirement():
+    async with pair() as (sender, receiver, _, _):
+        entered, release = asyncio.Event(), asyncio.Event()
+
+        class Producer:
+            sent = False
+
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                if self.sent:
+                    raise StopAsyncIteration
+                self.sent = True
+                return b"a"
+
+            async def aclose(self):
+                entered.set()
+                await release.wait()
+
+        info = identity(size=1)
+        received = receiver.authorize_receive(**info, sink=discard)
+        prepared = sender.prepare_send(**info)
+        sending = asyncio.create_task(prepared.send(Producer()))
+        try:
+            assert not prepared.peer_completed
+            await entered.wait()
+            await received.wait()
+            assert prepared.peer_completed and not prepared.retirement_complete
+            assert not sending.done() and sender.pending_resources == 1
+            release.set()
+            await sending
+            assert prepared.peer_completed and prepared.retirement_complete
+        finally:
+            release.set()
+            await asyncio.gather(sending, return_exceptions=True)
 
 
 @pytest.mark.asyncio

@@ -15,7 +15,7 @@
     "check": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@homebridge/hap-nodejs": "2.2.3"
+    "@homebridge/hap-nodejs": "file:vendor/hap-nodejs-2.2.3-halo.1.tgz"
   },
   "devDependencies": {
     "@types/node": "26.2.0",
@@ -25,6 +25,7 @@
     "dist/src",
     "package.json",
     "package-lock.json",
-    "README.md"
+    "README.md",
+    "vendor"
   ]
 }

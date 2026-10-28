@@ -30,6 +30,12 @@ from halo_server.configuration import ServerConfiguration
 from halo_server.homekit.bridge import HomeKitBridge
 from halo_server.homekit.controller import HomeKitController
 from halo_server.homekit.models import HomeKitOperationError
+from halo_server.homekit.power import mains_confirmed
+from halo_server.homekit.recording_settings import (
+    RecordingSettingsConflict,
+    RecordingSettingsError,
+    configuration_wire,
+)
 from halo_server.homekit.registry import RegistryConflictError, RegistryError
 from halo_server.homekit.service_backend import ServiceHomeKitBackend
 from halo_server.incidents.coordinator import (
@@ -530,6 +536,110 @@ class HaloService:
         if method == "plugin_list":
             _require_only(params, set())
             return self._plugin_status()
+        if method in {"homekit_recording_list", "homekit_recording_warm"}:
+            bridge = self._homekit_bridge
+            if bridge is None:
+                raise AdminProtocolError(
+                    "homekit_disabled", "Start a native HomeKit operating mode first"
+                )
+            try:
+                if method == "homekit_recording_list":
+                    _require_only(params, {"offset", "limit"})
+                    offset, limit = params.get("offset", 0), params.get("limit", 32)
+                    if (
+                        type(offset) is not int
+                        or not 0 <= offset <= 256
+                        or type(limit) is not int
+                        or not 1 <= limit <= 32
+                    ):
+                        raise AdminProtocolError("bad_params", "Recording page bounds are invalid")
+                    registry, inventory = await bridge.cameras()
+                    cameras = {camera.scope.camera_id: camera for camera in inventory.cameras}
+                    rows = registry.selected(inventory.profile_id) if inventory.profile_id else ()
+                    selected = {
+                        camera.scope.camera_id: camera
+                        for camera in bridge._broker.controller.inventory().cameras
+                    }
+                    return {
+                        "profile_id": inventory.profile_id,
+                        "account_generation": inventory.account_generation,
+                        "revision": bridge._recording_settings.revision,
+                        "available": bridge._recording_available,
+                        "offset": offset,
+                        "total": len(rows),
+                        "cameras": [
+                            {
+                                "camera_id": row.camera_id,
+                                "owner_warm": settings.owner_warm if settings else False,
+                                "mains_confirmed": mains_confirmed(cameras.get(row.camera_id)),
+                                "active": settings.preferences.active if settings else False,
+                                "audio_active": settings.preferences.audio_active
+                                if settings
+                                else False,
+                                "configuration": configuration_wire(
+                                    settings.preferences.configuration
+                                )
+                                if settings
+                                else None,
+                                "warm_state": bridge._recording_policy.status(
+                                    selected[row.camera_id].scope
+                                ).state
+                                if row.camera_id in selected
+                                else "disabled",
+                            }
+                            for row in rows[offset : offset + limit]
+                            for settings in (
+                                bridge._recording_settings.camera(row.profile_id, row.camera_id),
+                            )
+                        ],
+                    }
+                _require_only(
+                    params,
+                    {
+                        "profile_id",
+                        "account_generation",
+                        "camera_id",
+                        "expected_revision",
+                        "enabled",
+                    },
+                )
+                generation, revision, enabled = (
+                    params.get("account_generation"),
+                    params.get("expected_revision"),
+                    params.get("enabled"),
+                )
+                if (
+                    type(generation) is not int
+                    or not 1 <= generation < 2**53
+                    or type(revision) is not int
+                    or not 0 <= revision < 2**53
+                    or type(enabled) is not bool
+                ):
+                    raise AdminProtocolError(
+                        "bad_params", "Recording opt-in parameters are invalid"
+                    )
+                saved = await bridge.set_recording_owner_warm(
+                    _required_string(params, "profile_id", max_length=36),
+                    generation,
+                    _required_string(params, "camera_id", max_length=128),
+                    revision,
+                    enabled,
+                )
+                return {"saved": True, "revision": saved.revision}
+            except RecordingSettingsConflict as error:
+                raise AdminProtocolError(
+                    "configuration_conflict", "Recording settings changed; reload before saving"
+                ) from error
+            except RecordingSettingsError as error:
+                raise AdminProtocolError(
+                    "configuration_unavailable",
+                    "Recording preferences are unavailable; reload before retrying",
+                ) from error
+            except HomeKitOperationError as error:
+                raise AdminProtocolError(
+                    "unsupported" if error.code == "capability_unsupported" else "account_changed",
+                    "Recording opt-in requires a selected, current, confirmed mains-only camera",
+                ) from error
         if method in {"homekit_list", "homekit_select"}:
             if self._homekit_bridge is None:
                 raise AdminProtocolError(

@@ -34,6 +34,9 @@ MAX_RECENT_REQUESTS = 256
 HEARTBEAT_SECONDS = 5.0
 REQUEST_SECONDS = 5.0
 SNAPSHOT_REQUEST_SECONDS = 16.0
+RECORDING_OPEN_SECONDS = 28.0
+RECORDING_PULL_SECONDS = 16.0
+RECORDING_STOP_SECONDS = 20.0
 STOP_SECONDS = 5.0
 
 
@@ -216,6 +219,7 @@ class HomeKitRuntime:
         *,
         admission: Callable[[], bool] | None = None,
         retirement_reply: bool = False,
+        retirement_bulk: bool = False,
     ) -> None:
         validate_direction(envelope, "python")
         async with self._write_lock:
@@ -226,15 +230,42 @@ class HomeKitRuntime:
             # handler's successful response. Shutdown itself remains writable.
             cleanup_reply = (
                 retirement_reply
-                and envelope["kind"] in {"video_stop_result", "lease_stop_result"}
+                and envelope["kind"]
+                in {"video_stop_result", "lease_stop_result", "recording_stop_result"}
                 and envelope["request_id"] in self._active_child_ids
             )
-            if self._stopping.is_set() and envelope["kind"] != "shutdown" and not cleanup_reply:
+            cleanup_bulk = retirement_bulk and envelope["kind"] in {
+                "transfer_cancel",
+                "transfer_fence",
+                "transfer_fence_ack",
+                "transfer_result",
+            }
+            if (
+                self._stopping.is_set()
+                and envelope["kind"] != "shutdown"
+                and not cleanup_reply
+                and not cleanup_bulk
+            ):
                 raise HomeKitRuntimeError("HomeKit adapter is stopping")
             if admission is not None and not admission():
                 raise HomeKitRuntimeError("HomeKit notification authority was retired")
             async with asyncio.timeout(REQUEST_SECONDS):
                 await write_frame(writer, envelope)
+
+    async def _send_bulk_control(self, kind, payload, request_id=None):
+        # Only the owned BulkChannel calls this transport callback, after its
+        # exact scope/identity/frontier checks. Shutdown must still drain old
+        # transfers; OPEN, credits and fresh media admission remain fenced.
+        await self._send_envelope(
+            {
+                "v": 1,
+                "kind": kind,
+                "boot_id": self._boot_id,
+                "request_id": str(uuid.uuid4()) if request_id is None else request_id,
+                "payload": payload,
+            },
+            retirement_bulk=True,
+        )
 
     async def request(self, kind: str, payload: dict, *, expected: str) -> dict[str, Any]:
         boot_id = self._boot_id
@@ -376,7 +407,7 @@ class HomeKitRuntime:
                 bulk_writer,
                 boot_id=self._boot_id,
                 role="python",
-                send_control=self.send,
+                send_control=self._send_bulk_control,
                 on_failure=self._bulk_failed,
             )
             self._bulk.start()
@@ -451,6 +482,7 @@ class HomeKitRuntime:
                 "video_stop",
                 "lease_stop",
                 "snapshot_cancel",
+                "recording_stop",
                 "transfer_cancel",
             }:
                 raise HomeKitProtocolError("HomeKit adapter is stopping")
@@ -484,14 +516,18 @@ class HomeKitRuntime:
                 raise HomeKitProtocolError("unowned bulk transfer metadata")
 
     async def _dispatch(self, message: dict[str, Any]) -> None:
-        deadline = (
-            SNAPSHOT_REQUEST_SECONDS if message["kind"] == "snapshot_request" else REQUEST_SECONDS
-        )
+        deadline = {
+            "snapshot_request": SNAPSHOT_REQUEST_SECONDS,
+            "recording_open": RECORDING_OPEN_SECONDS,
+            "recording_next": RECORDING_PULL_SECONDS,
+            "recording_stop": RECORDING_STOP_SECONDS,
+        }.get(message["kind"], REQUEST_SECONDS)
         async with asyncio.timeout(deadline):
             if self._stopping.is_set() and message["kind"] not in {
                 "video_stop",
                 "lease_stop",
                 "snapshot_cancel",
+                "recording_stop",
                 "transfer_cancel",
             }:
                 raise HomeKitProtocolError("HomeKit adapter is stopping")
@@ -521,7 +557,8 @@ class HomeKitRuntime:
             else:
                 validate_reply(message, reply)
             await self._send_envelope(
-                reply, retirement_reply=message["kind"] in {"video_stop", "lease_stop"}
+                reply,
+                retirement_reply=message["kind"] in {"video_stop", "lease_stop", "recording_stop"},
             )
             if self._on_replied is not None:
                 await self._on_replied(message, reply)
