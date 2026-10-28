@@ -161,9 +161,21 @@ class HomeKitRuntime:
 
     async def _stop_owned(self) -> None:
         self._stopping.set()
+        if self._heartbeat_task is not None:
+            self._heartbeat_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._heartbeat_task
+            self._heartbeat_task = None
         if self._writer is not None and self.state == "ready":
-            with contextlib.suppress(Exception):
+            try:
                 await self.request("shutdown", {}, expected="shutdown_ack")
+            except Exception:
+                pass
+            else:
+                process = self._process
+                if process is not None and process.returncode is None:
+                    with contextlib.suppress(TimeoutError):
+                        await asyncio.wait_for(process.wait(), 1.0)
         await self._terminate()
         if self._supervisor is not None:
             await settle_owned(self._supervisor)
@@ -196,7 +208,11 @@ class HomeKitRuntime:
         )
 
     async def _send_envelope(
-        self, envelope: dict[str, Any], *, admission: Callable[[], bool] | None = None
+        self,
+        envelope: dict[str, Any],
+        *,
+        admission: Callable[[], bool] | None = None,
+        retirement_reply: bool = False,
     ) -> None:
         validate_direction(envelope, "python")
         async with self._write_lock:
@@ -205,7 +221,12 @@ class HomeKitRuntime:
                 raise HomeKitRuntimeError("HomeKit adapter is unavailable")
             # A stopped reader must never acquire new ownership through a late
             # handler's successful response. Shutdown itself remains writable.
-            if self._stopping.is_set() and envelope["kind"] != "shutdown":
+            cleanup_reply = (
+                retirement_reply
+                and envelope["kind"] in {"video_stop_result", "lease_stop_result"}
+                and envelope["request_id"] in self._active_child_ids
+            )
+            if self._stopping.is_set() and envelope["kind"] != "shutdown" and not cleanup_reply:
                 raise HomeKitRuntimeError("HomeKit adapter is stopping")
             if admission is not None and not admission():
                 raise HomeKitRuntimeError("HomeKit notification authority was retired")
@@ -417,11 +438,19 @@ class HomeKitRuntime:
             raise
         except Exception:
             self._fail_pending("HomeKit control channel closed")
-            await self._terminate()
+            if not self._stopping.is_set():
+                await self._terminate()
 
     def _start_child_task(self, message: dict[str, Any], operation: Awaitable[None]) -> None:
         request_id = message["request_id"]
         try:
+            if self._stopping.is_set() and message["kind"] not in {
+                "video_stop",
+                "lease_stop",
+                "snapshot_cancel",
+                "transfer_cancel",
+            }:
+                raise HomeKitProtocolError("HomeKit adapter is stopping")
             if request_id in self._child_history or request_id in self._active_child_ids:
                 raise HomeKitProtocolError("duplicate HomeKit adapter request")
             if len(self._child_tasks) >= MAX_CHILD_REQUESTS:
@@ -453,6 +482,13 @@ class HomeKitRuntime:
 
     async def _dispatch(self, message: dict[str, Any]) -> None:
         async with asyncio.timeout(REQUEST_SECONDS):
+            if self._stopping.is_set() and message["kind"] not in {
+                "video_stop",
+                "lease_stop",
+                "snapshot_cancel",
+                "transfer_cancel",
+            }:
+                raise HomeKitProtocolError("HomeKit adapter is stopping")
             if message["kind"] not in REPLY_KINDS:
                 if self._on_notice is None:
                     if message["kind"] in {"status", "error"}:
@@ -478,7 +514,9 @@ class HomeKitRuntime:
                     raise HomeKitProtocolError("invalid HomeKit error correlation")
             else:
                 validate_reply(message, reply)
-            await self._send_envelope(reply)
+            await self._send_envelope(
+                reply, retirement_reply=message["kind"] in {"video_stop", "lease_stop"}
+            )
 
     def _child_done(self, task: asyncio.Task, request_id: str) -> None:
         self._active_child_ids.discard(request_id)
@@ -499,6 +537,8 @@ class HomeKitRuntime:
         _retrieve_future_error(task)
 
     async def _bulk_failed(self, _error: Exception) -> None:
+        if self._stopping.is_set():
+            return  # A retiring peer may close bulk before its control shutdown ACK.
         self._fail_pending("HomeKit binary channel closed")
         await self._terminate()
 

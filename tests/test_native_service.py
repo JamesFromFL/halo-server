@@ -146,6 +146,8 @@ def service_fixture(tmp_path, *, cameras=None, mode=ServerMode.HOMEKIT):
     service._media_client = client
     service._media_scope = sessions.active_scope
     service._account_integrations_ready = True
+    if service._homekit_bridge is not None:
+        service._homekit_bridge._publication_enabled = False
     return service, client, sessions
 
 

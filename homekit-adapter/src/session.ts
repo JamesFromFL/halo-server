@@ -3,7 +3,7 @@ import type { BulkChannel } from "./bulk.js";
 import {
   BULK_LIMITS, MAX_INVENTORY_DEVICES, MAX_INVENTORY_PAGE, ProtocolError, REPLY_KINDS,
   validateDirection, validateReply, type AccountScope, type CameraPolicy, type Envelope,
-  type JsonObject, type Kind, type MediaScope,
+  type JsonObject, type Kind, type MediaScope, type VideoConfiguration, type VideoPrepare, type VideoEndpoint,
 } from "./protocol.js";
 
 export const MAX_SESSION_REQUESTS = 16;
@@ -35,6 +35,8 @@ interface Pending {
 }
 interface CameraEntry { camera: NativeCamera; synchronized: boolean; policy: CameraPolicy | null }
 interface Resource { scope: MediaScope; expires: number }
+interface VideoResource { scope: MediaScope; retired: boolean; endpoint: VideoEndpoint | null;
+  ended: () => void; stopping: Promise<void> | null }
 interface SnapshotJob {
   scope: MediaScope; transferId: string | null; cancelled: boolean;
   resolve: (value: Buffer) => void; reject: (error: Error) => void;
@@ -57,6 +59,8 @@ export class AdapterSession {
   private readonly speakers = new Map<string, Resource>();
   private readonly snapshots = new Map<string, SnapshotJob>();
   private readonly policyChanges = new Set<string>();
+  private readonly policySynchronization = new Map<string, Promise<void>>();
+  private readonly videos = new Map<string, VideoResource>();
   private account: AccountScope | null = null;
   private revision = 0;
   private noticeEpoch = 0;
@@ -119,6 +123,13 @@ export class AdapterSession {
       if (this.complete && entry && sameScope(entry.camera.scope, scope) &&
           message.payload.revision === this.revision) {
         entry.camera.connection_state = message.payload.state === "unknown" ? null : message.payload.state === "online";
+      }
+      return true;
+    }
+    if (message.kind === "video_ended") {
+      const resource = this.videos.get(message.payload.session_id as string);
+      if (resource && sameScope(resource.scope, message.payload.scope as MediaScope)) {
+        resource.retired = true; this.videos.delete(message.payload.session_id as string); resource.ended();
       }
       return true;
     }
@@ -196,6 +207,10 @@ export class AdapterSession {
             policy: unchanged ? old.policy : null});
         }
         this.revision = revision; this.complete = complete === true;
+        if (this.complete) for (const [id, video] of this.videos) {
+          const current = this.entries.get(video.scope.camera_id);
+          if (!current || !sameScope(current.camera.scope, video.scope)) this.retireVideo(id, video);
+        }
         this.options.onInventory?.();
         return;
       }
@@ -262,9 +277,69 @@ export class AdapterSession {
     } finally { this.policyChanges.delete(identity); }
   }
 
+  async ensurePolicy(cameraId: string, identity: string, policy: CameraPolicy): Promise<void> {
+    const pending = this.policySynchronization.get(identity);
+    if (pending) await pending;
+    const entry = this.entry(cameraId, identity);
+    if (entry.synchronized && entry.policy && Object.keys(policy).every(name =>
+      entry.policy![name as keyof CameraPolicy] === policy[name as keyof CameraPolicy])) return;
+    const operation = this.updatePolicy(cameraId, identity, policy);
+    this.policySynchronization.set(identity, operation);
+    try { await operation; }
+    finally { if (this.policySynchronization.get(identity) === operation) this.policySynchronization.delete(identity); }
+  }
+
+  async prepareVideo(cameraId: string, identity: string, sessionId: string, options: VideoPrepare, ended: () => void): Promise<VideoDelegate> {
+    const scope = {...this.entry(cameraId, identity, "streaming").camera.scope};
+    if (this.videos.has(sessionId) || this.videos.size + this.live.size >= MAX_LIVE_SESSIONS ||
+        [...this.videos.values()].filter(video => video.scope.camera_id === cameraId).length >= 2) throw new ProtocolError("video-capacity");
+    const resource: VideoResource = {scope, retired: false, endpoint: null, ended, stopping: null};
+    this.videos.set(sessionId, resource);
+    try {
+      const reply = await this.request("video_prepare", {scope, session_id: sessionId, ...options});
+      this.video(sessionId);
+      if (reply.payload.status !== "accepted" || reply.payload.code !== "ok") throw new ProtocolError("video-prepare-rejected");
+      const endpoint = structuredClone(reply.payload.endpoint as VideoEndpoint);
+      if (endpoint.key !== options.key || endpoint.salt !== options.salt) throw new ProtocolError("video-endpoint-mismatch");
+      resource.endpoint = endpoint;
+      return new VideoDelegate(this, sessionId, endpoint);
+    } catch (error) {
+      await this.stopVideo(sessionId);
+      throw error;
+    }
+  }
+  private video(sessionId: string): VideoResource {
+    const resource = this.videos.get(sessionId);
+    if (!resource || resource.retired) throw new ProtocolError("video-retired");
+    const current = this.entry(resource.scope.camera_id, sourceKey(resource.scope), "streaming");
+    if (!sameScope(current.camera.scope, resource.scope)) throw new ProtocolError("video-retired");
+    return resource;
+  }
+  async startVideo(sessionId: string, config: VideoConfiguration, reconfigure = false): Promise<void> {
+    const resource = this.video(sessionId);
+    const reply = await this.request(reconfigure ? "video_reconfigure" : "video_start", {scope: resource.scope, session_id: sessionId, config});
+    this.video(sessionId);
+    if (reply.payload.status !== "accepted" || reply.payload.code !== "ok") throw new ProtocolError("video-configuration-rejected");
+  }
+  stopVideo(sessionId: string): Promise<void> {
+    const resource = this.videos.get(sessionId);
+    if (!resource) return Promise.resolve();
+    if (resource.stopping) return resource.stopping;
+    resource.retired = true;
+    resource.stopping = this.request("video_stop", {scope: resource.scope, session_id: sessionId}).then(reply => {
+      if (reply.payload.status !== "accepted" || reply.payload.code !== "ok") throw new ProtocolError("video-stop-rejected");
+      if (this.videos.get(sessionId) === resource) this.videos.delete(sessionId);
+    }).catch(error => { throw this.fail(error instanceof ProtocolError ? error : new ProtocolError("video-cleanup-failed")); });
+    return resource.stopping;
+  }
+  private retireVideo(id: string, video: VideoResource): void {
+    video.retired = true; video.ended();
+    void this.stopVideo(id).catch(() => {});
+  }
+
   async acquireLive(cameraId: string, identity: string, ttlMs = 30_000): Promise<LiveDelegate> {
     const entry = this.entry(cameraId, identity, "streaming"), scope = {...entry.camera.scope};
-    if (this.live.size >= MAX_LIVE_SESSIONS) throw new ProtocolError("live-capacity");
+    if (this.live.size + this.videos.size >= MAX_LIVE_SESSIONS) throw new ProtocolError("live-capacity");
     const sessionId = randomUUID(); this.live.set(sessionId, {scope, expires: 0});
     try {
       const reply = await this.request("lease_request", {scope, session_id: sessionId, purpose: "homekit_live", ttl_ms: ttlMs});
@@ -395,7 +470,8 @@ export class AdapterSession {
     if (this.closed) return;
     await this.options.send(validateDirection({v: 1, kind, boot_id: this.bootId, request_id: randomUUID(), payload}, "hap"));
   }
-  private retireCamera(scope: MediaScope): void {
+  private retireCamera(scope: MediaScope, includeVideos = true): void {
+    if (includeVideos) for (const [id, video] of this.videos) if (sourceKey(video.scope) === sourceKey(scope)) this.retireVideo(id, video);
     for (const [id, resource] of this.live) if (sourceKey(resource.scope) === sourceKey(scope)) {
       this.live.delete(id); void this.request("lease_stop", {scope: resource.scope, session_id: id}).catch(() => {});
     }
@@ -407,7 +483,8 @@ export class AdapterSession {
   private invalidate(): void {
     this.complete = false;
     this.options.onInvalidate?.();
-    for (const entry of this.entries.values()) this.retireCamera(entry.camera.scope);
+    for (const [id, video] of this.videos) if (!sameAccount(video.scope, this.account)) this.retireVideo(id, video);
+    for (const entry of this.entries.values()) this.retireCamera(entry.camera.scope, false);
   }
   private fail(error: ProtocolError): ProtocolError {
     if (!this.closed) { this.close(); this.options.onFailure?.(error); }
@@ -419,6 +496,8 @@ export class AdapterSession {
     this.options.onInvalidate?.();
     for (const item of this.pending.values()) { clearTimeout(item.timer); item.reject(new ProtocolError("session-closed")); }
     this.pending.clear();
+    for (const video of this.videos.values()) { video.retired = true; video.ended(); }
+    this.videos.clear(); this.policySynchronization.clear();
     for (const [id] of this.snapshots) this.cancelSnapshot(id, "session-closed");
     this.entries.clear(); this.live.clear(); this.speakers.clear(); this.policyChanges.clear();
     void this.options.bulk?.close("cancelled").catch(() => this.options.onFailure?.(new ProtocolError("bulk-cleanup-failed")));
@@ -430,6 +509,11 @@ export class CameraDelegate {
   get info(): NativeCamera { return this.session.cameraInfo(this.cameraId, this.identity); }
   get ready(): boolean { return this.session.cameraReady(this.cameraId, this.identity); }
   updatePolicy(policy: CameraPolicy): Promise<void> { return this.session.updatePolicy(this.cameraId, this.identity, policy); }
+  ensurePolicy(policy: CameraPolicy): Promise<void> { return this.session.ensurePolicy(this.cameraId, this.identity, policy); }
+  prepareVideo(sessionId: string, options: VideoPrepare, ended: () => void): Promise<VideoDelegate> {
+    return this.session.prepareVideo(this.cameraId, this.identity, sessionId, options, ended);
+  }
+  stopVideo(sessionId: string): Promise<void> { return this.session.stopVideo(sessionId); }
   acquireLive(ttlMs?: number): Promise<LiveDelegate> { return this.session.acquireLive(this.cameraId, this.identity, ttlMs); }
   snapshot(width: number, height: number, reason?: "periodic" | "event" | "explicit"): Promise<Buffer> {
     return this.session.snapshot(this.cameraId, this.identity, width, height, reason);
@@ -438,6 +522,16 @@ export class CameraDelegate {
     return this.session.setControl(this.cameraId, this.identity, control, enabled);
   }
   acquireTalkback(): Promise<TalkbackDelegate> { return this.session.acquireTalkback(this.cameraId, this.identity); }
+}
+export class VideoDelegate {
+  private readonly preparedEndpoint: VideoEndpoint;
+  constructor(private readonly session: AdapterSession, readonly sessionId: string, endpoint: VideoEndpoint) {
+    this.preparedEndpoint = structuredClone(endpoint);
+  }
+  get endpoint(): VideoEndpoint { return structuredClone(this.preparedEndpoint); }
+  start(config: VideoConfiguration): Promise<void> { return this.session.startVideo(this.sessionId, config); }
+  reconfigure(config: VideoConfiguration): Promise<void> { return this.session.startVideo(this.sessionId, config, true); }
+  close(): Promise<void> { return this.session.stopVideo(this.sessionId); }
 }
 export class LiveDelegate {
   constructor(private readonly session: AdapterSession, readonly sessionId: string) {}

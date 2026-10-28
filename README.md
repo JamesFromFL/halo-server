@@ -11,7 +11,9 @@ foundation, validated operating modes, shared native service facade and a privat
 supervised adapter lifecycle with operational private IPC are implemented. Stable
 camera selection/identity, protected pairing-state ownership and prompt scoped
 motion/doorbell delivery are implemented as accessory groundwork. The
-adapter does **not** publish accessories or deliver HomeKit media yet. The current
+adapter now implements direct H264 video and can publish explicitly selected
+development accessories after native output qualification. Audio, snapshots,
+pairing management and HKSV remain unfinished. The current
 working integration remains the existing plugin/RTSP path. See
 [direct HomeKit engineering status](docs/direct-homekit-status.md) for completed
 work, validation boundaries, and remaining implementation gates.

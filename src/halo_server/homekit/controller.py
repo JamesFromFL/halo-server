@@ -216,6 +216,12 @@ class HomeKitController:
             raise HomeKitOperationError("scope_changed")
         return entry
 
+    def authorize(self, boot_id: str, scope: MediaScope, permission: str) -> None:
+        """Recheck selected source/privacy authority without acquiring a resource."""
+        with self._lock:
+            if not self._entry(boot_id, scope).policy.permits(permission):
+                raise HomeKitOperationError("policy_denied")
+
     def _valid(self, claim: _Claim) -> bool:
         with self._lock:
             try:
@@ -533,7 +539,13 @@ class NativeLiveHandle:
     def __init__(self, controller: HomeKitController, claim: _Claim):
         self._controller, self._claim = controller, claim
         self._cursor = None
+        self._capture_epoch = None
         self._reading = asyncio.Lock()
+
+    @property
+    def capture_epoch(self):
+        resource = self._claim.resource
+        return resource.buffer.capture_epoch if resource is not None else None
 
     @property
     def session_id(self):
@@ -562,6 +574,12 @@ class NativeLiveHandle:
                 )
                 if not self.is_current():
                     raise HomeKitOperationError("authority_changed")
+                epoch_changed = (
+                    self._capture_epoch is not None and self._capture_epoch != batch.capture_epoch
+                )
+                self._capture_epoch = batch.capture_epoch
+                if epoch_changed:
+                    self._cursor = None
                 if batch.packets:
                     self._cursor = batch.packets[-1].sequence
                 entry = self._controller._cameras[self.scope.source_key]
@@ -575,7 +593,8 @@ class NativeLiveHandle:
                         for packet in batch.packets
                         if audio or packet.stream is MediaStreamKind.VIDEO
                     ),
-                    batch.resynchronized,
+                    batch.resynchronized or epoch_changed,
+                    batch.capture_epoch,
                 )
         finally:
             self._controller._finish_work(self._claim, task)

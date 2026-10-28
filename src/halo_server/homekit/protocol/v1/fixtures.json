@@ -2411,6 +2411,194 @@
         "synchronized": false,
         "expires_at_ms": 0
       }
+    },
+    {
+      "v": 1,
+      "kind": "video_prepare",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "source_address": "127.0.0.1",
+        "target_address": "127.0.0.1",
+        "address_version": "ipv4",
+        "target_port": 5555,
+        "key": "AAECAwQFBgcICQoLDA0ODw==",
+        "salt": "AAECAwQFBgcICQoLDA0="
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_prepare_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "status": "accepted",
+        "code": "ok",
+        "endpoint": {
+          "address": "127.0.0.1",
+          "port": 5556,
+          "ssrc": 123,
+          "key": "AAECAwQFBgcICQoLDA0ODw==",
+          "salt": "AAECAwQFBgcICQoLDA0="
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_start",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "config": {
+          "width": 320,
+          "height": 240,
+          "fps": 15,
+          "profile": "baseline",
+          "level": "3.1",
+          "max_bit_rate": 300,
+          "payload_type": 99,
+          "rtcp_interval": 0.5,
+          "mtu": 1200
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_start_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "status": "accepted",
+        "code": "ok"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_reconfigure",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "config": {
+          "width": 320,
+          "height": 240,
+          "fps": 15,
+          "profile": "baseline",
+          "level": "3.1",
+          "max_bit_rate": 300,
+          "payload_type": 99,
+          "rtcp_interval": 0.5,
+          "mtu": 1200
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_reconfigure_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "status": "accepted",
+        "code": "ok"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_stop",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_stop_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "status": "accepted",
+        "code": "ok"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_ended",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "code": "source-failed"
+      }
     }
   ],
   "invalid": [
@@ -14777,6 +14965,2921 @@
         "ttl_ms": 2000,
         "expires_at_ms": 30000
       }
+    },
+    {
+      "v": 1,
+      "kind": "video_prepare",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "source_address": "127.0.0.1",
+        "target_address": "127.0.0.1",
+        "address_version": "ipv4",
+        "target_port": 5555,
+        "key": "AAECAwQFBgcICQoLDA0ODw==",
+        "salt": "AAECAwQFBgcICQoLDA0="
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_prepare",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "source_address": "127.0.0.1",
+        "target_address": "127.0.0.1",
+        "address_version": "ipv4",
+        "target_port": 5555,
+        "key": "AAECAwQFBgcICQoLDA0ODw==",
+        "salt": "AAECAwQFBgcICQoLDA0="
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_prepare",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "target_address": "127.0.0.1",
+        "address_version": "ipv4",
+        "target_port": 5555,
+        "key": "AAECAwQFBgcICQoLDA0ODw==",
+        "salt": "AAECAwQFBgcICQoLDA0="
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_prepare",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "source_address": "127.0.0.1",
+        "address_version": "ipv4",
+        "target_port": 5555,
+        "key": "AAECAwQFBgcICQoLDA0ODw==",
+        "salt": "AAECAwQFBgcICQoLDA0="
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_prepare",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "source_address": "127.0.0.1",
+        "target_address": "127.0.0.1",
+        "target_port": 5555,
+        "key": "AAECAwQFBgcICQoLDA0ODw==",
+        "salt": "AAECAwQFBgcICQoLDA0="
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_prepare",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "source_address": "127.0.0.1",
+        "target_address": "127.0.0.1",
+        "address_version": "ipv4",
+        "key": "AAECAwQFBgcICQoLDA0ODw==",
+        "salt": "AAECAwQFBgcICQoLDA0="
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_prepare",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "source_address": "127.0.0.1",
+        "target_address": "127.0.0.1",
+        "address_version": "ipv4",
+        "target_port": 5555,
+        "salt": "AAECAwQFBgcICQoLDA0="
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_prepare",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "source_address": "127.0.0.1",
+        "target_address": "127.0.0.1",
+        "address_version": "ipv4",
+        "target_port": 5555,
+        "key": "AAECAwQFBgcICQoLDA0ODw=="
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_prepare_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "status": "accepted",
+        "code": "ok",
+        "endpoint": {
+          "address": "127.0.0.1",
+          "port": 5556,
+          "ssrc": 123,
+          "key": "AAECAwQFBgcICQoLDA0ODw==",
+          "salt": "AAECAwQFBgcICQoLDA0="
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_prepare_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "status": "accepted",
+        "code": "ok",
+        "endpoint": {
+          "address": "127.0.0.1",
+          "port": 5556,
+          "ssrc": 123,
+          "key": "AAECAwQFBgcICQoLDA0ODw==",
+          "salt": "AAECAwQFBgcICQoLDA0="
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_prepare_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "code": "ok",
+        "endpoint": {
+          "address": "127.0.0.1",
+          "port": 5556,
+          "ssrc": 123,
+          "key": "AAECAwQFBgcICQoLDA0ODw==",
+          "salt": "AAECAwQFBgcICQoLDA0="
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_prepare_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "status": "accepted",
+        "endpoint": {
+          "address": "127.0.0.1",
+          "port": 5556,
+          "ssrc": 123,
+          "key": "AAECAwQFBgcICQoLDA0ODw==",
+          "salt": "AAECAwQFBgcICQoLDA0="
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_prepare_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "status": "accepted",
+        "code": "ok"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_start",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "config": {
+          "width": 320,
+          "height": 240,
+          "fps": 15,
+          "profile": "baseline",
+          "level": "3.1",
+          "max_bit_rate": 300,
+          "payload_type": 99,
+          "rtcp_interval": 0.5,
+          "mtu": 1200
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_start",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "config": {
+          "width": 320,
+          "height": 240,
+          "fps": 15,
+          "profile": "baseline",
+          "level": "3.1",
+          "max_bit_rate": 300,
+          "payload_type": 99,
+          "rtcp_interval": 0.5,
+          "mtu": 1200
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_start",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_start_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "status": "accepted",
+        "code": "ok"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_start_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "status": "accepted",
+        "code": "ok"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_start_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "code": "ok"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_start_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "status": "accepted"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_reconfigure",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "config": {
+          "width": 320,
+          "height": 240,
+          "fps": 15,
+          "profile": "baseline",
+          "level": "3.1",
+          "max_bit_rate": 300,
+          "payload_type": 99,
+          "rtcp_interval": 0.5,
+          "mtu": 1200
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_reconfigure",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "config": {
+          "width": 320,
+          "height": 240,
+          "fps": 15,
+          "profile": "baseline",
+          "level": "3.1",
+          "max_bit_rate": 300,
+          "payload_type": 99,
+          "rtcp_interval": 0.5,
+          "mtu": 1200
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_reconfigure",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_reconfigure_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "status": "accepted",
+        "code": "ok"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_reconfigure_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "status": "accepted",
+        "code": "ok"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_reconfigure_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "code": "ok"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_reconfigure_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "status": "accepted"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_stop",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "session_id": "00000000-0000-0000-0000-000000000004"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_stop",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_stop_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "status": "accepted",
+        "code": "ok"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_stop_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "status": "accepted",
+        "code": "ok"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_stop_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "code": "ok"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_stop_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "status": "accepted"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_ended",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "code": "source-failed"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_ended",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "code": "source-failed"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_ended",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_prepare",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "source_address": "127.0.0.1",
+        "target_address": "127.0.0.1",
+        "address_version": "ipv4",
+        "target_port": 5555,
+        "key": "",
+        "salt": "AAECAwQFBgcICQoLDA0="
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_prepare",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "source_address": "127.0.0.1",
+        "target_address": "127.0.0.1",
+        "address_version": "ipv4",
+        "target_port": 5555,
+        "key": "bad\n",
+        "salt": "AAECAwQFBgcICQoLDA0="
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_prepare",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "source_address": "127.0.0.1",
+        "target_address": "127.0.0.1",
+        "address_version": "ipv4",
+        "target_port": 5555,
+        "key": true,
+        "salt": "AAECAwQFBgcICQoLDA0="
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_prepare",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "source_address": "127.0.0.1",
+        "target_address": "127.0.0.1",
+        "address_version": "ipv4",
+        "target_port": 5555,
+        "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "salt": "AAECAwQFBgcICQoLDA0="
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_prepare",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "source_address": "127.0.0.1",
+        "target_address": "127.0.0.1",
+        "address_version": "ipv4",
+        "target_port": 5555,
+        "key": "AAECAwQFBgcICQoLDA0ODw==",
+        "salt": ""
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_prepare",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "source_address": "127.0.0.1",
+        "target_address": "127.0.0.1",
+        "address_version": "ipv4",
+        "target_port": 5555,
+        "key": "AAECAwQFBgcICQoLDA0ODw==",
+        "salt": "bad\n"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_prepare",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "source_address": "127.0.0.1",
+        "target_address": "127.0.0.1",
+        "address_version": "ipv4",
+        "target_port": 5555,
+        "key": "AAECAwQFBgcICQoLDA0ODw==",
+        "salt": true
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_prepare",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "source_address": "127.0.0.1",
+        "target_address": "127.0.0.1",
+        "address_version": "ipv4",
+        "target_port": 5555,
+        "key": "AAECAwQFBgcICQoLDA0ODw==",
+        "salt": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_prepare",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": null,
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "source_address": "127.0.0.1",
+        "target_address": "127.0.0.1",
+        "address_version": "ipv4",
+        "target_port": 5555,
+        "key": "AAECAwQFBgcICQoLDA0ODw==",
+        "salt": "AAECAwQFBgcICQoLDA0="
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_prepare",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {},
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "source_address": "127.0.0.1",
+        "target_address": "127.0.0.1",
+        "address_version": "ipv4",
+        "target_port": 5555,
+        "key": "AAECAwQFBgcICQoLDA0ODw==",
+        "salt": "AAECAwQFBgcICQoLDA0="
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_prepare",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": true,
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "source_address": "127.0.0.1",
+        "target_address": "127.0.0.1",
+        "address_version": "ipv4",
+        "target_port": 5555,
+        "key": "AAECAwQFBgcICQoLDA0ODw==",
+        "salt": "AAECAwQFBgcICQoLDA0="
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_prepare",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": "bad",
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "source_address": "127.0.0.1",
+        "target_address": "127.0.0.1",
+        "address_version": "ipv4",
+        "target_port": 5555,
+        "key": "AAECAwQFBgcICQoLDA0ODw==",
+        "salt": "AAECAwQFBgcICQoLDA0="
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_prepare",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": null,
+        "source_address": "127.0.0.1",
+        "target_address": "127.0.0.1",
+        "address_version": "ipv4",
+        "target_port": 5555,
+        "key": "AAECAwQFBgcICQoLDA0ODw==",
+        "salt": "AAECAwQFBgcICQoLDA0="
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_prepare",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": {},
+        "source_address": "127.0.0.1",
+        "target_address": "127.0.0.1",
+        "address_version": "ipv4",
+        "target_port": 5555,
+        "key": "AAECAwQFBgcICQoLDA0ODw==",
+        "salt": "AAECAwQFBgcICQoLDA0="
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_prepare",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": true,
+        "source_address": "127.0.0.1",
+        "target_address": "127.0.0.1",
+        "address_version": "ipv4",
+        "target_port": 5555,
+        "key": "AAECAwQFBgcICQoLDA0ODw==",
+        "salt": "AAECAwQFBgcICQoLDA0="
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_prepare",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "bad",
+        "source_address": "127.0.0.1",
+        "target_address": "127.0.0.1",
+        "address_version": "ipv4",
+        "target_port": 5555,
+        "key": "AAECAwQFBgcICQoLDA0ODw==",
+        "salt": "AAECAwQFBgcICQoLDA0="
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_prepare_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": null,
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "status": "accepted",
+        "code": "ok",
+        "endpoint": {
+          "address": "127.0.0.1",
+          "port": 5556,
+          "ssrc": 123,
+          "key": "AAECAwQFBgcICQoLDA0ODw==",
+          "salt": "AAECAwQFBgcICQoLDA0="
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_prepare_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {},
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "status": "accepted",
+        "code": "ok",
+        "endpoint": {
+          "address": "127.0.0.1",
+          "port": 5556,
+          "ssrc": 123,
+          "key": "AAECAwQFBgcICQoLDA0ODw==",
+          "salt": "AAECAwQFBgcICQoLDA0="
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_prepare_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": true,
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "status": "accepted",
+        "code": "ok",
+        "endpoint": {
+          "address": "127.0.0.1",
+          "port": 5556,
+          "ssrc": 123,
+          "key": "AAECAwQFBgcICQoLDA0ODw==",
+          "salt": "AAECAwQFBgcICQoLDA0="
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_prepare_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": "bad",
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "status": "accepted",
+        "code": "ok",
+        "endpoint": {
+          "address": "127.0.0.1",
+          "port": 5556,
+          "ssrc": 123,
+          "key": "AAECAwQFBgcICQoLDA0ODw==",
+          "salt": "AAECAwQFBgcICQoLDA0="
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_prepare_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": null,
+        "status": "accepted",
+        "code": "ok",
+        "endpoint": {
+          "address": "127.0.0.1",
+          "port": 5556,
+          "ssrc": 123,
+          "key": "AAECAwQFBgcICQoLDA0ODw==",
+          "salt": "AAECAwQFBgcICQoLDA0="
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_prepare_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": {},
+        "status": "accepted",
+        "code": "ok",
+        "endpoint": {
+          "address": "127.0.0.1",
+          "port": 5556,
+          "ssrc": 123,
+          "key": "AAECAwQFBgcICQoLDA0ODw==",
+          "salt": "AAECAwQFBgcICQoLDA0="
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_prepare_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": true,
+        "status": "accepted",
+        "code": "ok",
+        "endpoint": {
+          "address": "127.0.0.1",
+          "port": 5556,
+          "ssrc": 123,
+          "key": "AAECAwQFBgcICQoLDA0ODw==",
+          "salt": "AAECAwQFBgcICQoLDA0="
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_prepare_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "bad",
+        "status": "accepted",
+        "code": "ok",
+        "endpoint": {
+          "address": "127.0.0.1",
+          "port": 5556,
+          "ssrc": 123,
+          "key": "AAECAwQFBgcICQoLDA0ODw==",
+          "salt": "AAECAwQFBgcICQoLDA0="
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_start",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": null,
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "config": {
+          "width": 320,
+          "height": 240,
+          "fps": 15,
+          "profile": "baseline",
+          "level": "3.1",
+          "max_bit_rate": 300,
+          "payload_type": 99,
+          "rtcp_interval": 0.5,
+          "mtu": 1200
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_start",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {},
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "config": {
+          "width": 320,
+          "height": 240,
+          "fps": 15,
+          "profile": "baseline",
+          "level": "3.1",
+          "max_bit_rate": 300,
+          "payload_type": 99,
+          "rtcp_interval": 0.5,
+          "mtu": 1200
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_start",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": true,
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "config": {
+          "width": 320,
+          "height": 240,
+          "fps": 15,
+          "profile": "baseline",
+          "level": "3.1",
+          "max_bit_rate": 300,
+          "payload_type": 99,
+          "rtcp_interval": 0.5,
+          "mtu": 1200
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_start",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": "bad",
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "config": {
+          "width": 320,
+          "height": 240,
+          "fps": 15,
+          "profile": "baseline",
+          "level": "3.1",
+          "max_bit_rate": 300,
+          "payload_type": 99,
+          "rtcp_interval": 0.5,
+          "mtu": 1200
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_start",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": null,
+        "config": {
+          "width": 320,
+          "height": 240,
+          "fps": 15,
+          "profile": "baseline",
+          "level": "3.1",
+          "max_bit_rate": 300,
+          "payload_type": 99,
+          "rtcp_interval": 0.5,
+          "mtu": 1200
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_start",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": {},
+        "config": {
+          "width": 320,
+          "height": 240,
+          "fps": 15,
+          "profile": "baseline",
+          "level": "3.1",
+          "max_bit_rate": 300,
+          "payload_type": 99,
+          "rtcp_interval": 0.5,
+          "mtu": 1200
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_start",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": true,
+        "config": {
+          "width": 320,
+          "height": 240,
+          "fps": 15,
+          "profile": "baseline",
+          "level": "3.1",
+          "max_bit_rate": 300,
+          "payload_type": 99,
+          "rtcp_interval": 0.5,
+          "mtu": 1200
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_start",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "bad",
+        "config": {
+          "width": 320,
+          "height": 240,
+          "fps": 15,
+          "profile": "baseline",
+          "level": "3.1",
+          "max_bit_rate": 300,
+          "payload_type": 99,
+          "rtcp_interval": 0.5,
+          "mtu": 1200
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_reconfigure",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": null,
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "config": {
+          "width": 320,
+          "height": 240,
+          "fps": 15,
+          "profile": "baseline",
+          "level": "3.1",
+          "max_bit_rate": 300,
+          "payload_type": 99,
+          "rtcp_interval": 0.5,
+          "mtu": 1200
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_reconfigure",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {},
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "config": {
+          "width": 320,
+          "height": 240,
+          "fps": 15,
+          "profile": "baseline",
+          "level": "3.1",
+          "max_bit_rate": 300,
+          "payload_type": 99,
+          "rtcp_interval": 0.5,
+          "mtu": 1200
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_reconfigure",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": true,
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "config": {
+          "width": 320,
+          "height": 240,
+          "fps": 15,
+          "profile": "baseline",
+          "level": "3.1",
+          "max_bit_rate": 300,
+          "payload_type": 99,
+          "rtcp_interval": 0.5,
+          "mtu": 1200
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_reconfigure",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": "bad",
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "config": {
+          "width": 320,
+          "height": 240,
+          "fps": 15,
+          "profile": "baseline",
+          "level": "3.1",
+          "max_bit_rate": 300,
+          "payload_type": 99,
+          "rtcp_interval": 0.5,
+          "mtu": 1200
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_reconfigure",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": null,
+        "config": {
+          "width": 320,
+          "height": 240,
+          "fps": 15,
+          "profile": "baseline",
+          "level": "3.1",
+          "max_bit_rate": 300,
+          "payload_type": 99,
+          "rtcp_interval": 0.5,
+          "mtu": 1200
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_reconfigure",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": {},
+        "config": {
+          "width": 320,
+          "height": 240,
+          "fps": 15,
+          "profile": "baseline",
+          "level": "3.1",
+          "max_bit_rate": 300,
+          "payload_type": 99,
+          "rtcp_interval": 0.5,
+          "mtu": 1200
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_reconfigure",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": true,
+        "config": {
+          "width": 320,
+          "height": 240,
+          "fps": 15,
+          "profile": "baseline",
+          "level": "3.1",
+          "max_bit_rate": 300,
+          "payload_type": 99,
+          "rtcp_interval": 0.5,
+          "mtu": 1200
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_reconfigure",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "bad",
+        "config": {
+          "width": 320,
+          "height": 240,
+          "fps": 15,
+          "profile": "baseline",
+          "level": "3.1",
+          "max_bit_rate": 300,
+          "payload_type": 99,
+          "rtcp_interval": 0.5,
+          "mtu": 1200
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_stop",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": null,
+        "session_id": "00000000-0000-0000-0000-000000000004"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_stop",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {},
+        "session_id": "00000000-0000-0000-0000-000000000004"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_stop",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": true,
+        "session_id": "00000000-0000-0000-0000-000000000004"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_stop",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": "bad",
+        "session_id": "00000000-0000-0000-0000-000000000004"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_stop",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": null
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_stop",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": {}
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_stop",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": true
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_stop",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "bad"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_ended",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": null,
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "code": "source-failed"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_ended",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {},
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "code": "source-failed"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_ended",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": true,
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "code": "source-failed"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_ended",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": "bad",
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "code": "source-failed"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_ended",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": null,
+        "code": "source-failed"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_ended",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": {},
+        "code": "source-failed"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_ended",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": true,
+        "code": "source-failed"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_ended",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "bad",
+        "code": "source-failed"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_start",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "config": {
+          "width": null,
+          "height": 240,
+          "fps": 15,
+          "profile": "baseline",
+          "level": "3.1",
+          "max_bit_rate": 300,
+          "payload_type": 99,
+          "rtcp_interval": 0.5,
+          "mtu": 1200
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_start",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "config": {
+          "width": true,
+          "height": 240,
+          "fps": 15,
+          "profile": "baseline",
+          "level": "3.1",
+          "max_bit_rate": 300,
+          "payload_type": 99,
+          "rtcp_interval": 0.5,
+          "mtu": 1200
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_start",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "config": {
+          "width": -1,
+          "height": 240,
+          "fps": 15,
+          "profile": "baseline",
+          "level": "3.1",
+          "max_bit_rate": 300,
+          "payload_type": 99,
+          "rtcp_interval": 0.5,
+          "mtu": 1200
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_start",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "config": {
+          "width": 1e+30,
+          "height": 240,
+          "fps": 15,
+          "profile": "baseline",
+          "level": "3.1",
+          "max_bit_rate": 300,
+          "payload_type": 99,
+          "rtcp_interval": 0.5,
+          "mtu": 1200
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_start",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "config": {
+          "width": "1",
+          "height": 240,
+          "fps": 15,
+          "profile": "baseline",
+          "level": "3.1",
+          "max_bit_rate": 300,
+          "payload_type": 99,
+          "rtcp_interval": 0.5,
+          "mtu": 1200
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_start",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "config": {
+          "width": 320,
+          "height": null,
+          "fps": 15,
+          "profile": "baseline",
+          "level": "3.1",
+          "max_bit_rate": 300,
+          "payload_type": 99,
+          "rtcp_interval": 0.5,
+          "mtu": 1200
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_start",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "config": {
+          "width": 320,
+          "height": true,
+          "fps": 15,
+          "profile": "baseline",
+          "level": "3.1",
+          "max_bit_rate": 300,
+          "payload_type": 99,
+          "rtcp_interval": 0.5,
+          "mtu": 1200
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_start",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "config": {
+          "width": 320,
+          "height": -1,
+          "fps": 15,
+          "profile": "baseline",
+          "level": "3.1",
+          "max_bit_rate": 300,
+          "payload_type": 99,
+          "rtcp_interval": 0.5,
+          "mtu": 1200
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_start",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "config": {
+          "width": 320,
+          "height": 1e+30,
+          "fps": 15,
+          "profile": "baseline",
+          "level": "3.1",
+          "max_bit_rate": 300,
+          "payload_type": 99,
+          "rtcp_interval": 0.5,
+          "mtu": 1200
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_start",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "config": {
+          "width": 320,
+          "height": "1",
+          "fps": 15,
+          "profile": "baseline",
+          "level": "3.1",
+          "max_bit_rate": 300,
+          "payload_type": 99,
+          "rtcp_interval": 0.5,
+          "mtu": 1200
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_start",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "config": {
+          "width": 320,
+          "height": 240,
+          "fps": null,
+          "profile": "baseline",
+          "level": "3.1",
+          "max_bit_rate": 300,
+          "payload_type": 99,
+          "rtcp_interval": 0.5,
+          "mtu": 1200
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_start",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "config": {
+          "width": 320,
+          "height": 240,
+          "fps": true,
+          "profile": "baseline",
+          "level": "3.1",
+          "max_bit_rate": 300,
+          "payload_type": 99,
+          "rtcp_interval": 0.5,
+          "mtu": 1200
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_start",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "config": {
+          "width": 320,
+          "height": 240,
+          "fps": -1,
+          "profile": "baseline",
+          "level": "3.1",
+          "max_bit_rate": 300,
+          "payload_type": 99,
+          "rtcp_interval": 0.5,
+          "mtu": 1200
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_start",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "config": {
+          "width": 320,
+          "height": 240,
+          "fps": 1e+30,
+          "profile": "baseline",
+          "level": "3.1",
+          "max_bit_rate": 300,
+          "payload_type": 99,
+          "rtcp_interval": 0.5,
+          "mtu": 1200
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_start",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "config": {
+          "width": 320,
+          "height": 240,
+          "fps": "1",
+          "profile": "baseline",
+          "level": "3.1",
+          "max_bit_rate": 300,
+          "payload_type": 99,
+          "rtcp_interval": 0.5,
+          "mtu": 1200
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_start",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "config": {
+          "width": 320,
+          "height": 240,
+          "fps": 15,
+          "profile": "baseline",
+          "level": "3.1",
+          "max_bit_rate": null,
+          "payload_type": 99,
+          "rtcp_interval": 0.5,
+          "mtu": 1200
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_start",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "config": {
+          "width": 320,
+          "height": 240,
+          "fps": 15,
+          "profile": "baseline",
+          "level": "3.1",
+          "max_bit_rate": true,
+          "payload_type": 99,
+          "rtcp_interval": 0.5,
+          "mtu": 1200
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_start",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "config": {
+          "width": 320,
+          "height": 240,
+          "fps": 15,
+          "profile": "baseline",
+          "level": "3.1",
+          "max_bit_rate": -1,
+          "payload_type": 99,
+          "rtcp_interval": 0.5,
+          "mtu": 1200
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_start",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "config": {
+          "width": 320,
+          "height": 240,
+          "fps": 15,
+          "profile": "baseline",
+          "level": "3.1",
+          "max_bit_rate": 1e+30,
+          "payload_type": 99,
+          "rtcp_interval": 0.5,
+          "mtu": 1200
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_start",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "config": {
+          "width": 320,
+          "height": 240,
+          "fps": 15,
+          "profile": "baseline",
+          "level": "3.1",
+          "max_bit_rate": "1",
+          "payload_type": 99,
+          "rtcp_interval": 0.5,
+          "mtu": 1200
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_start",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "config": {
+          "width": 320,
+          "height": 240,
+          "fps": 15,
+          "profile": "baseline",
+          "level": "3.1",
+          "max_bit_rate": 300,
+          "payload_type": null,
+          "rtcp_interval": 0.5,
+          "mtu": 1200
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_start",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "config": {
+          "width": 320,
+          "height": 240,
+          "fps": 15,
+          "profile": "baseline",
+          "level": "3.1",
+          "max_bit_rate": 300,
+          "payload_type": true,
+          "rtcp_interval": 0.5,
+          "mtu": 1200
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_start",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "config": {
+          "width": 320,
+          "height": 240,
+          "fps": 15,
+          "profile": "baseline",
+          "level": "3.1",
+          "max_bit_rate": 300,
+          "payload_type": -1,
+          "rtcp_interval": 0.5,
+          "mtu": 1200
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_start",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "config": {
+          "width": 320,
+          "height": 240,
+          "fps": 15,
+          "profile": "baseline",
+          "level": "3.1",
+          "max_bit_rate": 300,
+          "payload_type": 1e+30,
+          "rtcp_interval": 0.5,
+          "mtu": 1200
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_start",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "config": {
+          "width": 320,
+          "height": 240,
+          "fps": 15,
+          "profile": "baseline",
+          "level": "3.1",
+          "max_bit_rate": 300,
+          "payload_type": "1",
+          "rtcp_interval": 0.5,
+          "mtu": 1200
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_start",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "config": {
+          "width": 320,
+          "height": 240,
+          "fps": 15,
+          "profile": "baseline",
+          "level": "3.1",
+          "max_bit_rate": 300,
+          "payload_type": 99,
+          "rtcp_interval": null,
+          "mtu": 1200
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_start",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "config": {
+          "width": 320,
+          "height": 240,
+          "fps": 15,
+          "profile": "baseline",
+          "level": "3.1",
+          "max_bit_rate": 300,
+          "payload_type": 99,
+          "rtcp_interval": true,
+          "mtu": 1200
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_start",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "config": {
+          "width": 320,
+          "height": 240,
+          "fps": 15,
+          "profile": "baseline",
+          "level": "3.1",
+          "max_bit_rate": 300,
+          "payload_type": 99,
+          "rtcp_interval": -1,
+          "mtu": 1200
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_start",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "config": {
+          "width": 320,
+          "height": 240,
+          "fps": 15,
+          "profile": "baseline",
+          "level": "3.1",
+          "max_bit_rate": 300,
+          "payload_type": 99,
+          "rtcp_interval": 1e+30,
+          "mtu": 1200
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_start",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "config": {
+          "width": 320,
+          "height": 240,
+          "fps": 15,
+          "profile": "baseline",
+          "level": "3.1",
+          "max_bit_rate": 300,
+          "payload_type": 99,
+          "rtcp_interval": "1",
+          "mtu": 1200
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_start",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "config": {
+          "width": 320,
+          "height": 240,
+          "fps": 15,
+          "profile": "baseline",
+          "level": "3.1",
+          "max_bit_rate": 300,
+          "payload_type": 99,
+          "rtcp_interval": 0.5,
+          "mtu": null
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_start",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "config": {
+          "width": 320,
+          "height": 240,
+          "fps": 15,
+          "profile": "baseline",
+          "level": "3.1",
+          "max_bit_rate": 300,
+          "payload_type": 99,
+          "rtcp_interval": 0.5,
+          "mtu": true
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_start",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "config": {
+          "width": 320,
+          "height": 240,
+          "fps": 15,
+          "profile": "baseline",
+          "level": "3.1",
+          "max_bit_rate": 300,
+          "payload_type": 99,
+          "rtcp_interval": 0.5,
+          "mtu": -1
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_start",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "config": {
+          "width": 320,
+          "height": 240,
+          "fps": 15,
+          "profile": "baseline",
+          "level": "3.1",
+          "max_bit_rate": 300,
+          "payload_type": 99,
+          "rtcp_interval": 0.5,
+          "mtu": 1e+30
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_start",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "config": {
+          "width": 320,
+          "height": 240,
+          "fps": 15,
+          "profile": "baseline",
+          "level": "3.1",
+          "max_bit_rate": 300,
+          "payload_type": 99,
+          "rtcp_interval": 0.5,
+          "mtu": "1"
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_prepare",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "source_address": "",
+        "target_address": "127.0.0.1",
+        "address_version": "ipv4",
+        "target_port": 5555,
+        "key": "AAECAwQFBgcICQoLDA0ODw==",
+        "salt": "AAECAwQFBgcICQoLDA0="
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_prepare",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "source_address": "127.0.0.1\n",
+        "target_address": "127.0.0.1",
+        "address_version": "ipv4",
+        "target_port": 5555,
+        "key": "AAECAwQFBgcICQoLDA0ODw==",
+        "salt": "AAECAwQFBgcICQoLDA0="
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_prepare",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "source_address": "some host",
+        "target_address": "127.0.0.1",
+        "address_version": "ipv4",
+        "target_port": 5555,
+        "key": "AAECAwQFBgcICQoLDA0ODw==",
+        "salt": "AAECAwQFBgcICQoLDA0="
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_prepare",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "source_address": "\u00e9",
+        "target_address": "127.0.0.1",
+        "address_version": "ipv4",
+        "target_port": 5555,
+        "key": "AAECAwQFBgcICQoLDA0ODw==",
+        "salt": "AAECAwQFBgcICQoLDA0="
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_prepare",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "source_address": null,
+        "target_address": "127.0.0.1",
+        "address_version": "ipv4",
+        "target_port": 5555,
+        "key": "AAECAwQFBgcICQoLDA0ODw==",
+        "salt": "AAECAwQFBgcICQoLDA0="
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_prepare",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "source_address": "127.0.0.1",
+        "target_address": "",
+        "address_version": "ipv4",
+        "target_port": 5555,
+        "key": "AAECAwQFBgcICQoLDA0ODw==",
+        "salt": "AAECAwQFBgcICQoLDA0="
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_prepare",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "source_address": "127.0.0.1",
+        "target_address": "127.0.0.1\n",
+        "address_version": "ipv4",
+        "target_port": 5555,
+        "key": "AAECAwQFBgcICQoLDA0ODw==",
+        "salt": "AAECAwQFBgcICQoLDA0="
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_prepare",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "source_address": "127.0.0.1",
+        "target_address": "some host",
+        "address_version": "ipv4",
+        "target_port": 5555,
+        "key": "AAECAwQFBgcICQoLDA0ODw==",
+        "salt": "AAECAwQFBgcICQoLDA0="
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_prepare",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "source_address": "127.0.0.1",
+        "target_address": "\u00e9",
+        "address_version": "ipv4",
+        "target_port": 5555,
+        "key": "AAECAwQFBgcICQoLDA0ODw==",
+        "salt": "AAECAwQFBgcICQoLDA0="
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_prepare",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "source_address": "127.0.0.1",
+        "target_address": null,
+        "address_version": "ipv4",
+        "target_port": 5555,
+        "key": "AAECAwQFBgcICQoLDA0ODw==",
+        "salt": "AAECAwQFBgcICQoLDA0="
+      }
     }
   ],
   "semantic_invalid": [
@@ -15309,6 +18412,192 @@
         "total_pages": 2,
         "entries": [],
         "media_ready": false
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_prepare_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "status": "accepted",
+        "code": "unsupported",
+        "endpoint": {
+          "address": "127.0.0.1",
+          "port": 5556,
+          "ssrc": 123,
+          "key": "AAECAwQFBgcICQoLDA0ODw==",
+          "salt": "AAECAwQFBgcICQoLDA0="
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_start_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "status": "accepted",
+        "code": "unsupported"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_reconfigure_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "status": "accepted",
+        "code": "unsupported"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_stop_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "status": "accepted",
+        "code": "unsupported"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_prepare",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "source_address": "127.0.0.1",
+        "target_address": "127.0.0.1",
+        "address_version": "ipv4",
+        "target_port": 5555,
+        "key": "AAECAwQFBgcICQoLDA0ODx==",
+        "salt": "AAECAwQFBgcICQoLDA0="
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_prepare",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "source_address": "127.0.0.1",
+        "target_address": "127.0.0.1",
+        "address_version": "ipv4",
+        "target_port": 5555,
+        "key": "AAECAwQFBgcICQoLDA0ODw==",
+        "salt": "AAECAwQFBgcICQoLDA1="
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_prepare_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "status": "rejected",
+        "code": "unsupported",
+        "endpoint": {
+          "address": "127.0.0.1",
+          "port": 5556,
+          "ssrc": 123,
+          "key": "AAECAwQFBgcICQoLDA0ODw==",
+          "salt": "AAECAwQFBgcICQoLDA0="
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_prepare_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "status": "accepted",
+        "code": "ok",
+        "endpoint": null
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_prepare_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "status": "rejected",
+        "code": "ok",
+        "endpoint": null
       }
     }
   ],

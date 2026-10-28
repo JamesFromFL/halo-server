@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import json
 import math
 import re
@@ -358,7 +360,94 @@ def _accessory_config(value):
 
 _RESOURCE = dict(scope=_scope, session_id=_uuid)
 _TRANSFER = dict(scope=_scope, operation_id=_uuid, transfer_id=_uuid)
+
+
+def _key_bytes(length):
+    def valid(value):
+        if not isinstance(value, str) or len(value) != 4 * ((length + 2) // 3):
+            return False
+        try:
+            raw = base64.b64decode(value, validate=True)
+            return len(raw) == length and base64.b64encode(raw).decode("ascii") == value
+        except (ValueError, binascii.Error):
+            return False
+
+    return valid
+
+
+def _address(value):
+    # Structural only: LiveManager must validate literal unicast/family/interface.
+    return (
+        isinstance(value, str)
+        and 1 <= len(value) <= 128
+        and all(33 <= ord(char) <= 126 for char in value)
+    )
+
+
+_video_configuration = _object(
+    width=_integer(2, 1920),
+    height=_integer(2, 1080),
+    fps=_integer(1, 30),
+    profile=_enum("baseline", "main", "high"),
+    level=_enum("3.1", "3.2", "4.0"),
+    max_bit_rate=_integer(1, 8000),
+    payload_type=_integer(96, 127),
+    rtcp_interval=lambda value: (
+        type(value) in {int, float} and math.isfinite(value) and 0.1 <= value <= 10
+    ),
+    mtu=_integer(256, 1378),
+)
+_video_endpoint = _object(
+    address=_address,
+    port=_integer(1, 65535),
+    ssrc=_integer(1, 2**32 - 1),
+    key=_key_bytes(16),
+    salt=_key_bytes(14),
+)
+_video_result_fields = _object(**_RESOURCE, status=_enum("accepted", "rejected"), code=_code)
+_video_prepared = _object(
+    **_RESOURCE,
+    status=_enum("accepted", "rejected"),
+    code=_code,
+    endpoint=_nullable(_video_endpoint),
+)
+
+
+def _prepared_result(value):
+    return _video_prepared(value) and (
+        value["status"] == "accepted"
+        and value["code"] == "ok"
+        and value["endpoint"] is not None
+        or value["status"] == "rejected"
+        and value["code"] != "ok"
+        and value["endpoint"] is None
+    )
+
+
+def _video_result(value):
+    return _video_result_fields(value) and (
+        (value["status"] == "accepted") == (value["code"] == "ok")
+    )
+
+
 PAYLOAD_VALIDATORS = {
+    "video_prepare": _object(
+        **_RESOURCE,
+        source_address=_address,
+        target_address=_address,
+        address_version=_enum("ipv4", "ipv6"),
+        target_port=_integer(1, 65535),
+        key=_key_bytes(16),
+        salt=_key_bytes(14),
+    ),
+    "video_prepare_result": _prepared_result,
+    "video_start": _object(**_RESOURCE, config=_video_configuration),
+    "video_start_result": _video_result,
+    "video_reconfigure": _object(**_RESOURCE, config=_video_configuration),
+    "video_reconfigure_result": _video_result,
+    "video_stop": _object(**_RESOURCE),
+    "video_stop_result": _video_result,
+    "video_ended": _object(**_RESOURCE, code=_code),
     "accessory_config": _accessory_config,
     "accessory_config_ack": _object(
         scope=_nullable(_account),
@@ -463,6 +552,11 @@ PAYLOAD_VALIDATORS = {
 KINDS = frozenset(PAYLOAD_VALIDATORS)
 PYTHON_KINDS = frozenset(
     {
+        "video_prepare_result",
+        "video_start_result",
+        "video_reconfigure_result",
+        "video_stop_result",
+        "video_ended",
         "accessory_config",
         "event_sync_ack",
         "event_state",
@@ -484,6 +578,10 @@ PYTHON_KINDS = frozenset(
 )
 HAP_KINDS = frozenset(
     {
+        "video_prepare",
+        "video_start",
+        "video_reconfigure",
+        "video_stop",
         "accessory_config_ack",
         "event_sync",
         "hello_ack",
@@ -545,6 +643,10 @@ def validate_direction(envelope: dict[str, Any], sender: str) -> dict[str, Any]:
 
 
 REPLY_KINDS = {
+    "video_prepare": "video_prepare_result",
+    "video_start": "video_start_result",
+    "video_reconfigure": "video_reconfigure_result",
+    "video_stop": "video_stop_result",
     "accessory_config": "accessory_config_ack",
     "event_sync": "event_sync_ack",
     "hello": "hello_ack",

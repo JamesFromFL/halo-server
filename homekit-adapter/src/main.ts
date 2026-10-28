@@ -14,6 +14,12 @@ import { verifyPublicApi } from "./public-api.js";
 export const HANDSHAKE_TIMEOUT_MS = 5_000;
 export const IDLE_TIMEOUT_MS = 15_000;
 
+/** Ending closes admission, while already owned cleanup RPCs must still settle. */
+export async function receiveTerminalCleanup(session: AdapterSession, boot: string, message: Envelope): Promise<boolean> {
+  if (message.boot_id !== boot || !["video_stop_result", "lease_stop_result"].includes(message.kind)) return false;
+  return session.receive(message);
+}
+
 /** The inherited lock shares Python's flock ownership until this process exits. */
 export function pairingDescriptors(environment: NodeJS.ProcessEnv, control: number, bulk: number): {pairing?: number; pairingLock?: number} {
   const directory = environment.HALO_PAIRING_FD, lock = environment.HALO_PAIRING_LOCK_FD;
@@ -102,7 +108,10 @@ async function run(): Promise<number> {
 
   channel.on("message", (message: Envelope) => {
     void (async () => {
-      if (ending) return;
+      if (ending) {
+        if (session && boot) await receiveTerminalCleanup(session, boot, message);
+        return;
+      }
       validateDirection(message, "python");
       if (boot === null) {
         if (message.kind !== "hello") throw new ProtocolError("hello-required");

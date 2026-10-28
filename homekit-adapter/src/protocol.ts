@@ -7,6 +7,7 @@ export const MAX_FRAMES_PER_CHUNK = 256;
 export const FEATURE = "classic-camera-control-v1";
 
 export const KINDS = [
+  "video_prepare", "video_prepare_result", "video_start", "video_start_result", "video_reconfigure", "video_reconfigure_result", "video_stop", "video_stop_result", "video_ended",
   "accessory_config", "accessory_config_ack", "event_sync", "event_sync_ack", "event_state", "camera_event",
   "hello", "hello_ack", "ping", "pong", "shutdown", "shutdown_ack", "status", "error",
   "inventory_reset", "inventory_request", "inventory_page", "camera_status", "policy_update", "policy_ack",
@@ -78,6 +79,14 @@ export const RESULT_CODES = [
 export interface AccountScope { profile_id: string; account_generation: number }
 export interface MediaScope extends AccountScope { camera_id: string; device_generation: number; privacy_generation: number }
 export type CameraPolicy = Record<typeof POLICY_FIELDS[number], boolean>;
+export interface VideoConfiguration {
+  width: number; height: number; fps: number; profile: "baseline" | "main" | "high"; level: "3.1" | "3.2" | "4.0";
+  max_bit_rate: number; payload_type: number; rtcp_interval: number; mtu: number;
+}
+export interface VideoPrepare {
+  source_address: string; target_address: string; address_version: "ipv4" | "ipv6"; target_port: number; key: string; salt: string;
+}
+export interface VideoEndpoint {address: string; port: number; ssrc: number; key: string; salt: string}
 export interface BulkHeader { kind: BulkKind; transfer_id: string; sequence: number; length: number }
 
 type Check = (value: unknown) => boolean;
@@ -185,7 +194,25 @@ const accessoryConfig: Check = value => accessoryFields(value) && record(value) 
   (value.page_index as number)<(value.total_pages as number) &&
   (value.scope!==null || ((value.entries as unknown[]).length===0 && value.page_index===0 && value.total_pages===1)) &&
   ["camera_id","accessory_id","username"].every(key=>new Set((value.entries as JsonObject[]).map(item=>item[key])).size===(value.entries as unknown[]).length);
+const address: Check = value => typeof value === "string" && value.length >= 1 && value.length <= 128 && !/[^\x21-\x7e]/.test(value);
+const secret = (bytes: number): Check => value => typeof value === "string" &&
+  Buffer.from(value, "base64").length === bytes && Buffer.from(value, "base64").toString("base64") === value;
+const endpoint = object({address,port:integer(1,65535),ssrc:integer(1,0xffffffff),key:secret(16),salt:secret(14)});
+const videoConfiguration = object({width:integer(2,1920),height:integer(2,1080),fps:integer(1,30),
+  profile:choice("baseline","main","high"),level:choice("3.1","3.2","4.0"),max_bit_rate:integer(1,8000),
+  payload_type:integer(96,127),rtcp_interval:value=>typeof value === "number" && Number.isFinite(value) && value>=0.1 && value<=10,mtu:integer(256,1378)});
+const videoResultFields = object({...resource,status:choice("accepted","rejected"),code});
+const videoResult: Check = value => videoResultFields(value) && record(value) && ((value.status === "accepted") === (value.code === "ok"));
+const videoPrepareResultFields = object({...resource,status:choice("accepted","rejected"),code,endpoint:nullable(endpoint)});
+const videoPrepareResult: Check = value => videoPrepareResultFields(value) && record(value) &&
+  ((value.status === "accepted") === (value.code === "ok")) && ((value.status === "accepted") === (value.endpoint !== null));
 const payloadValidators: Record<Kind, Check> = {
+  video_prepare:object({...resource,source_address:address,target_address:address,address_version:choice("ipv4","ipv6"),target_port:integer(1,65535),key:secret(16),salt:secret(14)}),
+  video_prepare_result:videoPrepareResult,
+  video_start:object({...resource,config:videoConfiguration}),video_start_result:videoResult,
+  video_reconfigure:object({...resource,config:videoConfiguration}),video_reconfigure_result:videoResult,
+  video_stop:object(resource),video_stop_result:videoResult,
+  video_ended:object({...resource,code}),
   accessory_config: accessoryConfig,
   accessory_config_ack: object({scope:nullable(account),revision,generation:positive,page_index:integer(0,7),accepted:bool,code}),
   event_sync: object({scope:nullable(account),epoch:nullable(epoch),sequence:revision}),
@@ -216,8 +243,8 @@ const payloadValidators: Record<Kind, Check> = {
   transfer_cancel: object({...transfer, code: choice("cancelled", "invalidated", "timeout", "protocol-error")}),
   transfer_result: object({...transfer, status: choice("complete", "cancelled", "rejected"), code}),
 };
-const pythonKinds: readonly Kind[] = ["accessory_config", "event_sync_ack", "event_state", "camera_event", "hello", "ping", "shutdown", "inventory_reset", "inventory_page", "camera_status", "policy_ack", "lease_result", "lease_renew_result", "lease_stop_result", "snapshot_result", "talkback_result", "control_result"];
-const hapKinds: readonly Kind[] = ["accessory_config_ack", "event_sync", "hello_ack", "pong", "shutdown_ack", "inventory_request", "policy_update", "lease_request", "lease_renew", "lease_stop", "snapshot_request", "snapshot_cancel", "talkback_request", "control_request"];
+const pythonKinds: readonly Kind[] = ["video_prepare_result", "video_start_result", "video_reconfigure_result", "video_stop_result", "video_ended", "accessory_config", "event_sync_ack", "event_state", "camera_event", "hello", "ping", "shutdown", "inventory_reset", "inventory_page", "camera_status", "policy_ack", "lease_result", "lease_renew_result", "lease_stop_result", "snapshot_result", "talkback_result", "control_result"];
+const hapKinds: readonly Kind[] = ["video_prepare", "video_start", "video_reconfigure", "video_stop", "accessory_config_ack", "event_sync", "hello_ack", "pong", "shutdown_ack", "inventory_request", "policy_update", "lease_request", "lease_renew", "lease_stop", "snapshot_request", "snapshot_cancel", "talkback_request", "control_request"];
 export function validateScope(value: unknown): MediaScope {
   if (!scope(value)) throw new ProtocolError("invalid-scope");
   return value as MediaScope;
@@ -244,6 +271,7 @@ export function validateDirection(value: unknown, sender: "python" | "hap"): Env
   return message;
 }
 export const REPLY_KINDS: Partial<Record<Kind, Kind>> = {
+  video_prepare:"video_prepare_result",video_start:"video_start_result",video_reconfigure:"video_reconfigure_result",video_stop:"video_stop_result",
   accessory_config:"accessory_config_ack", event_sync:"event_sync_ack",
   hello: "hello_ack", ping: "pong", shutdown: "shutdown_ack", inventory_request: "inventory_page",
   policy_update: "policy_ack", lease_request: "lease_result", lease_renew: "lease_renew_result",

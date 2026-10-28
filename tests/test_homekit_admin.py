@@ -101,7 +101,7 @@ async def test_real_child_applies_trusted_selection_without_publishing_or_starti
     sessions.has_stored_credentials = lambda: False
     try:
         await service.start()
-        await wait_until(lambda: service.status()["homekit"]["transport_ready"])
+        await wait_until(lambda: service.status()["homekit"]["transport_ready"], timeout=25)
         page = await service.handle_admin("homekit_list", {})
         saved = await service.handle_admin("homekit_select", parameters(page, ["42"]))
         await wait_until(
@@ -114,7 +114,10 @@ async def test_real_child_applies_trusted_selection_without_publishing_or_starti
         )
         status = bridge.status()
         assert status["selected_cameras"] == 1
-        assert status["camera_ready"] is False and status["reason"] == "media_not_implemented"
+        assert (
+            status["camera_ready"] is False
+            and status["reason"] == "audio_and_snapshots_not_implemented"
+        )
         assert bridge._runtime._pairing_owner is not None
         assert list(service.paths.homekit_pairing_directory.iterdir()) == []
         assert not service._media_sessions and client.submissions == 0

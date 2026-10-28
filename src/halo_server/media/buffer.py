@@ -31,6 +31,7 @@ class EncodedPacket:
     rtp_timestamp: int
     received_at: float
     h264_nal_types: frozenset[int] = frozenset()
+    capture_epoch: int = 0
 
 
 @dataclass(frozen=True)
@@ -39,6 +40,7 @@ class BufferSnapshot:
     payload_bytes: int
     duration_seconds: float
     decodable_video_sequence: int | None
+    capture_epoch: int = 0
 
     @property
     def ready(self) -> bool:
@@ -49,6 +51,7 @@ class BufferSnapshot:
 class BufferRead:
     packets: tuple[EncodedPacket, ...]
     resynchronized: bool
+    capture_epoch: int = 0
 
 
 class EncodedMediaBuffer:
@@ -76,10 +79,16 @@ class EncodedMediaBuffer:
         self._packets: deque[EncodedPacket] = deque()
         self._payload_bytes = 0
         self._next_sequence = 1
+        self._capture_epoch = 1
         self._last_received_at: float | None = None
         self._latest_sps_sequence: int | None = None
         self._latest_pps_sequence: int | None = None
         self._decodable_boundaries: deque[int] = deque()
+
+    @property
+    def capture_epoch(self) -> int:
+        with self._condition:
+            return self._capture_epoch
 
     @property
     def ready(self) -> bool:
@@ -123,7 +132,7 @@ class EncodedMediaBuffer:
         with self._condition:
             boundary = self._first_retained_boundary_locked()
             if boundary is None:
-                return BufferSnapshot((), 0, 0.0, None)
+                return BufferSnapshot((), 0, 0.0, None, self._capture_epoch)
             packets = tuple(packet for packet in self._packets if packet.sequence >= boundary)
             payload_bytes = sum(len(packet.payload) for packet in packets)
             duration = (
@@ -131,7 +140,7 @@ class EncodedMediaBuffer:
                 if len(packets) > 1
                 else 0.0
             )
-            return BufferSnapshot(packets, payload_bytes, duration, boundary)
+            return BufferSnapshot(packets, payload_bytes, duration, boundary, self._capture_epoch)
 
     def wait_until_ready(self, timeout: float | None = None) -> bool:
         if timeout is not None and (not math.isfinite(timeout) or timeout < 0):
@@ -168,10 +177,10 @@ class EncodedMediaBuffer:
                 return boundary > after_sequence + 1 or self._packets[-1].sequence > after_sequence
 
             if not self._condition.wait_for(available, timeout=timeout):
-                return BufferRead((), False)
+                return BufferRead((), False, self._capture_epoch)
             boundary = self._first_retained_boundary_locked()
             if boundary is None:
-                return BufferRead((), False)
+                return BufferRead((), False, self._capture_epoch)
             resynchronized = after_sequence is not None and boundary > after_sequence + 1
             first_sequence = (
                 boundary if after_sequence is None or resynchronized else after_sequence + 1
@@ -179,10 +188,12 @@ class EncodedMediaBuffer:
             return BufferRead(
                 tuple(packet for packet in self._packets if packet.sequence >= first_sequence),
                 resynchronized,
+                self._capture_epoch,
             )
 
     def clear(self) -> None:
         with self._condition:
+            self._capture_epoch += 1
             self._packets.clear()
             self._payload_bytes = 0
             self._last_received_at = None
@@ -228,6 +239,7 @@ class EncodedMediaBuffer:
                 rtp_timestamp=rtp_timestamp,
                 received_at=normalized_time,
                 h264_nal_types=nal_types,
+                capture_epoch=self._capture_epoch,
             )
             self._packets.append(packet)
             self._payload_bytes += len(packet.payload)

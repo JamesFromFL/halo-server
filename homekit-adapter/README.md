@@ -1,8 +1,8 @@
 # Halo private HAP adapter groundwork
 
-This package implements **S04 dependency checks, S05 contracts, S06 supervised channels and S07 stable accessory/event groundwork**. It does not publish an accessory, open a HAP/mDNS listener, authenticate to Ring, deliver media, or provide a working camera/HKSV integration. A `hello_ack` and the feature marker `classic-camera-control-v1` mean only that this initial private control protocol is understood.
+This package implements **S04 dependency checks, S05 contracts, S06 supervised channels and S07 stable accessory/events and S08 public live-video delegates**. It publishes explicitly selected development accessories only after Python qualifies native video output. Python owns Ring, UDP/SRTP and video bytes. Audio, snapshots, owner pairing management and HKSV are later slices. A `hello_ack` and the feature marker `classic-camera-control-v1` mean only that this initial private control protocol is understood.
 
-The Python daemon remains the Ring/session owner. The intended future adapter uses the released HAP public API; it does not embed Scrypted, require Homebridge, or import HAP private paths. Stable selected camera/doorbell graphs, pairing-store preflight and state-plus-cursor event delivery are implemented. Publication stays hard-gated until S08 supplies supported streaming formats. Snapshots, live transport and HKSV remain later slices. No unpublished scratchpad dependency or HAP fork is used here.
+The Python daemon remains the Ring/session owner. The intended future adapter uses the released HAP public API; it does not embed Scrypted, require Homebridge, or import HAP private paths. Stable selected camera/doorbell graphs, pairing-store preflight and state-plus-cursor event delivery are implemented. Publication stays gated on the qualified Python video catalogue. Snapshots, negotiated audio and HKSV remain later slices. No unpublished scratchpad dependency or HAP fork is used here.
 
 ## Pinned toolchain
 
@@ -66,3 +66,14 @@ state plus a cursor; doorbell edges are never reconstructed from replay. Both TT
 and absolute monotonic expiry are checked, including after delayed consumption.
 Python `time.monotonic()` and Node `process.hrtime.bigint()` were bracket-probed on
 the qualified Linux runtime; other operating systems require qualification.
+
+## S08 live delegates
+
+`HapVideoDelegate` implements public PREPARE/START/RECONFIGURE/STOP. Node sends
+strict scoped metadata and ephemeral keys through private IPC; video bytes remain
+in Python. Two viewers share one policy synchronization rather than revoking each
+other. Public stream Active changes fence affected output before awaiting cleanup.
+Prepared requests expire, late success is compensated, and exact scoped terminal
+notices force-stop only the matching HAP session. Shutdown keeps only owned cleanup
+results flowing while new acquisition admission is closed. Tests use a fake
+publisher; actual Apple pairing and delivery remain S15 device qualification.

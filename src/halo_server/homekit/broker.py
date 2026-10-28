@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
@@ -48,9 +49,11 @@ class HomeKitBroker:
         *,
         selection: Callable = lambda: (),
         changed: Callable[[], None] = lambda: None,
+        live_manager=None,
     ) -> None:
         self.controller, self.backend = controller, backend
         self._selection, self._changed = selection, changed
+        self.live_manager = live_manager
         self.runtime = None
         self.boot_id: str | None = None
         self._account = None
@@ -193,6 +196,8 @@ class HomeKitBroker:
     async def request(self, envelope: dict) -> dict:
         boot = self._require_boot(envelope)
         kind, data = envelope["kind"], envelope["payload"]
+        if kind in {"video_prepare", "video_start", "video_reconfigure", "video_stop"}:
+            return await self._video_request(boot, kind, data)
         if kind == "inventory_request":
             try:
                 return self._inventory(envelope)
@@ -237,6 +242,58 @@ class HomeKitBroker:
                 }
             return result | {"status": "accepted", "code": "ok"}
         raise HomeKitProtocolError("unsupported child request")
+
+    async def _video_request(self, boot: str, kind: str, data: dict) -> dict:
+        from halo_server.media.h264 import H264Error, VideoConfiguration
+
+        result = {"scope": data["scope"], "session_id": data["session_id"]}
+        if kind == "video_prepare":
+            result["endpoint"] = None
+        if self.live_manager is None or not self.live_manager.ready and kind != "video_stop":
+            return result | {"status": "rejected", "code": "not-ready"}
+        scope, session_id = _scope(data), data["session_id"]
+        try:
+            if kind == "video_prepare":
+                prepared = await self.live_manager.prepare(
+                    boot,
+                    scope,
+                    session_id,
+                    source_address=data["source_address"],
+                    target_address=data["target_address"],
+                    address_version=data["address_version"],
+                    target_port=int(data["target_port"]),
+                    key=base64.b64decode(data["key"], validate=True),
+                    salt=base64.b64decode(data["salt"], validate=True),
+                )
+                result["endpoint"] = {
+                    "address": prepared.address,
+                    "port": prepared.port,
+                    "ssrc": prepared.ssrc,
+                    "key": base64.b64encode(prepared.key).decode("ascii"),
+                    "salt": base64.b64encode(prepared.salt).decode("ascii"),
+                }
+            elif kind in {"video_start", "video_reconfigure"}:
+                config = VideoConfiguration(**data["config"])
+                operation = (
+                    self.live_manager.start
+                    if kind == "video_start"
+                    else self.live_manager.reconfigure
+                )
+                await operation(boot, scope, session_id, config)
+            else:
+                await self.live_manager.stop(boot, scope, session_id)
+        except HomeKitOperationError as exc:
+            return result | {"status": "rejected", "code": _code(exc)}
+        except H264Error:
+            return result | {"status": "rejected", "code": "unsupported"}
+        except ValueError:
+            return result | {
+                "status": "rejected",
+                "code": "invalid-request" if kind == "video_prepare" else "unsupported",
+            }
+        except OSError:
+            return result | {"status": "rejected", "code": "source-failed"}
+        return result | {"status": "accepted", "code": "ok"}
 
     def _inventory(self, envelope: dict) -> dict:
         data = envelope["payload"]

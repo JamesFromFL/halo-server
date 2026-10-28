@@ -1,3 +1,4 @@
+import { Categories } from "@homebridge/hap-nodejs";
 import { CameraAccessory, type AccessoryIdentity, type MotionState } from "./camera.js";
 import { ProtocolError, type AccountScope, type JsonObject, type MediaScope } from "./protocol.js";
 import type { AdapterSession } from "./session.js";
@@ -12,14 +13,15 @@ export interface AccessoryPublisher {
   publish(camera: CameraAccessory): Promise<void>;
   unpublish(camera: CameraAccessory): Promise<void>;
 }
-/** S08 has not qualified output. A configuration flag alone cannot bypass this gate. */
-export function hapPublisher(_store: PairingStore): AccessoryPublisher {
+/** Parent configuration only enables this after its native media worker preflight. */
+export function hapPublisher(store: PairingStore): AccessoryPublisher {
   return {
-    mediaReady: false,
-    async publish(_camera) {
-      throw new ProtocolError("media-not-ready");
-      // Once S08 qualifies live transport, publication belongs here through
-      // public Accessory.publish and store.initialize; never a private HAP API.
+    mediaReady: true,
+    async publish(camera) {
+      store.initialize();
+      await camera.accessory.publish({username: camera.identity.username, pincode: store.pincode(camera.identity.username),
+        category: camera.identity.doorbell ? Categories.VIDEO_DOORBELL : Categories.IP_CAMERA,
+        port: 0, addIdentifyingMaterial: false}, false);
     },
     async unpublish(camera) { await camera.accessory.unpublish(); },
   };
@@ -33,7 +35,7 @@ interface ReceivedEventState extends EventState { expiresAt: number }
 interface CameraEvent { scope: MediaScope; epoch: string; sequence: number; event_id: string; type: "doorbell"; ttl_ms: number; expires_at_ms: number }
 interface EventSync { scope: AccountScope | null; epoch: string; sequence: number; accepted: boolean; code: string }
 export interface AccessoryManagerOptions {
-  session: Pick<AdapterSession, "cameras" | "inventoryComplete" | "accountScope">;
+  session: Pick<AdapterSession, "cameras" | "inventoryComplete" | "accountScope"> & Partial<Pick<AdapterSession, "camera">>;
   store?: PairingStore;
   publisher?: AccessoryPublisher;
   syncEvents: (scope: AccountScope | null, epoch: string | null, sequence: number) => Promise<JsonObject>;
@@ -163,14 +165,27 @@ export class AccessoryManager {
       const camera = cameras.get(identity.camera_id);
       if (!camera || !sameAccount(camera.scope, config.scope)) continue;
       let managed = this.managed.get(identity.camera_id);
+      if (managed && (managed.camera.scope.device_generation !== camera.scope.device_generation ||
+          !sameAccount(managed.camera.scope, camera.scope))) {
+        await this.retire(identity.camera_id, managed); managed = undefined;
+      }
       if (managed && key(managed.camera.scope) !== key(camera.scope)) {
         this.invalidate();
         managed.camera.update(camera);
       }
       if (!managed) {
-        managed = {camera: new CameraAccessory(identity, camera), published: false, stateTimer: null};
+        const native = this.options.session.camera?.(identity.camera_id);
+        managed = {camera: new CameraAccessory(identity, camera, {
+          ...(native === undefined ? {} : {native}),
+          failure: () => { this.failed = true; this.invalidate(); this.options.onFailure?.(new ProtocolError("video-cleanup-failed")); },
+        }), published: false, stateTimer: null};
         this.managed.set(identity.camera_id, managed);
       } else managed.camera.update(camera);
+      await managed.camera.synchronizePolicy();
+      if (this.closed || config !== this.configuration || config.generation !== this.generation) return;
+      const refreshed = this.options.session.cameras().find(value => value.scope.camera_id === identity.camera_id);
+      if (refreshed && refreshed.scope.device_generation === managed.camera.scope.device_generation &&
+          sameAccount(refreshed.scope, managed.camera.scope)) managed.camera.update(refreshed);
       if (!managed.published && config.media_ready && this.options.publisher?.mediaReady) {
         const generation = this.generation;
         // Retain the claim even when an asynchronous publish partially fails.
@@ -190,6 +205,7 @@ export class AccessoryManager {
   }
   private async retire(id: string, managed: Managed): Promise<void> {
     managed.camera.retire();
+    await managed.camera.closeStreams();
     if (managed.stateTimer) clearTimeout(managed.stateTimer);
     managed.stateTimer = null;
     if (managed.published) {

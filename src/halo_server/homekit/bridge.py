@@ -63,8 +63,14 @@ class HomeKitBridge:
         journal=None,
         incidents=dict,
         source_state=lambda: "offline",
+        live_manager=None,
+        publication_enabled=True,
     ):
+        from halo_server.media.homekit_live import HomeKitLiveManager
+
         self._paths, self._backend = paths, backend
+        self._publication_enabled = publication_enabled
+        self._live = live_manager or HomeKitLiveManager(controller, on_ended=self._video_ended)
         self._store = RegistryStore(paths.homekit_registry_file) if paths is not None else None
         self._registry = CameraRegistry()
         self._registry_lock = asyncio.Lock()
@@ -87,6 +93,7 @@ class HomeKitBridge:
             controller,
             backend,
             changed=self.notify_inventory,
+            live_manager=self._live,
             selection=lambda: tuple(
                 row.camera.scope for row in self._registry.resolve(backend.inventory())
             ),
@@ -123,6 +130,22 @@ class HomeKitBridge:
             raise HomeKitOperationError("closed")
         await self._runtime.send(kind, payload, admission=admission)
 
+    async def _video_ended(self, boot, scope, session_id, code):
+        from dataclasses import asdict
+
+        from halo_server.homekit.broker import _code
+
+        runtime = self._runtime
+        if runtime is not None and runtime.boot_id == boot and runtime.state == "ready":
+            await runtime.send(
+                "video_ended",
+                {
+                    "scope": asdict(scope),
+                    "session_id": session_id,
+                    "code": _code(HomeKitOperationError(code)),
+                },
+            )
+
     async def _load_registry(self):
         if self._store is not None:
             inventory = self._backend.inventory()
@@ -138,7 +161,15 @@ class HomeKitBridge:
         await self._configure()
 
     async def _retired(self, boot):
+        from halo_server.media.transcode import retire_video_workers
+
         failures = []
+        if self._broker.controller.boot_id == boot:
+            self._broker.controller.fence()
+        try:
+            await self._live.retired(boot)
+        except Exception as exc:
+            failures.append(exc)
         if self._events is not None:
             try:
                 await self._events.stop(boot)
@@ -146,6 +177,10 @@ class HomeKitBridge:
                 failures.append(exc)
         try:
             await self._broker.retired(boot)
+        except Exception as exc:
+            failures.append(exc)
+        try:
+            await retire_video_workers()
         except Exception as exc:
             failures.append(exc)
         if failures:
@@ -189,7 +224,8 @@ class HomeKitBridge:
                 for row in registry.selected(inventory.profile_id)
             ]
         )
-        signature = (scope, registry.revision, entries)
+        media_ready = self._publication_enabled and self._live.ready
+        signature = (scope, registry.revision, entries, media_ready)
         if signature == self._config_signature:
             return
         self._config_generation += 1
@@ -205,7 +241,7 @@ class HomeKitBridge:
                 "page_index": index,
                 "total_pages": len(pages),
                 "entries": page,
-                "media_ready": False,
+                "media_ready": media_ready,
             }
             reply = await runtime.request(
                 "accessory_config", payload, expected="accessory_config_ack"
@@ -279,14 +315,33 @@ class HomeKitBridge:
             reason = runtime.reason or "adapter_not_ready"
         if self._broker.cleanup_failed:
             reason = "native_cleanup_failed"
+        if self._live.cleanup_failures:
+            reason = "native_output_cleanup_failed"
         if self._events is not None and self._events.state == "failed":
             reason = "event_delivery_failed"
+        if (
+            not reason
+            and transport_ready
+            and self._live.capabilities is not None
+            and not self._live.ready
+        ):
+            reason = "video_output_unavailable"
         return {
             "requested": True,
             "state": "degraded" if reason else "control_ready" if transport_ready else self.state,
-            "reason": reason or ("media_not_implemented" if transport_ready else None),
+            "reason": reason
+            or (
+                "audio_and_snapshots_not_implemented"
+                if transport_ready and self._live.ready
+                else "media_not_implemented"
+                if transport_ready
+                else None
+            ),
             "transport_ready": transport_ready,
             "camera_ready": False,
+            "live_video_ready": self._live.ready,
+            "live_video_resources": self._live.pending_resources,
+            "live_video_cleanup_failures": self._live.cleanup_failures,
             "restart_count": runtime.restart_count if runtime is not None else 0,
             "selected_cameras": len(self._registry.selected(profile)) if profile else 0,
             "registry_revision": self._registry.revision,
@@ -296,6 +351,7 @@ class HomeKitBridge:
     async def _run(self) -> None:
         try:
             resources = self._resources or development_resources()
+            await self._live.qualify()
             self._runtime = self._runtime_factory(
                 resources.node,
                 resources.entry,
@@ -320,6 +376,7 @@ class HomeKitBridge:
                     return
                 if self._runtime.state == "ready":
                     await self._load_registry()
+                    await self._live.refresh()
                     await self._broker.refresh()
                     await self._configure()
                     self.notify_event()
@@ -343,14 +400,29 @@ class HomeKitBridge:
             raise
 
     async def _stop_owned(self) -> None:
+        from halo_server.media.transcode import retire_video_workers
+
         async with self._stop_lock:
             self._stopping = True
+            boot = getattr(self._runtime, "boot_id", None)
+            if boot is not None and self._broker.controller.boot_id == boot:
+                self._broker.controller.fence()
             task = self._task
             if task is not None:
                 if not task.done():
                     task.cancel()
                 await asyncio.gather(task, return_exceptions=True)
                 self._task = None
+            failures = []
             if self._runtime is not None:
-                await self._runtime.stop()
+                try:
+                    await self._runtime.stop()
+                except Exception as exc:
+                    failures.append(exc)
+            try:
+                await retire_video_workers()
+            except Exception as exc:
+                failures.append(exc)
+            if failures:
+                raise ExceptionGroup("Native adapter/output retirement incomplete", failures)
             self.state = "stopped"

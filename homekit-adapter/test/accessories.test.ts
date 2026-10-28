@@ -84,8 +84,11 @@ test("media delegates fail clearly and STOP remains an idempotent release", () =
   delegate.handleStreamRequest({type: StreamRequestTypes.STOP, sessionID: randomUUID()}, error => assert.equal(error, undefined));
 });
 
-test("configuration pages apply atomically, reject identity conflicts, and keep the real publisher gated", async () => {
-  const value = harness({publisher: hapPublisher({} as PairingStore)});
+test("configuration pages apply atomically and only the complete parent configuration enables publication", async context => {
+  let publications = 0, initialized = 0;
+  context.mock.method(Accessory.prototype, "publish", async (_info: unknown, insecure?: boolean) => { assert.equal(insecure, false); publications++; });
+  context.mock.method(Accessory.prototype, "unpublish", async () => {});
+  const value = harness({publisher: hapPublisher({initialize: () => { initialized++; }, pincode: () => "192-83-746"} as unknown as PairingStore)});
   await value.manager.configure(page({total_pages: 2}));
   assert.equal(value.manager.count, 0); assert.equal(value.preflights, 0);
   await value.manager.configure(page({total_pages: 2, page_index: 1, entries: []}));
@@ -93,7 +96,7 @@ test("configuration pages apply atomically, reject identity conflicts, and keep 
   await value.manager.configure(page({total_pages: 2, page_index: 1, entries: []}));
   await assert.rejects(value.manager.configure(page({total_pages: 2, page_index: 1, entries: [{...identity}]})), /configuration-conflict/);
   await value.manager.configure(page({generation: 2, media_ready: true}));
-  assert.equal(value.manager.publishedCount, 0);
+  assert.equal(value.manager.publishedCount, 1); assert.equal(publications, 1); assert.equal(initialized, 1);
   await value.manager.close(); assert.equal(value.closes, 1);
   const noStore = harness({noStore: true});
   await assert.rejects(noStore.manager.configure(page()), /pairing-store-unavailable/);

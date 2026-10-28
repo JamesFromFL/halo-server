@@ -14,7 +14,10 @@
     "Observed video frame_rate_num/frame_rate_den<=240 when present; values are evidence, not selected output. Snapshot request width*height<=8000000. These are request ceilings, not guarantees of transform support. No image bytes, base64, credentials, SRTP material or raw SDK records appear in control JSON.",
     "Lease purpose is only homekit_live. TTL<=30000ms never extends the separately enforced absolute lifetime; lease/session ownership survives neither scope nor boot retirement.",
     "Control accepted means request acceptance only, not physical effect. Camera status is an observation; unknown/source absence does not invent online or media metadata.",
-    "inventory_reset is a Python-only discovery/invalidation notice: nullable account scope plus revision. It never grants media or policy authority. Every notice retires local stale admissions before fetching bounded inventory pages; policy ACK echoes input scope, then a fresh inventory supplies Python assigned privacy generation."
+    "inventory_reset is a Python-only discovery/invalidation notice: nullable account scope plus revision. It never grants media or policy authority. Every notice retires local stale admissions before fetching bounded inventory pages; policy ACK echoes input scope, then a fresh inventory supplies Python assigned privacy generation.",
+    "Video keys/salts use canonical base64 with exact 16/14 decoded bytes; never persist/log them.",
+    "Video prepare accepted iff code=ok and endpoint exists; rejected iff non-ok and null endpoint. Other video results accepted iff code=ok.",
+    "Network endpoint literals/family/interface and coupled codec/level/catalog constraints are checked by the live owner, beyond structural JSON shape."
   ],
   "x-binary-transfer": {
     "implemented": true,
@@ -2165,6 +2168,391 @@
         }
       },
       "additionalProperties": false
+    },
+    "video_configuration": {
+      "type": "object",
+      "required": [
+        "width",
+        "height",
+        "fps",
+        "profile",
+        "level",
+        "max_bit_rate",
+        "payload_type",
+        "rtcp_interval",
+        "mtu"
+      ],
+      "properties": {
+        "width": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 1920
+        },
+        "height": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 1080
+        },
+        "fps": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 30
+        },
+        "profile": {
+          "enum": [
+            "baseline",
+            "main",
+            "high"
+          ]
+        },
+        "level": {
+          "enum": [
+            "3.1",
+            "3.2",
+            "4.0"
+          ]
+        },
+        "max_bit_rate": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 8000
+        },
+        "payload_type": {
+          "type": "integer",
+          "minimum": 96,
+          "maximum": 127
+        },
+        "rtcp_interval": {
+          "type": "number",
+          "minimum": 0.1,
+          "maximum": 10
+        },
+        "mtu": {
+          "type": "integer",
+          "minimum": 256,
+          "maximum": 1378
+        }
+      },
+      "additionalProperties": false
+    },
+    "video_endpoint": {
+      "type": "object",
+      "required": [
+        "address",
+        "port",
+        "ssrc",
+        "key",
+        "salt"
+      ],
+      "properties": {
+        "address": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "not": {
+            "pattern": "[^!-~]"
+          }
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "ssrc": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4294967295
+        },
+        "key": {
+          "type": "string",
+          "minLength": 24,
+          "maxLength": 24,
+          "pattern": "^[A-Za-z0-9+/]+={0,2}$",
+          "not": {
+            "pattern": "[^A-Za-z0-9+/=]"
+          },
+          "x-decoded-bytes": 16,
+          "x-runtime-canonical-base64": true
+        },
+        "salt": {
+          "type": "string",
+          "minLength": 20,
+          "maxLength": 20,
+          "pattern": "^[A-Za-z0-9+/]+={0,2}$",
+          "not": {
+            "pattern": "[^A-Za-z0-9+/=]"
+          },
+          "x-decoded-bytes": 14,
+          "x-runtime-canonical-base64": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "video_prepare_payload": {
+      "type": "object",
+      "required": [
+        "scope",
+        "session_id",
+        "source_address",
+        "target_address",
+        "address_version",
+        "target_port",
+        "key",
+        "salt"
+      ],
+      "properties": {
+        "scope": {
+          "$ref": "#/$defs/media_scope"
+        },
+        "session_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "source_address": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "not": {
+            "pattern": "[^!-~]"
+          }
+        },
+        "target_address": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "not": {
+            "pattern": "[^!-~]"
+          }
+        },
+        "address_version": {
+          "enum": [
+            "ipv4",
+            "ipv6"
+          ]
+        },
+        "target_port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "key": {
+          "type": "string",
+          "minLength": 24,
+          "maxLength": 24,
+          "pattern": "^[A-Za-z0-9+/]+={0,2}$",
+          "not": {
+            "pattern": "[^A-Za-z0-9+/=]"
+          },
+          "x-decoded-bytes": 16,
+          "x-runtime-canonical-base64": true
+        },
+        "salt": {
+          "type": "string",
+          "minLength": 20,
+          "maxLength": 20,
+          "pattern": "^[A-Za-z0-9+/]+={0,2}$",
+          "not": {
+            "pattern": "[^A-Za-z0-9+/=]"
+          },
+          "x-decoded-bytes": 14,
+          "x-runtime-canonical-base64": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "video_prepare_result_payload": {
+      "type": "object",
+      "required": [
+        "scope",
+        "session_id",
+        "status",
+        "code",
+        "endpoint"
+      ],
+      "properties": {
+        "scope": {
+          "$ref": "#/$defs/media_scope"
+        },
+        "session_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "status": {
+          "enum": [
+            "accepted",
+            "rejected"
+          ]
+        },
+        "code": {
+          "$ref": "#/$defs/code"
+        },
+        "endpoint": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/video_endpoint"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "video_start_payload": {
+      "type": "object",
+      "required": [
+        "scope",
+        "session_id",
+        "config"
+      ],
+      "properties": {
+        "scope": {
+          "$ref": "#/$defs/media_scope"
+        },
+        "session_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "config": {
+          "$ref": "#/$defs/video_configuration"
+        }
+      },
+      "additionalProperties": false
+    },
+    "video_start_result_payload": {
+      "type": "object",
+      "required": [
+        "scope",
+        "session_id",
+        "status",
+        "code"
+      ],
+      "properties": {
+        "scope": {
+          "$ref": "#/$defs/media_scope"
+        },
+        "session_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "status": {
+          "enum": [
+            "accepted",
+            "rejected"
+          ]
+        },
+        "code": {
+          "$ref": "#/$defs/code"
+        }
+      },
+      "additionalProperties": false
+    },
+    "video_reconfigure_payload": {
+      "type": "object",
+      "required": [
+        "scope",
+        "session_id",
+        "config"
+      ],
+      "properties": {
+        "scope": {
+          "$ref": "#/$defs/media_scope"
+        },
+        "session_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "config": {
+          "$ref": "#/$defs/video_configuration"
+        }
+      },
+      "additionalProperties": false
+    },
+    "video_reconfigure_result_payload": {
+      "type": "object",
+      "required": [
+        "scope",
+        "session_id",
+        "status",
+        "code"
+      ],
+      "properties": {
+        "scope": {
+          "$ref": "#/$defs/media_scope"
+        },
+        "session_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "status": {
+          "enum": [
+            "accepted",
+            "rejected"
+          ]
+        },
+        "code": {
+          "$ref": "#/$defs/code"
+        }
+      },
+      "additionalProperties": false
+    },
+    "video_stop_payload": {
+      "type": "object",
+      "required": [
+        "scope",
+        "session_id"
+      ],
+      "properties": {
+        "scope": {
+          "$ref": "#/$defs/media_scope"
+        },
+        "session_id": {
+          "$ref": "#/$defs/uuid"
+        }
+      },
+      "additionalProperties": false
+    },
+    "video_stop_result_payload": {
+      "type": "object",
+      "required": [
+        "scope",
+        "session_id",
+        "status",
+        "code"
+      ],
+      "properties": {
+        "scope": {
+          "$ref": "#/$defs/media_scope"
+        },
+        "session_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "status": {
+          "enum": [
+            "accepted",
+            "rejected"
+          ]
+        },
+        "code": {
+          "$ref": "#/$defs/code"
+        }
+      },
+      "additionalProperties": false
+    },
+    "video_ended_payload": {
+      "type": "object",
+      "required": [
+        "scope",
+        "session_id",
+        "code"
+      ],
+      "properties": {
+        "scope": {
+          "$ref": "#/$defs/media_scope"
+        },
+        "session_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "code": {
+          "$ref": "#/$defs/code"
+        }
+      },
+      "additionalProperties": false
     }
   },
   "oneOf": [
@@ -3340,6 +3728,285 @@
         },
         "payload": {
           "$ref": "#/$defs/camera_event_payload"
+        }
+      },
+      "additionalProperties": false,
+      "x-sender": "python",
+      "x-reply-kind": null
+    },
+    {
+      "type": "object",
+      "required": [
+        "v",
+        "kind",
+        "boot_id",
+        "request_id",
+        "payload"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "integer"
+        },
+        "kind": {
+          "const": "video_prepare"
+        },
+        "boot_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "request_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "payload": {
+          "$ref": "#/$defs/video_prepare_payload"
+        }
+      },
+      "additionalProperties": false,
+      "x-sender": "hap",
+      "x-reply-kind": "video_prepare_result"
+    },
+    {
+      "type": "object",
+      "required": [
+        "v",
+        "kind",
+        "boot_id",
+        "request_id",
+        "payload"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "integer"
+        },
+        "kind": {
+          "const": "video_prepare_result"
+        },
+        "boot_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "request_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "payload": {
+          "$ref": "#/$defs/video_prepare_result_payload"
+        }
+      },
+      "additionalProperties": false,
+      "x-sender": "python",
+      "x-reply-kind": null
+    },
+    {
+      "type": "object",
+      "required": [
+        "v",
+        "kind",
+        "boot_id",
+        "request_id",
+        "payload"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "integer"
+        },
+        "kind": {
+          "const": "video_start"
+        },
+        "boot_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "request_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "payload": {
+          "$ref": "#/$defs/video_start_payload"
+        }
+      },
+      "additionalProperties": false,
+      "x-sender": "hap",
+      "x-reply-kind": "video_start_result"
+    },
+    {
+      "type": "object",
+      "required": [
+        "v",
+        "kind",
+        "boot_id",
+        "request_id",
+        "payload"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "integer"
+        },
+        "kind": {
+          "const": "video_start_result"
+        },
+        "boot_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "request_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "payload": {
+          "$ref": "#/$defs/video_start_result_payload"
+        }
+      },
+      "additionalProperties": false,
+      "x-sender": "python",
+      "x-reply-kind": null
+    },
+    {
+      "type": "object",
+      "required": [
+        "v",
+        "kind",
+        "boot_id",
+        "request_id",
+        "payload"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "integer"
+        },
+        "kind": {
+          "const": "video_reconfigure"
+        },
+        "boot_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "request_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "payload": {
+          "$ref": "#/$defs/video_reconfigure_payload"
+        }
+      },
+      "additionalProperties": false,
+      "x-sender": "hap",
+      "x-reply-kind": "video_reconfigure_result"
+    },
+    {
+      "type": "object",
+      "required": [
+        "v",
+        "kind",
+        "boot_id",
+        "request_id",
+        "payload"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "integer"
+        },
+        "kind": {
+          "const": "video_reconfigure_result"
+        },
+        "boot_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "request_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "payload": {
+          "$ref": "#/$defs/video_reconfigure_result_payload"
+        }
+      },
+      "additionalProperties": false,
+      "x-sender": "python",
+      "x-reply-kind": null
+    },
+    {
+      "type": "object",
+      "required": [
+        "v",
+        "kind",
+        "boot_id",
+        "request_id",
+        "payload"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "integer"
+        },
+        "kind": {
+          "const": "video_stop"
+        },
+        "boot_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "request_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "payload": {
+          "$ref": "#/$defs/video_stop_payload"
+        }
+      },
+      "additionalProperties": false,
+      "x-sender": "hap",
+      "x-reply-kind": "video_stop_result"
+    },
+    {
+      "type": "object",
+      "required": [
+        "v",
+        "kind",
+        "boot_id",
+        "request_id",
+        "payload"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "integer"
+        },
+        "kind": {
+          "const": "video_stop_result"
+        },
+        "boot_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "request_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "payload": {
+          "$ref": "#/$defs/video_stop_result_payload"
+        }
+      },
+      "additionalProperties": false,
+      "x-sender": "python",
+      "x-reply-kind": null
+    },
+    {
+      "type": "object",
+      "required": [
+        "v",
+        "kind",
+        "boot_id",
+        "request_id",
+        "payload"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "integer"
+        },
+        "kind": {
+          "const": "video_ended"
+        },
+        "boot_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "request_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "payload": {
+          "$ref": "#/$defs/video_ended_payload"
         }
       },
       "additionalProperties": false,
