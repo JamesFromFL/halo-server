@@ -139,11 +139,11 @@ test("zero microphone and speaker volume independently revoke their delivery per
   await peer.close(accessory);
 });
 
-test("unadvertised audio codec, stereo, comfort noise, SSRC and packet durations cannot emit START", async () => {
+test("unadvertised audio codec, stereo, comfort noise, malformed SSRC and packet durations cannot emit START", async () => {
   const peer = new AudioPeer(), accessory = await peer.ready();
   const mutations: ((value: StartStreamRequest) => void)[] = [value => { value.audio.channel = 2; },
     value => { value.audio.codec = AudioStreamingCodecType.AAC_ELD; }, value => { value.audio.comfortNoiseEnabled = true; },
-    value => { value.audio.ssrc = 4321; }, value => { value.audio.packet_time = 10; }, value => { value.audio.bit_rate = 3; },
+    value => { value.audio.ssrc = 0x1_0000_0000; }, value => { value.audio.packet_time = 10; }, value => { value.audio.bit_rate = 3; },
     value => { value.audio.sample_rate = 48 as StartStreamRequest["audio"]["sample_rate"]; }];
   for (const [index, mutate] of mutations.entries()) {
     const id = `invalid-${index}`; await prepare(accessory, request(id)); const selected = start(id); mutate(selected);

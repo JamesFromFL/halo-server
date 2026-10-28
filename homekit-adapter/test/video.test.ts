@@ -4,14 +4,14 @@ import { EventEmitter } from "node:events";
 import { test } from "node:test";
 import {
   encode as tlvEncode, decode as tlvDecode, writeUInt16, writeUInt32, uuid,
-  Characteristic, H264Level, H264Profile, Service, SRTPCryptoSuites, StreamRequestTypes,
+  AudioBitrate, AudioStreamingCodecType, Characteristic, H264Level, H264Profile, Service, SRTPCryptoSuites, StreamRequestTypes,
   VideoCodecPacketizationMode, VideoCodecType, type PrepareStreamRequest, type PrepareStreamResponse, type StartStreamRequest, type StreamingRequest,
 } from "@homebridge/hap-nodejs";
 import { CameraAccessory } from "../src/camera.js";
 import { AdapterSession, type NativeCamera } from "../src/session.js";
 import { HapVideoDelegate, literalUnicastAddress, PREPARED_VIDEO_TIMEOUT_MS } from "../src/video.js";
 import { receiveTerminalCleanup } from "../src/main.js";
-import { ProtocolError, type Envelope, type JsonObject, type MediaScope } from "../src/protocol.js";
+import { ProtocolError, type AccessoryAudio, type Envelope, type JsonObject, type MediaScope } from "../src/protocol.js";
 
 const boot = "00000000-0000-0000-0000-000000000001", account = {profile_id: "00000000-0000-0000-0000-000000000002", account_generation: 1};
 const tick = (): Promise<void> => new Promise(resolve => setImmediate(resolve));
@@ -25,8 +25,13 @@ class Peer {
   failures: string[] = [];
   current = camera();
   revision = 1;
-  hold: "video_prepare" | "policy_update" | "video_stop" | null = null;
+  hold: "video_prepare" | "policy_update" | "video_start" | "video_reconfigure" | "video_stop" | null = null;
   rejectStop = false;
+  constructor(readonly audio: AccessoryAudio | null = null) {
+    this.current.capabilities.audio = audio !== null;
+    this.current.capabilities.talkback = audio?.speaker === true;
+    if (audio !== null) this.current.capabilities.evidence.push("halo:audio", "halo:talkback");
+  }
   session = new AdapterSession(boot, {send: async message => {
     this.sent.push(message);
     if (message.kind === this.hold) this.held.push(message);
@@ -43,10 +48,14 @@ class Peer {
     else if (request.kind === "policy_update") {
       this.current.scope.privacy_generation++; this.revision++;
       await reply("policy_ack", {scope: request.payload.scope, accepted: true, code: "ok"});
-    } else if (request.kind === "video_prepare") await reply("video_prepare_result", {
-      scope: request.payload.scope, session_id: request.payload.session_id, status: "accepted", code: "ok",
-      endpoint: {address: request.payload.source_address, port: 50000, ssrc: 1234, key: request.payload.key, salt: request.payload.salt, audio: null},
-    });
+    } else if (request.kind === "video_prepare") {
+      const audio = request.payload.audio as {key: string; salt: string} | null;
+      await reply("video_prepare_result", {
+        scope: request.payload.scope, session_id: request.payload.session_id, status: "accepted", code: "ok",
+        endpoint: {address: request.payload.source_address, port: 50000, ssrc: 1234, key: request.payload.key, salt: request.payload.salt,
+          audio: audio === null ? null : {port: 50002, ssrc: 5678, key: audio.key, salt: audio.salt}},
+      });
+    }
     else if (["video_start", "video_reconfigure", "video_stop"].includes(request.kind)) await reply(`${request.kind}_result` as Envelope["kind"], {
       scope: request.payload.scope, session_id: request.payload.session_id,
       status: request.kind === "video_stop" && this.rejectStop ? "rejected" : "accepted",
@@ -56,7 +65,7 @@ class Peer {
   delegate() {
     let active = true;
     const ended: string[] = [], failures: string[] = [];
-    const value = new HapVideoDelegate(this.session.camera("front"), {active: () => active,
+    const value = new HapVideoDelegate(this.session.camera("front"), {active: () => active, audio: () => this.audio,
       forceStop: id => ended.push(id), failure: () => failures.push("failed")});
     return {value, ended, failures, setActive: (enabled: boolean) => { active = enabled; }};
   }
@@ -72,6 +81,24 @@ const startRequest = (id: string, ssrc: number): StartStreamRequest => ({session
   video: {codec: VideoCodecType.H264, profile: H264Profile.BASELINE, level: H264Level.LEVEL3_1,
     packetizationMode: VideoCodecPacketizationMode.NON_INTERLEAVED, width: 320, height: 240, fps: 15, pt: 99,
     ssrc, max_bit_rate: 500, rtcp_interval: 0.5, mtu: 1200}, audio: {} as StartStreamRequest["audio"]});
+const publicStreamValues = (id: string) => {
+  const crypto = tlvEncode(1, 0, 2, Buffer.alloc(16, 7), 3, Buffer.alloc(14, 9));
+  const interval = Buffer.alloc(4); interval.writeFloatLE(.5);
+  return {
+    setup: tlvEncode(1, uuid.write(id), 3,
+      tlvEncode(1, 0, 2, "127.0.0.1", 3, writeUInt16(50100), 4, writeUInt16(50102)), 4, crypto, 5, crypto).toString("base64"),
+    start: tlvEncode(1, tlvEncode(1, uuid.write(id), 2, 1),
+      2, tlvEncode(1, 0, 2, tlvEncode(1, 0, 2, 0, 3, 0),
+        3, tlvEncode(1, writeUInt16(320), 2, writeUInt16(240), 3, 15),
+        4, tlvEncode(1, 99, 2, writeUInt32(4321), 3, writeUInt16(500), 4, interval, 5, writeUInt16(1200))),
+      3, tlvEncode(1, 3, 2, tlvEncode(1, 1, 2, 0, 3, 1, 4, 20),
+        3, tlvEncode(1, 110, 2, writeUInt32(9876), 3, writeUInt16(24), 4, interval, 6, 13), 4, 0)).toString("base64"),
+    reconfigure: tlvEncode(1, tlvEncode(1, uuid.write(id), 2, 4),
+      2, tlvEncode(3, tlvEncode(1, writeUInt16(640), 2, writeUInt16(480), 3, 30),
+        4, tlvEncode(3, writeUInt16(1000), 4, interval))).toString("base64"),
+    stop: tlvEncode(1, tlvEncode(1, uuid.write(id), 2, 0)).toString("base64"),
+  };
+};
 
 test("public HAP delegates prepare/start/reconfigure/stop with real scoped RPC and no per-viewer policy reset", async () => {
   const peer = new Peer(); await peer.ready(); const delegate = peer.delegate();
@@ -191,15 +218,118 @@ test("metadata refresh preserves prepared ownership while a confirmed privacy ge
   await delegate.value.close(); peer.session.close();
 });
 
-test("a controller cannot relabel the prepared sender SSRC or select an unadvertised packetization mode", async () => {
+test("an unadvertised packetization mode retires its prepared resource before reporting failure", async () => {
   const peer = new Peer(); await peer.ready(); const delegate = peer.delegate();
   await prepare(delegate.value);
-  await assert.rejects(handle(delegate.value, startRequest("HAP synthetic ID", 4321)), /camera-stream-unavailable/);
-  const request = startRequest("HAP synthetic ID", 1234);
+  const request = startRequest("HAP synthetic ID", 4321);
   request.video.packetizationMode = 1 as VideoCodecPacketizationMode;
   await assert.rejects(handle(delegate.value, request), /camera-stream-unavailable/);
   assert.equal(peer.sent.filter(message => message.kind === "video_start").length, 0);
+  assert.equal(peer.sent.filter(message => message.kind === "video_stop").length, 1);
+  assert.equal(delegate.value.count, 0);
   await delegate.value.close(); peer.session.close();
+});
+
+test("failed START remains charged until exact cleanup completes and then permits an immediate retry", async () => {
+  const peer = new Peer(); await peer.ready(); const delegate = peer.delegate();
+  await prepare(delegate.value, prepareRequest("first"));
+  await prepare(delegate.value, prepareRequest("second"));
+  const first = peer.sent.find(message => message.kind === "video_prepare")!;
+  const request = startRequest("first", 4321); request.video.codec = 1 as VideoCodecType;
+  peer.hold = "video_stop";
+  let completed = false;
+  const rejected = assert.rejects(handle(delegate.value, request).finally(() => {completed = true;}), /camera-stream-unavailable/);
+  await tick();
+  assert.equal(completed, false); assert.equal(delegate.value.count, 2);
+  await assert.rejects(prepare(delegate.value, prepareRequest("third")), /camera-stream-unavailable/);
+  const stop = peer.held.shift()!;
+  assert.equal(stop.payload.session_id, first.payload.session_id);
+  peer.hold = null; await peer.answer(stop); await rejected;
+  assert.equal(delegate.value.count, 1);
+  await prepare(delegate.value, prepareRequest("third"));
+  assert.equal(delegate.value.count, 2);
+  await delegate.value.close(); peer.session.close();
+});
+
+test("terminal active phase errors retire only their owner even when HAP sends no STOP", async () => {
+  for (const failure of ["duplicate-start", "invalid-reconfigure"] as const) {
+    const peer = new Peer(); await peer.ready(); const delegate = peer.delegate();
+    await prepare(delegate.value, prepareRequest("first"));
+    await prepare(delegate.value, prepareRequest("second"));
+    await handle(delegate.value, startRequest("first", 4321));
+    const first = peer.sent.find(message => message.kind === "video_prepare")!;
+    const request: StreamingRequest = failure === "duplicate-start" ? startRequest("first", 4321) : {
+      sessionID: "first", type: StreamRequestTypes.RECONFIGURE,
+      video: {width: 0, height: 240, fps: 15, max_bit_rate: 500, rtcp_interval: .5},
+    };
+    await assert.rejects(handle(delegate.value, request), /camera-stream-unavailable/);
+    assert.equal(delegate.value.count, 1);
+    const stops = peer.sent.filter(message => message.kind === "video_stop");
+    assert.equal(stops.length, 1); assert.equal(stops[0]!.payload.session_id, first.payload.session_id);
+    await assert.rejects(handle(delegate.value, startRequest("unknown", 4321)), /camera-stream-unavailable/);
+    assert.equal(peer.sent.filter(message => message.kind === "video_stop").length, 1);
+    await prepare(delegate.value, prepareRequest("retry"));
+    assert.equal(delegate.value.count, 2);
+    await delegate.value.close(); peer.session.close();
+  }
+});
+
+test("selected video SSRC is an independent uint32 and malformed values retire before native START", async () => {
+  for (const ssrc of [0, 0xffffffff, -1, .5, 0x1_0000_0000, NaN, Infinity]) {
+    const peer = new Peer(); await peer.ready(); const delegate = peer.delegate();
+    try {
+      await prepare(delegate.value);
+      if (ssrc === 0 || ssrc === 0xffffffff) {
+        await handle(delegate.value, startRequest("HAP synthetic ID", ssrc));
+        assert.equal(peer.sent.filter(message => message.kind === "video_start").length, 1);
+      } else {
+        await assert.rejects(handle(delegate.value, startRequest("HAP synthetic ID", ssrc)), /camera-stream-unavailable/);
+        assert.equal(peer.sent.filter(message => message.kind === "video_start").length, 0);
+        assert.equal(delegate.value.count, 0);
+        assert.equal(peer.sent.filter(message => message.kind === "video_stop").length, 1);
+      }
+    } finally {
+      await delegate.value.close(); peer.session.close();
+    }
+  }
+});
+
+test("failed terminal cleanup escalates the channel and cannot admit another native session", async () => {
+  const peer = new Peer(); await peer.ready(); const delegate = peer.delegate();
+  await prepare(delegate.value); peer.rejectStop = true;
+  const request = startRequest("HAP synthetic ID", 4321);
+  request.video.packetizationMode = 1 as VideoCodecPacketizationMode;
+  await assert.rejects(handle(delegate.value, request), /camera-stream-unavailable/);
+  assert.deepEqual(delegate.failures, ["failed"]);
+  assert.deepEqual(peer.failures, ["video-stop-rejected"]);
+  await assert.rejects(prepare(delegate.value, prepareRequest("retry")), /camera-stream-unavailable/);
+  assert.equal(peer.sent.filter(message => message.kind === "video_prepare").length, 1);
+  await delegate.value.close(); peer.session.close();
+});
+
+test("selected audio SSRC is independent and malformed values retire its exact native reservation", async () => {
+  for (const ssrc of [0, 0xffffffff, -1, .5, 0x1_0000_0000, NaN]) {
+    const peer = new Peer({microphone: true, speaker: true, microphone_muted: false, speaker_muted: false,
+      microphone_volume: 100, speaker_volume: 100, revision: 1});
+    await peer.ready(); const delegate = peer.delegate();
+    try {
+      await prepare(delegate.value);
+      const request = startRequest("HAP synthetic ID", 4321);
+      request.audio = {codec: AudioStreamingCodecType.OPUS, channel: 1, bit_rate: AudioBitrate.VARIABLE, sample_rate: 24,
+        packet_time: 20, pt: 110, ssrc, max_bit_rate: 24, rtcp_interval: .5, comfort_pt: 13, comfortNoiseEnabled: false};
+      if (ssrc === 0 || ssrc === 0xffffffff) {
+        await handle(delegate.value, request);
+        assert.equal(peer.sent.filter(message => message.kind === "video_start").length, 1);
+      } else {
+        await assert.rejects(handle(delegate.value, request), /camera-stream-unavailable/);
+        assert.equal(peer.sent.filter(message => message.kind === "video_start").length, 0);
+        assert.equal(delegate.value.count, 0);
+        assert.equal(peer.sent.filter(message => message.kind === "video_stop").length, 1);
+      }
+    } finally {
+      await delegate.value.close(); peer.session.close();
+    }
+  }
 });
 
 test("IPv4 media prepare accepts the IPv4-mapped source address passed by a dual-stack HAP connection", async () => {
@@ -217,41 +347,82 @@ test("IPv4 media prepare accepts the IPv4-mapped source address passed by a dual
 });
 
 
-test("released HAP SetupEndpoints and SelectedRTP characteristics carry mapped TCP localAddress through native start", async () => {
-  const peer = new Peer(); await peer.ready();
-  const accessory = new CameraAccessory({camera_id: "front", accessory_id: randomUUID(), username: "02:11:22:33:44:56", doorbell: false},
+for (const withAudio of [false, true]) test(`released HAP accepts independent controller SSRCs through mapped SetupEndpoints and SelectedRTP characteristics (audio=${withAudio})`, async () => {
+  const audio: AccessoryAudio | null = withAudio ? {microphone: true, speaker: true, microphone_muted: false, speaker_muted: false,
+    microphone_volume: 100, speaker_volume: 100, revision: 1} : null;
+  const peer = new Peer(audio); await peer.ready();
+  const accessory = new CameraAccessory({camera_id: "front", accessory_id: randomUUID(), username: "02:11:22:33:44:56", doorbell: false, audio},
     peer.current, {native: peer.session.camera("front")});
   const connection = Object.assign(new EventEmitter(), {
     localAddress: "::ffff:127.0.0.1", getLocalAddress: () => "127.0.0.1",
   });
   const id = randomUUID();
-  const crypto = tlvEncode(1, 0, 2, Buffer.alloc(16, 7), 3, Buffer.alloc(14, 9));
-  const setupValue = tlvEncode(1, uuid.write(id), 3,
-    tlvEncode(1, 0, 2, "127.0.0.1", 3, writeUInt16(50100), 4, writeUInt16(50102)),
-    4, crypto, 5, crypto).toString("base64");
+  const values = publicStreamValues(id);
   const service = accessory.accessory.services.find(item => item.UUID === Service.CameraRTPStreamManagement.UUID)!;
   try {
     const setup = service.getCharacteristic(Characteristic.SetupEndpoints);
-    await setup.handleSetRequest(setupValue, connection as never);
+    await setup.handleSetRequest(values.setup, connection as never);
     const response = tlvDecode(Buffer.from(await setup.handleGetRequest(connection as never) as string, "base64"));
     assert.equal(response[2]![0], 0);
     assert.equal(tlvDecode(response[3]!)[2]!.toString(), "127.0.0.1");
     assert.equal(peer.sent.find(item => item.kind === "video_prepare")!.payload.source_address, "127.0.0.1");
-    const interval = Buffer.alloc(4); interval.writeFloatLE(.5);
-    const selected = tlvEncode(1, tlvEncode(1, uuid.write(id), 2, 1),
-      2, tlvEncode(1, 0, 2, tlvEncode(1, 0, 2, 0, 3, 0),
-        3, tlvEncode(1, writeUInt16(320), 2, writeUInt16(240), 3, 15),
-        4, tlvEncode(1, 99, 2, response[6]!, 3, writeUInt16(500), 4, interval, 5, writeUInt16(1200))),
-      3, tlvEncode(1, 3, 2, tlvEncode(1, 1, 2, 0, 3, 1, 4, 20),
-        3, tlvEncode(1, 110, 2, writeUInt32(5678), 3, writeUInt16(24), 4, interval, 6, 13), 4, 0));
     await service.getCharacteristic(Characteristic.SelectedRTPStreamConfiguration)
-      .handleSetRequest(selected.toString("base64"), connection as never);
+      .handleSetRequest(values.start, connection as never);
+    assert.equal(response[6]!.readUInt32LE(), 1234);
+    if (withAudio) assert.equal(response[7]!.readUInt32LE(), 5678);
     assert.equal(peer.sent.filter(item => item.kind === "video_start").length, 1);
+    const start = peer.sent.find(item => item.kind === "video_start")!;
+    assert.equal(Object.hasOwn(start.payload.config as object, "ssrc"), false);
+    if (withAudio) {
+      assert.equal((start.payload.audio_config as JsonObject).payload_type, 110);
+      assert.equal(Object.hasOwn(start.payload.audio_config as object, "ssrc"), false);
+    } else assert.equal(start.payload.audio_config, null);
   } finally {
     connection.emit("closed");
     accessory.retire(); await accessory.closeStreams(); peer.session.close();
   }
 });
+
+for (const heldKind of ["video_prepare", "video_start", "video_reconfigure"] as const) {
+  test(`released HAP END settles an old ${heldKind} callback before replacement SetupEndpoints`, async () => {
+    const peer = new Peer(); await peer.ready();
+    const accessory = new CameraAccessory({camera_id: "front", accessory_id: randomUUID(), username: "02:11:22:33:44:56", doorbell: false},
+      peer.current, {native: peer.session.camera("front")});
+    const connection = Object.assign(new EventEmitter(), {localAddress: "::ffff:127.0.0.1", getLocalAddress: () => "127.0.0.1"});
+    const service = accessory.accessory.services.find(item => item.UUID === Service.CameraRTPStreamManagement.UUID)!;
+    const setup = service.getCharacteristic(Characteristic.SetupEndpoints);
+    const selected = service.getCharacteristic(Characteristic.SelectedRTPStreamConfiguration);
+    const old = publicStreamValues(randomUUID()), replacement = publicStreamValues(randomUUID());
+    try {
+      let pending: Promise<unknown>;
+      if (heldKind === "video_prepare") {
+        peer.hold = heldKind;
+        pending = setup.handleSetRequest(old.setup, connection as never);
+      } else {
+        await setup.handleSetRequest(old.setup, connection as never);
+        if (heldKind === "video_reconfigure") await selected.handleSetRequest(old.start, connection as never);
+        peer.hold = heldKind;
+        pending = selected.handleSetRequest(heldKind === "video_start" ? old.start : old.reconfigure, connection as never);
+      }
+      let settled = false;
+      const rejected = assert.rejects(pending).then(() => {settled = true;});
+      await tick(); assert.equal(peer.held.length, 1);
+      const late = peer.held.shift()!;
+      await selected.handleSetRequest(old.stop, connection as never);
+      await tick(); assert.equal(settled, true);
+      peer.hold = null;
+      await setup.handleSetRequest(replacement.setup, connection as never);
+      const response = tlvDecode(Buffer.from(await setup.handleGetRequest(connection as never) as string, "base64"));
+      assert.equal(response[2]![0], 0); assert.equal(accessory.streamingDelegate!.count, 1);
+      await peer.answer(late); await rejected; await tick();
+      await selected.handleSetRequest(replacement.start, connection as never);
+      assert.equal(accessory.streamingDelegate!.count, 1);
+      assert.equal(peer.sent.filter(item => item.kind === "video_stop").length, 1);
+    } finally {
+      connection.emit("closed"); accessory.retire(); await accessory.closeStreams(); peer.session.close();
+    }
+  });
+}
 
 
 test("mapped source normalization preserves unicast and negotiated-family rejection before IPC", async () => {

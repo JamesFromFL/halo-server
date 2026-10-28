@@ -13,6 +13,10 @@ const MAX_SNAPSHOT_REQUESTS = 2;
 export const SNAPSHOT_TIMEOUT_MS = 20_000;
 export const SNAPSHOT_REPLY_TIMEOUT_MS = 17_000;
 export type SnapshotReason = "periodic" | "event" | "explicit" | "unknown";
+const SNAPSHOT_REJECTION_CODES = new Set([
+  "busy", "timeout", "expired", "cancelled", "unsupported", "unauthorized",
+  "stale-scope", "policy-denied", "conflict", "not-ready", "invalid-request", "source-failed",
+]);
 const MAX_LIVE_SESSIONS = 8;
 const MAX_RECORDINGS = 2;
 const RECORDING_CLEANUP_MS = 60_000;
@@ -725,7 +729,9 @@ export class AdapterSession {
     }, Math.min(this.timeout, SNAPSHOT_REPLY_TIMEOUT_MS));
     void request.then(reply => {
       if (reply.payload.status !== "ready" || reply.payload.code !== "ok") {
-        job.reject(new ProtocolError("snapshot-rejected")); this.finishSnapshot(jobId, job);
+        const code = reply.payload.code;
+        job.reject(new ProtocolError(typeof code === "string" && SNAPSHOT_REJECTION_CODES.has(code) ?
+          `snapshot-${code}` : "snapshot-rejected")); this.finishSnapshot(jobId, job);
       }
     }).catch(error => {job.reject(error as Error); this.cancelSnapshot(jobId, "snapshot-cancelled");});
     try {

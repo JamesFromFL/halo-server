@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
+import {randomUUID} from 'node:crypto';
 import {test} from 'node:test';
 import {HAPStatus, ResourceRequestReason} from '@homebridge/hap-nodejs';
 import {CameraAccessory} from '../src/camera.js';
 import {HapVideoDelegate} from '../src/video.js';
-import type {CameraDelegate, NativeCamera, SnapshotReason} from '../src/session.js';
-import type {CameraPolicy} from '../src/protocol.js';
+import {AdapterSession, type CameraDelegate, type NativeCamera, type SnapshotReason} from '../src/session.js';
+import {validateDirection, type CameraPolicy, type Envelope, type JsonObject, type Kind} from '../src/protocol.js';
 const image=Buffer.from([0xff,0xd8,0x01,0xff,0xd9]);
 const tick=():Promise<void>=>new Promise(resolve=>setImmediate(resolve));
 function fixture() {
@@ -81,4 +82,76 @@ test('whole public deadline also fences an unresolved policy synchronization bef
   let calls=0;f.delegate.handleSnapshotRequest({width:640,height:480},()=>{calls++;});await tick();
   context.mock.timers.tick(20_000);await tick();assert.equal(calls,1);assert.equal(f.calls.length,0);
   release();await tick();assert.equal(calls,1);assert.equal(f.calls.length,0);await f.delegate.close();
+});
+
+async function snapshotPeer() {
+  const boot = randomUUID(), info = fixture().info;
+  info.capabilities.evidence.push('halo:video');
+  const account = {profile_id: info.scope.profile_id, account_generation: info.scope.account_generation};
+  const sent: Envelope[] = [], failures: string[] = [];
+  const session = new AdapterSession(boot, {send: async message => {
+    validateDirection(message, 'hap'); sent.push(message);
+  }, onFailure: error => failures.push(error.code)});
+  const request = async (kind: Kind): Promise<Envelope> => {
+    for (let turn = 0; turn < 10; turn++) {
+      const index = sent.findIndex(message => message.kind === kind);
+      if (index >= 0) return sent.splice(index, 1)[0]!;
+      await tick();
+    }
+    throw new Error('missing synthetic snapshot request');
+  };
+  const reply = (message: Envelope, kind: Kind, payload: JsonObject): Promise<boolean> =>
+    session.receive({...message, kind, payload});
+  const inventory = async (revision: number): Promise<void> => {
+    const message = await request('inventory_request');
+    await reply(message, 'inventory_page', {scope: account, cursor: message.payload.cursor,
+      next_cursor: null, revision, total: 1, complete: true, devices: [info]});
+    await tick();
+  };
+  await session.receive({v: 1, kind: 'inventory_reset', boot_id: boot,
+    request_id: randomUUID(), payload: {scope: account, revision: 1}});
+  await inventory(1);
+  const native = session.camera('front');
+  const policy: CameraPolicy = {synchronized: true, streaming: true, live_audio: false, snapshots: true,
+    recording: false, recording_audio: false, talkback: false, controls: false};
+  const update = native.updatePolicy(policy), changing = await request('policy_update');
+  await reply(changing, 'policy_ack', {scope: changing.payload.scope, accepted: true, code: 'ok'});
+  info.scope.privacy_generation++;
+  await inventory(2); await update;
+  const diagnostics: [string, string][] = [];
+  const delegate = new HapVideoDelegate(native, {active: () => true, policy: () => policy,
+    forceStop: () => {}, failure: () => {}, reportError: (stage, code) => diagnostics.push([stage, code])});
+  return {session, native, delegate, request, reply, sent, failures, diagnostics};
+}
+
+test('snapshot parent failures retain only fixed reasons through the public HAP callback', async () => {
+  const peer = await snapshotPeer();
+  try {
+    for (const [code, expected] of [['source-failed', 'snapshot-source-failed'], ['busy', 'snapshot-busy'],
+      ['stale-scope', 'snapshot-stale-scope'], ['not-found', 'snapshot-rejected']] as const) {
+      const pending = snapshot(peer.delegate, ResourceRequestReason.PERIODIC);
+      const rejected = assert.rejects(pending, /-70402/);
+      const message = await peer.request('snapshot_request');
+      await peer.reply(message, 'snapshot_result', {scope: message.payload.scope, job_id: message.payload.job_id,
+        status: 'rejected', code, transfer_id: null});
+      await rejected;
+      assert.deepEqual(peer.diagnostics.at(-1), ['snapshot', expected]);
+      assert.equal(peer.session.pendingRequests, 0);
+      assert.equal(peer.sent.some(value => value.kind === 'snapshot_cancel'), false);
+    }
+    assert.deepEqual(peer.failures, []);
+  } finally { await peer.delegate.close(); peer.session.close(); }
+});
+
+test('arbitrary parent error text cannot become a snapshot diagnostic or a successful image', async () => {
+  const peer = await snapshotPeer();
+  try {
+    const pending = snapshot(peer.delegate, ResourceRequestReason.PERIODIC), rejected = assert.rejects(pending, /-70402/);
+    const message = await peer.request('snapshot_request');
+    await assert.rejects(peer.reply(message, 'snapshot_result', {scope: message.payload.scope, job_id: message.payload.job_id,
+      status: 'rejected', code: 'untrusted-secret-text', transfer_id: null}), /invalid-payload/);
+    peer.session.close(); await rejected;
+    assert.equal(JSON.stringify(peer.diagnostics).includes('untrusted-secret-text'), false);
+    assert.equal(peer.session.pendingRequests, 0);
+  } finally { await peer.delegate.close(); peer.session.close(); }
 });

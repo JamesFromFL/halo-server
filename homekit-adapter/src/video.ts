@@ -14,6 +14,7 @@ export const PREPARED_VIDEO_TIMEOUT_MS = 10_000;
 interface OwnedVideo {
   hapId: string; wireId: string; retired: boolean; phase: "preparing" | "prepared" | "starting" | "active" | "reconfiguring";
   transport: VideoDelegate | null; config: VideoConfiguration | null; timer: NodeJS.Timeout | null; closing: Promise<void> | null;
+  callbacks: Set<() => void>;
 }
 export interface VideoCameraOptions {
   active: () => boolean;
@@ -31,8 +32,12 @@ export const VIDEO_DIAGNOSTIC_CODES = [
   "video-configuration-rejected", "video-stop-rejected", "video-cleanup-failed", "video-capacity",
   "request-timeout", "session-closed", "resource-retired", "snapshot-retired", "snapshot-unavailable",
   "snapshot-cancelled", "snapshot-capacity", "snapshot-rejected", "snapshot-transfer-failed",
+  "snapshot-busy", "snapshot-timeout", "snapshot-expired", "snapshot-unsupported", "snapshot-unauthorized",
+  "snapshot-stale-scope", "snapshot-policy-denied", "snapshot-conflict", "snapshot-not-ready",
+  "snapshot-invalid-request", "snapshot-source-failed",
 ] as const;
 const diagnosticCodes = new Set<string>(VIDEO_DIAGNOSTIC_CODES);
+const uint32 = (value: number): boolean => Number.isSafeInteger(value) && value >= 0 && value <= 0xffffffff;
 const forbidden = new BlockList();
 forbidden.addSubnet("0.0.0.0", 8, "ipv4"); forbidden.addSubnet("224.0.0.0", 4, "ipv4");
 forbidden.addSubnet("240.0.0.0", 4, "ipv4"); forbidden.addAddress("::", "ipv6"); forbidden.addSubnet("ff00::", 8, "ipv6");
@@ -129,22 +134,46 @@ export class HapVideoDelegate implements CameraStreamingDelegate {
     try { this.options.reportError?.(stage, code); } catch {}
   }
   prepareStream(request: PrepareStreamRequest, callback: Parameters<CameraStreamingDelegate["prepareStream"]>[1]): void {
-    void this.prepare(request).then(response => callback(undefined, response), error => {
-      this.report("video-prepare", error); callback(new Error("camera-stream-unavailable"));
-    });
+    let owner: OwnedVideo | undefined, completed = false;
+    const finish = (error?: unknown, response?: PrepareStreamResponse, quiet = false): void => {
+      if (completed) return;
+      completed = true; owner?.callbacks.delete(cancel);
+      if (error !== undefined) {
+        if (!quiet) this.report("video-prepare", error);
+        callback(new Error("camera-stream-unavailable"));
+      } else callback(undefined, response);
+    };
+    const cancel = (): void => finish(new ProtocolError("video-retired"), undefined, true);
+    void this.prepare(request, session => {owner = session; session.callbacks.add(cancel);}).then(
+      response => finish(undefined, response), error => {finish(error); if (owner) this.cancelCallbacks(owner);});
   }
   handleStreamRequest(request: StreamingRequest, callback: Parameters<CameraStreamingDelegate["handleStreamRequest"]>[1]): void {
-    void this.handle(request).then(() => callback(), error => {
-      const stage = request.type === StreamRequestTypes.STOP ? "video-stop" :
-        request.type === StreamRequestTypes.RECONFIGURE ? "video-reconfigure" : "video-start";
-      this.report(stage, error); callback(new Error("camera-stream-unavailable"));
-    });
+    const owner = request.type === StreamRequestTypes.STOP ? undefined : this.sessions.get(request.sessionID);
+    let completed = false;
+    const finish = (error?: unknown, quiet = false): void => {
+      if (completed) return;
+      completed = true; owner?.callbacks.delete(cancel);
+      if (error !== undefined) {
+        const stage = request.type === StreamRequestTypes.STOP ? "video-stop" :
+          request.type === StreamRequestTypes.RECONFIGURE ? "video-reconfigure" : "video-start";
+        if (!quiet) this.report(stage, error);
+        callback(new Error("camera-stream-unavailable"));
+      } else callback();
+    };
+    const cancel = (): void => finish(new ProtocolError("video-retired"), true);
+    if (owner?.closing) {
+      this.cancelCallbacks(owner);
+      finish(new ProtocolError("video-retired"));
+      return;
+    }
+    owner?.callbacks.add(cancel);
+    void this.handle(request).then(() => finish(), error => {finish(error); if (owner) this.cancelCallbacks(owner);});
   }
   private available(): boolean { return !this.closed && this.options.active(); }
   private current(session: OwnedVideo): void {
     if (!this.available() || session.retired || this.sessions.get(session.hapId) !== session) throw new ProtocolError("video-retired");
   }
-  private async prepare(request: PrepareStreamRequest): Promise<PrepareStreamResponse> {
+  private async prepare(request: PrepareStreamRequest, owned: (session: OwnedVideo) => void): Promise<PrepareStreamResponse> {
     const sourceAddress = mediaSourceAddress(request.sourceAddress, request.addressVersion);
     if (!this.available() || typeof request.sessionID !== "string" || !request.sessionID || request.sessionID.length > 128 ||
         this.sessions.has(request.sessionID) || this.sessions.size >= 2 ||
@@ -155,8 +184,9 @@ export class HapVideoDelegate implements CameraStreamingDelegate {
         !Buffer.isBuffer(request.video.srtp_salt) || request.video.srtp_salt.length !== 14 ||
         !Number.isSafeInteger(request.video.port) || request.video.port < 1 || request.video.port > 65535) throw new ProtocolError("invalid-video-prepare");
     const session: OwnedVideo = {hapId: request.sessionID, wireId: randomUUID(), retired: false,
-      phase: "preparing", transport: null, config: null, timer: null, closing: null};
+      phase: "preparing", transport: null, config: null, timer: null, closing: null, callbacks: new Set()};
     this.sessions.set(session.hapId, session);
+    owned(session);
     const audio = this.options.audio?.();
     const withAudio = audio?.microphone === true || audio?.speaker === true;
     if (withAudio && (!request.audio || request.audio.srtpCryptoSuite !== SRTPCryptoSuites.AES_CM_128_HMAC_SHA1_80 ||
@@ -181,7 +211,7 @@ export class HapVideoDelegate implements CameraStreamingDelegate {
         srtp_key: Buffer.from(endpoint.key, "base64"), srtp_salt: Buffer.from(endpoint.salt, "base64")},
         ...(endpoint.audio === null ? {} : {audio: {port: endpoint.audio.port, ssrc: endpoint.audio.ssrc,
           srtp_key: Buffer.from(endpoint.audio.key, "base64"), srtp_salt: Buffer.from(endpoint.audio.salt, "base64")}})};
-    } catch (error) { await this.stop(session); throw error; }
+    } catch (error) { await this.stop(session, false); throw error; }
   }
   private configuration(video: VideoInfo): VideoConfiguration {
     if (video.codec !== VideoCodecType.H264 || video.packetizationMode !== VideoCodecPacketizationMode.NON_INTERLEAVED) {
@@ -207,28 +237,42 @@ export class HapVideoDelegate implements CameraStreamingDelegate {
     const session = this.sessions.get(request.sessionID);
     if (request.type === StreamRequestTypes.STOP) { if (session) await this.stop(session); return; }
     if (!session) throw new ProtocolError("video-not-prepared");
-    this.current(session);
-    const transport = session.transport;
-    if (!transport) throw new ProtocolError("video-not-prepared");
-    if (request.type === StreamRequestTypes.START) {
-      if (session.phase !== "prepared" || request.video.ssrc !== transport.endpoint.ssrc) throw new ProtocolError("video-start-conflict");
-      const config = this.configuration(request.video);
-      const audioEndpoint = transport.endpoint.audio;
-      if (audioEndpoint !== null && request.audio.ssrc !== audioEndpoint.ssrc) throw new ProtocolError("audio-start-conflict");
-      const audio = audioEndpoint === null ? null : this.audioConfiguration(request.audio);
-      session.phase = "starting";
-      try {
+    try {
+      this.current(session);
+      const transport = session.transport;
+      if (!transport) throw new ProtocolError("video-not-prepared");
+      if (request.type === StreamRequestTypes.START) {
+        if (session.phase !== "prepared" || !uint32(request.video.ssrc)) throw new ProtocolError("video-start-conflict");
+        // SelectedRTP contains the controller's independently selected SSRCs.
+        // Python retains the server SSRCs returned by SetupEndpoints; selected
+        // values neither replace those sender identities nor authorize media.
+        const config = this.configuration(request.video);
+        if (transport.endpoint.audio !== null && !uint32(request.audio.ssrc)) throw new ProtocolError("audio-start-conflict");
+        const audio = transport.endpoint.audio === null ? null : this.audioConfiguration(request.audio);
+        session.phase = "starting";
         await transport.start(config, audio); this.current(session); session.phase = "active"; session.config = config;
         if (session.timer) clearTimeout(session.timer); session.timer = null;
-      } catch (error) { await this.stop(session); throw error; }
-    } else if (request.type === StreamRequestTypes.RECONFIGURE) {
-      if (session.phase !== "active" || !session.config) throw new ProtocolError("video-reconfigure-conflict");
-      const config = this.reconfiguration(request.video, session.config); session.phase = "reconfiguring";
-      try { await transport.reconfigure(config); this.current(session); session.phase = "active"; session.config = config; }
-      catch (error) { await this.stop(session); throw error; }
-    } else throw new ProtocolError("unsupported-video-operation");
+      } else if (request.type === StreamRequestTypes.RECONFIGURE) {
+        if (session.phase !== "active" || !session.config) throw new ProtocolError("video-reconfigure-conflict");
+        const config = this.reconfiguration(request.video, session.config); session.phase = "reconfiguring";
+        await transport.reconfigure(config); this.current(session); session.phase = "active"; session.config = config;
+      } else throw new ProtocolError("unsupported-video-operation");
+    } catch (error) {
+      // HAP resets its stream management session after a callback error and
+      // does not send a compensating STOP. Retire this exact owner first,
+      // including validation/phase failures before any native START request.
+      await this.stop(session, false);
+      throw error;
+    }
   }
-  private stop(session: OwnedVideo): Promise<void> {
+  private cancelCallbacks(session: OwnedVideo): void {
+    for (const cancel of [...session.callbacks]) cancel();
+  }
+  private stop(session: OwnedVideo, cancelPending = true): Promise<void> {
+    // Public HAP END resets its slot before invoking STOP. Settle this owner's
+    // callbacks synchronously so their late native replies cannot reset a new
+    // slot. Error-driven cleanup retains its callback until native STOP joins.
+    if (cancelPending) this.cancelCallbacks(session);
     if (session.closing) return session.closing;
     session.retired = true;
     if (session.timer) clearTimeout(session.timer); session.timer = null;
@@ -241,6 +285,7 @@ export class HapVideoDelegate implements CameraStreamingDelegate {
     if (this.sessions.get(session.hapId) !== session) return;
     const notify = !session.retired;
     session.retired = true;
+    this.cancelCallbacks(session);
     if (session.timer) clearTimeout(session.timer); session.timer = null;
     this.sessions.delete(session.hapId); if (notify) this.options.forceStop(session.hapId);
   }

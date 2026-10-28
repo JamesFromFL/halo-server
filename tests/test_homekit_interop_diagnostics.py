@@ -50,3 +50,11 @@ async def test_untrusted_diagnostic_text_and_identifiers_are_never_logged(caplog
         }
     )
     assert not caplog.records and not value._diagnostic_last
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("code", ("snapshot-source-failed", "snapshot-timeout"))
+async def test_fixed_snapshot_reasons_preserve_failure_stage_without_peer_data(caplog, code):
+    await bridge()._notice(notice("snapshot", code))
+    assert len(caplog.records) == 1
+    assert caplog.records[0].getMessage() == f"HomeKit operation snapshot failed: {code}"
