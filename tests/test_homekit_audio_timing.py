@@ -124,6 +124,10 @@ async def test_real_send_loop_outcomes_unchanged_with_safe_or_failing_trace(
     track = make_track(monkeypatch, now)
     track.config = AudioConfiguration(24000, 20, "cbr", 24)
     track._timing = _AudioTiming(track.config, now[0])
+    # Exercise continuous delivery metadata; separate live-edge tests cover
+    # the intentional newest-packet choice for a viewer's first batch.
+    track._capture_epoch = 1
+    track._live_edge_pending = False
     calls, sent = [], []
 
     class Adapter:

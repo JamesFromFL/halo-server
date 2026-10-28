@@ -77,6 +77,7 @@ class _AudioTiming:
             "mode_repacketize",
             "mode_adapt",
             "mode_other",
+            "live_edge_skipped",
         ]:
             self.values[name] = 0
         for prefix, bins in (
@@ -277,6 +278,7 @@ class AudioTrack:
         self._capture_epoch = None
         self._input_spans = deque()
         self._input_end = None
+        self._live_edge_pending = True
         self._timing = None
         self.failure = None
 
@@ -373,9 +375,13 @@ class AudioTrack:
         self._next_packet_at = 0
         self._input_spans.clear()
         self._input_end = None
+        self._live_edge_pending = True
+
+    def _expired_prefix(self):
+        return bool(self._input_spans and self._clock() - self._input_spans[0][2] > MAX_AUDIO_AGE)
 
     async def _discard_expired_prefix(self):
-        if self._input_spans and self._clock() - self._input_spans[0][2] > MAX_AUDIO_AGE:
+        if self._expired_prefix():
             from halo_server.media.homekit_audio_codec import AudioAdapter
 
             await self._adapter.close()
@@ -435,21 +441,45 @@ class AudioTrack:
                     self._reset(batch.capture_epoch)
                 if not self._may("live_audio"):
                     continue
-                for packet in batch.packets:
+                packets = batch.packets
+                for packet in packets:
                     self._trace("source", packet, self._clock())
+                # Live viewers start at the current complete packet. Replaying
+                # almost-expired history can make converter startup expire the
+                # next prefix repeatedly, even while Ring supplies clean audio.
+                # Recording reads retain their separate pre-roll semantics.
+                if self._expired_prefix():
+                    await self._discard_expired_prefix()
+                    self._live_edge_pending = True
+                    continue
+                if getattr(batch, "resynchronized", False):
+                    self._live_edge_pending = True
+                if packets and self._clock() - packets[0].received_at > MAX_AUDIO_AGE:
+                    self._live_edge_pending = True
+                if self._live_edge_pending and packets:
+                    self._trace("count", "live_edge_skipped", len(packets) - 1)
+                    packets = packets[-1:]
+                for packet in packets:
                     if packet.capture_epoch != self._epoch():
                         self._trace("count", "epoch_drop")
                         continue
                     if self._clock() - packet.received_at > MAX_AUDIO_AGE:
                         self._trace("count", "stale_input")
-                        continue
-                    await self._discard_expired_prefix()
+                        self._live_edge_pending = True
+                        break
+                    # A prefix can expire while an earlier output is paced.
+                    # Leave that batch before restarting on another old packet.
+                    if self._expired_prefix():
+                        await self._discard_expired_prefix()
+                        self._live_edge_pending = True
+                        break
                     if packet.capture_epoch != self._epoch():
                         self._trace("count", "epoch_drop")
                         break
                     if self._clock() - packet.received_at > MAX_AUDIO_AGE:
                         self._trace("count", "stale_input")
-                        continue
+                        self._live_edge_pending = True
+                        break
                     if self._input_end is not None and packet.rtp_timestamp != self._input_end:
                         self._input_spans.clear()
                     self._input_end = (
@@ -471,6 +501,7 @@ class AudioTrack:
                         )
                     finally:
                         self._trace("feed", self._clock() - feed_started)
+                    self._live_edge_pending = False
                     for output in outputs:
                         self._trace("output", output)
                         received_at = self._output_receipt(output, packet.received_at)
@@ -479,7 +510,8 @@ class AudioTrack:
                             break
                         if self._clock() - received_at > MAX_AUDIO_AGE:
                             self._trace("count", "stale_output")
-                            continue
+                            self._live_edge_pending = True
+                            break
                         if self._next_packet_at:
                             self._trace(
                                 "maximum",
@@ -491,7 +523,8 @@ class AudioTrack:
                             await asyncio.sleep(target - self._clock())
                         if self._clock() - received_at > MAX_AUDIO_AGE:
                             self._trace("count", "stale_output")
-                            continue
+                            self._live_edge_pending = True
+                            break
                         if len(output.payload) + 22 > MAX_AUDIO_PACKET:
                             raise HomeKitOperationError("media_saturated")
                         timestamp = self._timestamp(output.timestamp)
@@ -516,6 +549,7 @@ class AudioTrack:
                             epoch=packet.capture_epoch,
                             fresh_until=received_at + MAX_AUDIO_AGE,
                         ):
+                            self._live_edge_pending = True
                             break
                         self._last_timestamp = timestamp
                         self._last_duration = output.duration * self.config.sample_rate // 48000
@@ -533,6 +567,8 @@ class AudioTrack:
                             self._last_presentation,
                         )
                         self._next_packet_at = target + output.duration / 48000
+                    if self._live_edge_pending:
+                        break
         except asyncio.CancelledError:
             raise
         except Exception as exc:

@@ -118,6 +118,9 @@ async def test_public_hap_audio_reaches_native_udp_and_generation_gated_speaker(
         capture = service._media_sessions["42"]
         for index, payload in enumerate(tone_packets()[:8]):
             capture.original_audio_buffer.append_audio(payload, index * 960)
+            # Model a continuing Ring source, rather than a pre-start replay
+            # batch that live-edge admission intentionally trims to its tail.
+            await asyncio.sleep(0.02)
         packets = await receive_media(audio, crypto(int(ssrc)), 8)
         assert all(
             (b.timestamp - a.timestamp) & 0xFFFFFFFF == 480

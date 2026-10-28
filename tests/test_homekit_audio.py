@@ -77,6 +77,7 @@ class AudioHandle(Handle):
     def __init__(self):
         super().__init__()
         self.audio = asyncio.Queue()
+        self.audio_read_started = asyncio.Event()
         self.source_clocks = ()
 
     async def read_audio(self, *, timeout):
@@ -84,6 +85,8 @@ class AudioHandle(Handle):
             packets = await asyncio.wait_for(self.audio.get(), timeout)
         except TimeoutError:
             packets = ()
+        if packets:
+            self.audio_read_started.set()
         return BufferRead(packets, False, self.capture_epoch)
 
     def append(self, payloads, *, epoch=None):
@@ -99,6 +102,24 @@ class AudioHandle(Handle):
                 for index, payload in enumerate(payloads)
             )
         )
+
+
+async def feed_continuous_audio(handle, payloads, *, timestamp=960):
+    """Finite live source after the first read, with real receipt-time spacing."""
+    for payload in payloads:
+        duration = parse_opus(payload).duration_samples
+        await asyncio.sleep(duration / 48000)
+        handle.audio.put_nowait(
+            (
+                SimpleNamespace(
+                    payload=payload,
+                    rtp_timestamp=timestamp,
+                    received_at=time.monotonic(),
+                    capture_epoch=handle.capture_epoch,
+                ),
+            )
+        )
+        timestamp += duration
 
 
 class Speaker:
@@ -277,11 +298,17 @@ def test_inbound_srtp_tamper_does_not_pin_sender_and_replay_or_second_sender_is_
 @pytest.mark.asyncio
 async def test_native_audio_udp_decrypts_decodes_tone_with_actual_classic_hap_clock_and_sr():
     manager, controller, identity, result, video, audio = await prepared_audio()
-    controller.handle.append(tone_packets()[:8])
+    controller.handle.append(tone_packets()[:1])
     peer = crypto(result.audio.ssrc)
+    feeder = None
     try:
         await manager.start(controller.boot, controller.scope, identity, CONFIG, audio_config=AUDIO)
+        # Start-edge selection has its own regressions. This finite source
+        # continues supplying every tone packet after the initial live read.
+        await asyncio.wait_for(controller.handle.audio_read_started.wait(), 1)
+        feeder = asyncio.create_task(feed_continuous_audio(controller.handle, tone_packets()[1:8]))
         packets = await receive_media(audio, peer, 8)
+        await feeder
         assert all(
             (b.timestamp - a.timestamp) & 0xFFFFFFFF == 480
             for a, b in zip(packets, packets[1:], strict=False)
@@ -309,6 +336,9 @@ async def test_native_audio_udp_decrypts_decodes_tone_with_actual_classic_hap_cl
                     assert report.sender_info.packet_count == 8
                     break
     finally:
+        if feeder is not None:
+            feeder.cancel()
+            await asyncio.gather(feeder, return_exceptions=True)
         video.close()
         audio.close()
         await manager.close()
@@ -654,11 +684,14 @@ async def test_failed_speaker_cleanup_retains_entire_av_reservation_and_health(m
 async def test_negotiated_native_udp_packet_duration_and_classic_clock_matrix(rate, duration):
     manager, controller, identity, result, video, audio = await prepared_audio()
     selected = AudioConfiguration(rate, duration, "vbr", 24)
-    controller.handle.append(tone_packets())
+    controller.handle.append(tone_packets()[:1])
+    feeder = None
     try:
         await manager.start(
             controller.boot, controller.scope, identity, CONFIG, audio_config=selected
         )
+        await asyncio.wait_for(controller.handle.audio_read_started.wait(), 1)
+        feeder = asyncio.create_task(feed_continuous_audio(controller.handle, tone_packets()[1:]))
         packets = await receive_media(audio, crypto(result.audio.ssrc), 2)
         assert (packets[1].timestamp - packets[0].timestamp) & 0xFFFFFFFF == rate * duration // 1000
         assert all(
@@ -671,6 +704,9 @@ async def test_negotiated_native_udp_packet_duration_and_classic_clock_matrix(ra
         ]
         assert sum(frame.samples for frame in decoded) == 2 * duration * 48
     finally:
+        if feeder is not None:
+            feeder.cancel()
+            await asyncio.gather(feeder, return_exceptions=True)
         video.close()
         audio.close()
         await manager.close()
@@ -882,6 +918,13 @@ async def test_grouped_audio_uses_earliest_contributing_receipt_and_discards_exp
         if scenario == "receipt_gap":
             now[0] = began + 0.75
             append([960, 1920, 2880], now[0])
+            await until(lambda: len(instances) == 2)
+            assert instances[0].closed and instances[1].inputs == []
+            # The already-read batch was discarded before the cold restart.
+            # Submit a fresh read, then ordinary contiguous grouping inputs.
+            append([3840], now[0])
+            await until(lambda: instances[1].inputs == [3840])
+            append([4800, 5760], now[0])
         else:
             now[0] = began + 0.49
             append([960, 1920], now[0])
@@ -890,13 +933,16 @@ async def test_grouped_audio_uses_earliest_contributing_receipt_and_discards_exp
                 await asyncio.wait_for(asyncio.get_running_loop().sock_recv(audio, 4096), 0.03)
             now[0] = began + 0.52
             append([2880, 3840, 4800], now[0])
+            await until(lambda: instances[0].inputs[-1] == 4800)
+            append([5760, 6720], now[0])
         packets = await receive_media(audio, crypto(result.audio.ssrc), 1)
         assert parse_opus(packets[0].payload).duration_samples == 2880
         if scenario == "receipt_gap":
             assert len(instances) == 2 and instances[0].closed
-            assert instances[0].inputs == [0] and instances[1].inputs == [960, 1920, 2880]
+            assert instances[0].inputs == [0] and instances[1].inputs == [3840, 4800, 5760]
         else:
             assert len(instances) == 1 and instances[0].groups == 2
+            assert instances[0].inputs == [0, 960, 1920, 4800, 5760, 6720]
     finally:
         video.close()
         audio.close()
