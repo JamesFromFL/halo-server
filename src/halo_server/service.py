@@ -27,6 +27,7 @@ from halo_server.api.plugin import (
 )
 from halo_server.api.tokens import PluginTokenStore, PluginTokenStoreError
 from halo_server.configuration import ServerConfiguration
+from halo_server.homekit.bridge import HomeKitBridge
 from halo_server.homekit.controller import HomeKitController
 from halo_server.homekit.service_backend import ServiceHomeKitBackend
 from halo_server.incidents.coordinator import (
@@ -142,6 +143,8 @@ class HaloService:
         *,
         session_manager: RingSessionManager | None = None,
         configuration: ServerConfiguration | None = None,
+        homekit_resources=None,
+        homekit_bridge_factory=HomeKitBridge,
         listener_factory=EventListener,
         media_session_factory=CameraMediaSession,
         plugin_token_store: PluginTokenStore | None = None,
@@ -235,6 +238,11 @@ class HaloService:
         self._plugin_events.bind_scope(self._current_account_scope)
         self._homekit_backend = ServiceHomeKitBackend(self)
         self.homekit = HomeKitController(self._homekit_backend)
+        self._homekit_bridge = (
+            homekit_bridge_factory(self.homekit, self._homekit_backend, resources=homekit_resources)
+            if self.configuration.homekit_enabled
+            else None
+        )
 
     def _current_account_scope(self) -> object:
         if hasattr(self._sessions, "active_scope"):
@@ -306,6 +314,8 @@ class HaloService:
         self._initial_restore_task = asyncio.create_task(
             self._initial_restore(), name="initial-ring-session-restore"
         )
+        if self._homekit_bridge is not None:
+            self._homekit_bridge.start()
 
     async def _initial_restore(self) -> None:
         if await self._try_restore_ring_session():
@@ -327,6 +337,8 @@ class HaloService:
         cancel_pending = getattr(self._sessions, "cancel_pending_operations", None)
         if callable(cancel_pending):
             await attempt("pending Ring authentication", owned_thread(cancel_pending))
+        if self._homekit_bridge is not None:
+            await attempt("HomeKit adapter", self._homekit_bridge.stop())
         await attempt("HomeKit resources", self.homekit.detach())
 
         if self._plugin_api is not None:
@@ -438,6 +450,7 @@ class HaloService:
         self._account_integrations_ready = True
         self._last_account_error = None
         await self.homekit.reconcile()
+        self._notify_homekit_inventory()
         return False
 
     def _request_account_repair(self) -> None:
@@ -566,12 +579,14 @@ class HaloService:
                 "mode": self.configuration.mode.value,
                 "revision": self.configuration.revision,
             },
-            "homekit": {
-                "requested": self.configuration.homekit_enabled,
-                "state": "not_ready" if self.configuration.homekit_enabled else "disabled",
-                "reason": "native_adapter_wiring_pending"
-                if self.configuration.homekit_enabled
-                else None,
+            "homekit": self._homekit_bridge.status()
+            if self._homekit_bridge is not None
+            else {
+                "requested": False,
+                "state": "disabled",
+                "reason": None,
+                "transport_ready": False,
+                "camera_ready": False,
             },
             "uptime_seconds": uptime,
             "account": {
@@ -1025,6 +1040,7 @@ class HaloService:
                 await self._sync_rtsp_cameras(camera_ids)
                 await self._reconcile_refreshed_media(camera_ids)
                 await self.homekit.reconcile()
+                self._notify_homekit_inventory()
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -1798,7 +1814,12 @@ class HaloService:
             self._camera_media_locks[camera_id] = lock
         return lock
 
+    def _notify_homekit_inventory(self) -> None:
+        if self._homekit_bridge is not None:
+            self._homekit_bridge.notify_inventory()
+
     def _invalidate_media_access(self) -> None:
+        self._notify_homekit_inventory()
         self._media_epoch += 1
         self._media_client = None
 

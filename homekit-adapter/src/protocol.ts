@@ -8,7 +8,7 @@ export const FEATURE = "classic-camera-control-v1";
 
 export const KINDS = [
   "hello", "hello_ack", "ping", "pong", "shutdown", "shutdown_ack", "status", "error",
-  "inventory_request", "inventory_page", "camera_status", "policy_update", "policy_ack",
+  "inventory_reset", "inventory_request", "inventory_page", "camera_status", "policy_update", "policy_ack",
   "lease_request", "lease_result", "lease_renew", "lease_renew_result", "lease_stop", "lease_stop_result",
   "snapshot_request", "snapshot_result", "snapshot_cancel", "talkback_request", "talkback_result",
   "control_request", "control_result", "transfer_open", "transfer_credit", "transfer_end", "transfer_cancel", "transfer_result",
@@ -182,6 +182,7 @@ const payloadValidators: Record<Kind, Check> = {
   ping: object({}), pong: object({}), shutdown: object({}), shutdown_ack: object({}),
   status: object({state: choice("ready", "degraded"), reason: value => text(value, 256)}),
   error: object({code: value => text(value, 64, true), message: value => text(value, 256)}),
+  inventory_reset: object({scope: nullable(account), revision}),
   inventory_request: object({scope: account, revision, cursor: nullable(uuid)}), inventory_page: inventory,
   camera_status: object({scope, revision, state: choice("online", "offline", "unknown"), code}),
   policy_update: object({scope, policy}), policy_ack: object({scope, accepted: bool, code}),
@@ -199,7 +200,7 @@ const payloadValidators: Record<Kind, Check> = {
   transfer_cancel: object({...transfer, code: choice("cancelled", "invalidated", "timeout", "protocol-error")}),
   transfer_result: object({...transfer, status: choice("complete", "cancelled", "rejected"), code}),
 };
-const pythonKinds: readonly Kind[] = ["hello", "ping", "shutdown", "inventory_page", "camera_status", "policy_ack", "lease_result", "lease_renew_result", "lease_stop_result", "snapshot_result", "talkback_result", "control_result"];
+const pythonKinds: readonly Kind[] = ["hello", "ping", "shutdown", "inventory_reset", "inventory_page", "camera_status", "policy_ack", "lease_result", "lease_renew_result", "lease_stop_result", "snapshot_result", "talkback_result", "control_result"];
 const hapKinds: readonly Kind[] = ["hello_ack", "pong", "shutdown_ack", "inventory_request", "policy_update", "lease_request", "lease_renew", "lease_stop", "snapshot_request", "snapshot_cancel", "talkback_request", "control_request"];
 export function validateScope(value: unknown): MediaScope {
   if (!scope(value)) throw new ProtocolError("invalid-scope");

@@ -48,3 +48,11 @@ test("bootstrap rejects missing, shared, noncanonical, standard or wrong-parent 
     { HALO_CONTROL_FD: "3", HALO_BULK_FD: "4", HALO_PARENT_PID: "456" },
   ]) assert.throws(() => inheritedDescriptors(environment, 123));
 });
+
+
+test("bootstrap refuses inherited Node loader and module path injection before attaching descriptors", () => {
+  for (const name of ["NODE_OPTIONS", "NODE_PATH"]) {
+    assert.throws(() => inheritedDescriptors({HALO_CONTROL_FD: "3", HALO_BULK_FD: "4", HALO_PARENT_PID: "123",
+      [name]: "untrusted"}, 123), /runtime-injection-forbidden/);
+  }
+});

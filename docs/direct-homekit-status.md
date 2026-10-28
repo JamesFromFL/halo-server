@@ -1,7 +1,8 @@
 # Direct HomeKit implementation status
 
 Engineering record, 2026-10-28. Foundation committed locally as
-`798b7173ad9e8fbcbe655eb692a709b17cafcc87`; S05 builds on that commit.
+`798b7173ad9e8fbcbe655eb692a709b17cafcc87`; S05 is committed locally as
+`16c5aeda589d8d59886450b74018104b49ee616d`. S06 builds on those commits.
 
 The approved architecture keeps Python as the sole Ring account, push-event,
 shared capture and speaker owner. A supervised Node adapter uses released public
@@ -41,10 +42,13 @@ development. Direct HomeKit is not ready to pair or use with cameras.
   timestamp math, the Ring receiver and direct imports remain GI-free. Private
   control v1 defines strict scoped requests/replies and separate typed binary
   headers; public plugin v2/v3 schemas and fixtures remain unchanged.
-- S06 groundwork: inherited private socket pairs, Python ownership of one Node
-  process, handshake, bounded requests, heartbeat, crash budget, boot rotation,
-  cancellation-safe startup and joined TERM/KILL cleanup. The synthetic adapter
-  imports public HAP exports but does not initialize storage or publish anything.
+- S06: service-owned adapter startup with visible missing-resource health;
+  inherited private control and bulk channels; bounded scoped request maps,
+  heartbeat, crash budgets, boot retirement and joined TERM/KILL cleanup. The
+  compiled Node session now drives native inventory, policy and synthetic camera
+  delegates. Typed binary transfers enforce authorization, exact lengths,
+  sequencing, two-chunk credit and owned consumer/producer cleanup. The adapter
+  still publishes no accessories or pairing storage.
 
 Initial Ring restoration runs in an owned background task so local administration
 is available while the network is slow. Pending authentication is retired during
@@ -62,8 +66,10 @@ private version-1 `configuration.json` store uses revision compare-and-swap,
 owner-only regular files, no-follow directory traversal, atomic replacement,
 file/directory fsync and visible corruption/conflict/uncertain-durability errors.
 The future settings interface will use this store; no TUI editor is added here.
-`homekit` and `dual` currently report `not_ready` with
-`native_adapter_wiring_pending`; choosing them cannot publish an accessory yet.
+`homekit` and `dual` report `control_ready` with
+`accessories_not_implemented` once the control child is ready; missing compiled
+resources remain visibly degraded. Choosing either mode cannot publish an
+accessory yet.
 
 The facade starts with no selected cameras and unsynchronized, deny-all policy.
 A current adapter boot explicitly selects current source scopes, then applies
@@ -90,11 +96,48 @@ conservatively and are never retried automatically.
 
 Private control JSON is capped at 64 KiB and carries metadata only. The binary
 contract has a fixed 32-byte versioned header and typed snapshot/init/fragment/PCM
-transfers, with 64 KiB chunks and a two-chunk/128 KiB credit window. These are
-validated contracts, not an operational bulk sender. In particular, a 32-camera
-page can exceed the control-byte limit with valid Unicode metadata; S06 must
-paginate by encoded bytes as well as camera count. The synthetic child continues
-to accept only lifecycle operations and rejects media operations as unsupported.
+transfers, with 64 KiB chunks and a two-chunk/128 KiB credit window. S06 implements
+these transfer limits on inherited sockets, including exact end counts, scoped
+ownership, credit after consumer completion and whole-operation deadlines. A
+32-camera page can exceed the control-byte limit with valid Unicode metadata;
+pagination checks encoded bytes as well as count. The child supports private
+native delegates, with no HomeKit publication or live RTP transport.
+
+## S06 ownership and health
+
+The daemon starts the native adapter in an owned background task, so missing Node,
+compiled files, wrong runtime versions or child failures do not block Ring/local
+administration. A source checkout resolves an already-built adapter and the exact
+supported Node runtime; startup never runs npm, downloads files or builds source.
+Wheels without bundled adapter artifacts report degraded state. Release runtime
+selection and manifest verification remain S14 work.
+
+Every RPC belongs to one boot and full source/privacy scope. Incoming callbacks,
+active requests, recent wire IDs, cursor pages and media claims are bounded. An
+inventory notice invalidates changed state; exact duplicate complete notices keep
+live sessions intact. Policy ACKs echo the submitted scope, then the Node delegate
+fetches the Python-assigned privacy generation before admitting more work. Source
+metadata does not authorize camera selection: S06 production selection is empty
+until the trusted registry/selection slice S07.
+
+Python owns lease TTL expiry even if the peer disappears. Duplicate pending
+acquisitions cannot share and accidentally close a handle. Stopped session IDs
+have a finite 60-second replay window (longer than control deadlines), bounded to
+512 recent/active identities. Runtime wire IDs use bounded recent caches; accepted
+control operation IDs are retained for the whole boot, with a visible 4096-write
+limit and no actuator retry. These bounds are not an infinite replay history.
+
+Bulk reads allocate only registered typed chunks. At most two unacknowledged
+chunks are staged globally, credit follows completed consumption, and transfer
+bytes/sequences must match their declaration. Cancellation and deadlines retain
+ownership of callbacks/iterators that have not finished. Failed retirement closes
+admission and preserves its boot/source barrier; a new runtime cannot overwrite
+it. This proves private IPC flow control, not released HAP's internal HDS bounds.
+
+The compiled synthetic delegates are tested against the real Python broker for
+policy, shared capture leases, renew/stop, controls and PCM transfer. Image requests
+return `not-ready` until S10 can meet decode/resize/pixel/CPU requirements. Neither
+control readiness nor a private live lease means an Apple camera stream is ready.
 
 ## Account continuity and migration
 
@@ -113,12 +156,10 @@ that could revive revoked pairings/controllers.
 
 ## Remaining implementation
 
-S04 still needs the final distribution/runtime capability gates. S05 is complete
-as the shared service/configuration/contract slice. S06 still needs production
-adapter wiring, owned request maps, policy propagation across IPC, bounded bulk
-credit/cancel machinery and byte-aware inventory pagination. A handshake
-echoed build ID verifies correlation, not independent artifact provenance; frozen
-resource hashes and packaged-manifest verification belong in S14.
+S04 still needs the final distribution/runtime capability gates. S05 and S06 are
+complete as the shared service/configuration/contract and operational private IPC
+slices. Build identity remains correlation, not independent provenance; immutable
+bundled-resource manifests and release packaging belong in S14.
 
 S07–S15 remain: durable camera/doorbell accessories and selection; immediate source
 motion with resynchronization; actual H.264 RTP/SRTP/RTCP; negotiated audio and

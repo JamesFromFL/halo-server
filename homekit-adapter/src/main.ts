@@ -1,8 +1,11 @@
+import { randomUUID } from "node:crypto";
 import { fstatSync } from "node:fs";
 import { Socket } from "node:net";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { ControlChannel } from "./ipc.js";
+import { BulkChannel } from "./bulk.js";
+import { AdapterSession } from "./session.js";
 import { FEATURE, ProtocolError, type Envelope } from "./protocol.js";
 import { verifyPublicApi } from "./public-api.js";
 
@@ -12,6 +15,9 @@ export const IDLE_TIMEOUT_MS = 15_000;
 export function inheritedDescriptors(environment: NodeJS.ProcessEnv, parentPid: number): {
   control: number; bulk: number; parent: number;
 } {
+  if (["NODE_OPTIONS", "NODE_PATH"].some(name => Boolean(environment[name]))) {
+    throw new ProtocolError("runtime-injection-forbidden");
+  }
   const integer = (name: string): number => {
     const value = environment[name];
     if (!value || !/^[1-9][0-9]*$/.test(value)) throw new ProtocolError("invalid-bootstrap");
@@ -40,6 +46,8 @@ async function run(): Promise<number> {
   const bulk = new Socket({ fd: descriptors.bulk, readable: true, writable: true });
   const channel = new ControlChannel(control);
   let boot: string | null = null;
+  let session: AdapterSession | null = null;
+  let transfer: BulkChannel | null = null;
   let ending = false;
   let failed = false;
   let idle: NodeJS.Timeout | null = null;
@@ -57,6 +65,8 @@ async function run(): Promise<number> {
     ending = true;
     // Fixed protocol code only; never log peer payloads, keys or arbitrary errors.
     process.stderr.write(`Halo HAP adapter: ${code}\n`);
+    session?.close();
+    void transfer?.close("cancelled").catch(() => {});
     channel.close();
   };
   const reply = (message: Envelope, kind: Envelope["kind"], payload = {}): Promise<void> =>
@@ -74,18 +84,34 @@ async function run(): Promise<number> {
           role: "hap", build_id: message.payload.build_id, protocol: 1,
           features: [FEATURE], pid: process.pid,
         });
+        transfer = new BulkChannel(bulk, {
+          bootId: boot, role: "hap",
+          sendControl: async (kind, payload, requestId) => {
+            if (boot === null) throw new ProtocolError("session-closed");
+            await channel.send({v: 1, kind, boot_id: boot,
+              request_id: requestId ?? randomUUID(), payload});
+          },
+          onFailure: () => fail("bulk-failed"),
+        });
+        session = new AdapterSession(boot, {send: message => channel.send(message), bulk: transfer,
+          onFailure: () => fail("session-failed")});
+        transfer.start();
         return;
       }
       if (message.boot_id !== boot) throw new ProtocolError("stale-boot");
       renewIdle();
+      if (message.kind === "hello") throw new ProtocolError("duplicate-hello");
       if (message.kind === "ping") {
         await reply(message, "pong");
       } else if (message.kind === "shutdown") {
         ending = true;
+        session?.close();
+        await transfer?.close("cancelled");
         await reply(message, "shutdown_ack");
         channel.close();
       } else {
-        throw new ProtocolError("unexpected-kind");
+        if (!session) throw new ProtocolError("session-not-ready");
+        await session.receive(message);
       }
     })().catch(error => {
       // Shutdown write failure must still close instead of waiting for idle expiry.
@@ -96,14 +122,15 @@ async function run(): Promise<number> {
   channel.on("failure", () => { failed = true; });
   bulk.on("error", () => fail("bulk-io"));
   bulk.on("end", () => fail("bulk-retired"));
-  bulk.on("data", () => fail("bulk-not-supported"));
-  const signal = (): void => { ending = true; channel.close(); };
+  const signal = (): void => { ending = true; session?.close(); void transfer?.close("cancelled").catch(() => {}); channel.close(); };
   process.once("SIGTERM", signal);
   process.once("SIGINT", signal);
   await new Promise<void>(resolve => channel.once("closed", resolve));
   clearTimeout(hello);
   clearInterval(parentWatch);
   if (idle !== null) clearTimeout(idle);
+  (session as AdapterSession | null)?.close();
+  await (transfer as BulkChannel | null)?.close("cancelled");
   bulk.destroy();
   process.removeListener("SIGTERM", signal);
   process.removeListener("SIGINT", signal);

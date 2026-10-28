@@ -8,7 +8,7 @@ administers it through an owner-only Unix socket.
 
 Direct HomeKit implementation has started. The account/capture/request reliability
 foundation, validated operating modes, shared native service facade and a private,
-synthetic HAP process lifecycle are implemented. The
+supervised adapter lifecycle with operational private IPC are implemented. The
 adapter does **not** publish accessories or deliver HomeKit media yet. The current
 working integration remains the existing plugin/RTSP path. See
 [direct HomeKit engineering status](docs/direct-homekit-status.md) for completed

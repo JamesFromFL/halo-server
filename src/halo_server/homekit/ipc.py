@@ -332,6 +332,7 @@ PAYLOAD_VALIDATORS = {
         code=lambda value: _bounded_text(value, 64),
         message=lambda value: _bounded_text(value, 256, empty=True),
     ),
+    "inventory_reset": _object(scope=_nullable(_account), revision=_revision),
     "inventory_request": _object(scope=_account, revision=_revision, cursor=_nullable(_uuid)),
     "inventory_page": _inventory,
     "camera_status": _object(
@@ -383,6 +384,7 @@ PYTHON_KINDS = frozenset(
         "hello",
         "ping",
         "shutdown",
+        "inventory_reset",
         "inventory_page",
         "camera_status",
         "policy_ack",

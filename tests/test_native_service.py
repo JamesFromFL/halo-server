@@ -446,3 +446,24 @@ async def test_new_device_scope_cannot_reuse_old_shared_capture_before_reconcili
     assert capture.acquired == [LeasePurpose.HOMEKIT_LIVE]
     assert not capture.leases
     await service.homekit.detach()
+
+
+def test_scope_delivery_guard_checks_live_identity_without_rebuilding_metadata(tmp_path):
+    service, client, sessions = service_fixture(tmp_path)
+    backend = service._homekit_backend
+    scope = backend.inventory().cameras[0].scope
+    calls = []
+    camera = client.all_devices[0]
+    original = camera.has_capability
+    camera.has_capability = lambda capability: calls.append(capability) or original(capability)
+    assert all(backend.scope_current(scope) for _ in range(20))
+    assert not calls
+    client.is_authenticated = False
+    assert not backend.scope_current(scope)
+    client.is_authenticated = True
+    sessions.active_scope = type(sessions.active_scope)(str(uuid4()), 2)
+    service._media_scope = sessions.active_scope
+    from dataclasses import replace
+
+    fabricated = replace(scope, profile_id=sessions.active_scope.profile_id, account_generation=2)
+    assert not backend.scope_current(fabricated)

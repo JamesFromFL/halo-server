@@ -157,9 +157,48 @@ class ServiceHomeKitBackend:
         if not isinstance(scope, MediaScope):
             return False
         with self._lock:
-            inventory = self._inventory_locked()
-            return self._valid and any(
-                camera.scope.source_key == scope.source_key for camera in inventory.cameras
+            service = self._service
+            context = getattr(service._sessions, "active_context", None)
+            present = self._present.get(scope.camera_id)
+            if (
+                not self._valid
+                or present is None
+                or context is None
+                or service._stop_requested.is_set()
+                or not service.configuration.homekit_enabled
+                or not service._account_integrations_ready
+            ):
+                return False
+            client, account = context
+            if (
+                (account.profile_id, account.generation)
+                != (scope.profile_id, scope.account_generation)
+                or service._media_client is not client
+                or not client.is_authenticated
+                or not service._account_authority_current()
+                or present[1] != scope.device_generation
+                or self._account != (scope.profile_id, scope.account_generation)
+            ):
+                return False
+            # Do not rebuild every camera DTO for every delivery/PCM frame.
+            # Check exact current SDK ownership, including duplicate IDs, while
+            # leaving generation allocation and metadata serialization in inventory().
+            try:
+                matches = [
+                    device
+                    for device in client.all_devices
+                    if type(identifier := getattr(device, "id", None)) in {str, int}
+                    and str(identifier).strip() == scope.camera_id
+                ]
+            except Exception:
+                return False
+            return (
+                len(matches) == 1
+                and matches[0] is present[0]
+                and (
+                    getattr(service._sessions, "active_context", None) == context
+                    and service._account_authority_current()
+                )
             )
 
     def _guard(self, scope: MediaScope, admission: Callable[[], bool]) -> Callable[[], bool]:

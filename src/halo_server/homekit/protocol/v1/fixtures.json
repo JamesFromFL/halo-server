@@ -1756,6 +1756,29 @@
           "controls": true
         }
       }
+    },
+    {
+      "v": 1,
+      "kind": "inventory_reset",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": null,
+        "revision": 0
+      }
+    },
+    {
+      "v": 1,
+      "kind": "inventory_reset",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1
+      }
     }
   ],
   "invalid": [
@@ -9782,6 +9805,37 @@
         },
         "accepted": true,
         "code": "ok"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "inventory_reset",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": null,
+        "revision": -1
+      }
+    },
+    {
+      "v": 1,
+      "kind": "inventory_reset",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {},
+        "revision": 0
+      }
+    },
+    {
+      "v": 1,
+      "kind": "inventory_reset",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": null,
+        "revision": 0,
+        "ready": true
       }
     }
   ],

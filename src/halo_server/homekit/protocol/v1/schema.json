@@ -8,15 +8,16 @@
     "Decode strict UTF-8; reject duplicate keys, nonfinite numbers, >32 container levels, unsafe integers and >65536 byte control bodies before authority.",
     "S06 must compare boot_id to the current child boot and enforce sender direction. Structural validity does not grant account/device/session authority.",
     "Every new request and result is scoped; match profile/account/device/privacy generations at both admission and delivery. Request_id is unique per outstanding request and replies echo it; session/job/operation UUIDs are opaque per-boot owned handles, never SDK IDs or bearer capabilities.",
-    "Policy update is complete replacement of all eight booleans. Node closes local admission/delivery immediately, sends the newly selected privacy generation, and accepts only an ACK echoing that exact full scope. Old scopes, missing ACK or unsynchronized policy remain fail closed.",
+    "Policy update is complete replacement of all eight booleans. Node closes local admission/delivery immediately and sends the current full scope; the ACK echoes that exact input scope. Python assigns any new privacy generation. Node requires an accepted ACK followed by fresh complete inventory of the same source key before admitting operations. Old scopes, missing ACK or unsynchronized policy remain fail closed.",
     "Inventory cursor is opaque, server-issued and bound to account scope plus revision. Request revision0/cursor null starts a snapshot. A page echoes its input cursor; next_cursor null is terminal. Complete describes authority of the whole frozen inventory revision, not merely a page; reconcile removals only after all pages of the same scope/revision and complete true. Total is exact snapshot device count and <=256; <=32 per page, fewer when needed to fit bytes. No mutation/codec is inferred from capability flags.",
     "Runtime semantic validation additionally enforces page device scope equals page account scope, unique camera_id within each page, page length<=total, progress for next_cursor; across pages S06 must reject repetition, duplicates, revision changes, excess totals and expired cursors.",
     "Observed video frame_rate_num/frame_rate_den<=240 when present; values are evidence, not selected output. Snapshot request width*height<=8000000. These are request ceilings, not guarantees of transform support. No image bytes, base64, credentials, SRTP material or raw SDK records appear in control JSON.",
     "Lease purpose is only homekit_live. TTL<=30000ms never extends the separately enforced absolute lifetime; lease/session ownership survives neither scope nor boot retirement.",
-    "Control accepted means request acceptance only, not physical effect. Camera status is an observation; unknown/source absence does not invent online or media metadata."
+    "Control accepted means request acceptance only, not physical effect. Camera status is an observation; unknown/source absence does not invent online or media metadata.",
+    "inventory_reset is a Python-only discovery/invalidation notice: nullable account scope plus revision. It never grants media or policy authority. Every notice retires local stale admissions before fetching bounded inventory pages; policy ACK echoes input scope, then a fresh inventory supplies Python assigned privacy generation."
   ],
   "x-binary-transfer": {
-    "implemented": false,
+    "implemented": true,
     "channel": "separate inherited bulk socket; control envelopes never carry media bytes",
     "header_bytes": 32,
     "header_layout": "network byte order: HBLK(4),version1(u8),kind(u8),reserved0(u16),transfer_uuid(16),sequence(u32),length(u32)",
@@ -36,7 +37,7 @@
       "talkback_pcm": 1920
     },
     "rules": [
-      "No bulk bytes until transfer_open has matched a live scoped operation and receiver-issued credit. Python produces snapshots/recording; HAP produces talkback_pcm. Recording and talkback media support remain unimplemented in S05.",
+      "No bulk bytes until transfer_open has matched a live scoped operation and receiver-issued credit. Python produces snapshots/recording; HAP produces talkback_pcm. S06 implements scoped bounded transport only; actual HomeKit recording, speaker codec/output and snapshot transformations require later slices.",
       "Credits advertise an absolute allowed sequence window [next_sequence,next_sequence+credits), not additive tokens. Repeated credits cannot enlarge the window; no backwards window, gaps, duplicates, overflow or chunks outside the window. The sender must not enqueue more than two chunks or128KiB outstanding per transfer.",
       "Chunk sequence starts0, increases exactly1, and aggregate lengths must equal announced total_bytes; chunk length<=chunk_bytes and remaining total. Validate the fixed header before bounded allocation; never allocate total_bytes from untrusted metadata.",
       "transfer_end announces exact sequence_count and total_bytes; complete result is sent only after exact payload validation/consumption. Transfer descriptor, direction, scope, operation and byte accounting must match for every header/control message.",
@@ -1813,6 +1814,31 @@
           }
         }
       ]
+    },
+    "inventory_reset_payload": {
+      "type": "object",
+      "required": [
+        "scope",
+        "revision"
+      ],
+      "properties": {
+        "scope": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/account_scope"
+            }
+          ]
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "additionalProperties": false
     }
   },
   "oneOf": [
@@ -2775,6 +2801,37 @@
       },
       "additionalProperties": false,
       "x-sender": "either",
+      "x-reply-kind": null
+    },
+    {
+      "type": "object",
+      "required": [
+        "v",
+        "kind",
+        "boot_id",
+        "request_id",
+        "payload"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "integer"
+        },
+        "kind": {
+          "const": "inventory_reset"
+        },
+        "boot_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "request_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "payload": {
+          "$ref": "#/$defs/inventory_reset_payload"
+        }
+      },
+      "additionalProperties": false,
+      "x-sender": "python",
       "x-reply-kind": null
     }
   ],
