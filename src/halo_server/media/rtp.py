@@ -30,6 +30,7 @@ MAX_RTCP_PACKETS = 32
 MAX_NACK_PACKETS = 128
 RTP_HEADER_BYTES = 12
 SRTP_TAG_BYTES = 10
+MAX_UDP_PAYLOAD_BYTES = 1200
 
 
 class RtpError(ValueError):
@@ -71,9 +72,12 @@ class H264Packetizer:
             raise RtpError("Invalid RTP timestamp")
         if type(payload_type) is not int or not 96 <= payload_type <= 127:
             raise RtpError("Invalid dynamic RTP payload type")
-        if type(mtu) is not int or not 128 <= mtu <= 1200:
+        if type(mtu) is not int or not 128 <= mtu <= 1378:
             raise RtpError("Invalid negotiated UDP packet limit")
-        maximum = mtu - RTP_HEADER_BYTES - SRTP_TAG_BYTES
+        # HAP supplies a peer maximum (normally 1378 for IPv4 or 1228 for IPv6),
+        # not a required packet size. Retain our conservative protected-UDP
+        # payload ceiling, including the RTP header and SRTP authentication tag.
+        maximum = min(mtu, MAX_UDP_PAYLOAD_BYTES) - RTP_HEADER_BYTES - SRTP_TAG_BYTES
         chunks = []
         for nal in annexb_nalus(payload):
             if len(nal) <= maximum:

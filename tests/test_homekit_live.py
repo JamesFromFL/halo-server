@@ -27,6 +27,7 @@ from halo_server.media.buffer import EncodedMediaBuffer
 from halo_server.media.h264 import VideoConfiguration
 from halo_server.media.homekit_live import HomeKitLiveManager, _SourceChanged
 from halo_server.media.rtp import (
+    MAX_UDP_PAYLOAD_BYTES,
     H264Packetizer,
     RtpError,
     annexb_nalus,
@@ -75,17 +76,27 @@ def test_rtp_header_known_vector_and_sequence_wrap():
     assert two[0].sequence == 0 and two[0].timestamp == 0
 
 
-@pytest.mark.parametrize("mtu", [128, 512, 1200])
+@pytest.mark.parametrize("mtu", [128, 512, 1200, 1228, 1378])
 def test_full_idr_fu_a_roundtrip_preserves_each_nal_and_final_datagram_budget(mtu):
     nalus = (b"\x67SPS", b"\x68PPS", b"\x65" + b"\xab" * 200_000)
     source = b"".join(b"\0\0\0\1" + nal for nal in nalus)
     sender = H264Packetizer(123)
     packets = sender.packetize(source, 90000, payload_type=99, mtu=mtu)
     assert len(packets) > 10
-    assert all(len(packet.packet) + 10 <= mtu for packet in packets)
+    assert all(len(packet.packet) + 10 <= min(mtu, MAX_UDP_PAYLOAD_BYTES) for packet in packets)
     assert all(not packet.packet[1] & 0x80 for packet in packets[:-1])
     assert packets[-1].packet[1] & 0x80
     assert reconstruct([packet.packet for packet in packets]) == nalus
+
+
+@pytest.mark.parametrize("mtu", [None, True, False, "1378", 1378.0, -1, 0, 127, 1379, 65535])
+def test_invalid_peer_mtu_rejects_before_media_access_or_sequence_consumption(mtu):
+    sender = H264Packetizer(123, sequence=65535)
+    # This deliberately is not media: invalid negotiation must reject before
+    # reading/copying an access unit or consuming any RTP/SRTP sequence index.
+    with pytest.raises(RtpError, match="Invalid negotiated UDP packet limit"):
+        sender.packetize(object(), 90000, payload_type=99, mtu=mtu)
+    assert sender.sequence == 65535
 
 
 @pytest.mark.parametrize("payload", [b"", b"invalid", b"\0\0\1", b"\0\0\1\x80bad", b"\0\0\1\x7cFU"])
@@ -321,18 +332,20 @@ async def test_prepare_owns_real_bound_port_without_capturing_and_stop_is_idempo
 
 
 @pytest.mark.asyncio
-async def test_real_udp_srtp_reconstructs_and_decodes_picture_and_timer_sender_report():
+@pytest.mark.parametrize("mtu", [1200, 1228, 1378])
+async def test_real_udp_srtp_reconstructs_and_decodes_picture_and_timer_sender_report(mtu):
     manager, controller, identity, result, receiver = await prepared()
     payload = encoded_picture()
     controller.handle.buffer.append_video(payload, 90000)
     crypto = native_crypto(result.ssrc)
     clear_packets = []
+    config = replace(CONFIG, mtu=mtu)
     try:
-        await manager.start(controller.boot, controller.scope, identity, CONFIG)
+        await manager.start(controller.boot, controller.scope, identity, config)
         async with asyncio.timeout(5):
             while True:
                 protected = await asyncio.get_running_loop().sock_recv(receiver, 2048)
-                assert len(protected) <= CONFIG.mtu
+                assert len(protected) <= min(config.mtu, MAX_UDP_PAYLOAD_BYTES)
                 packet = crypto.unprotect(protected)
                 clear_packets.append(packet)
                 if packet[1] & 0x80:
