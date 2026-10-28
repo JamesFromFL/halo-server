@@ -22,24 +22,32 @@ class BufferedMediaConsumer:
 
     def __post_init__(self) -> None:
         self._lock = threading.Lock()
+        self._renew_lock = threading.Lock()
         self._release_lock = threading.Lock()
         self._closed = False
         self._released = False
 
     def renew(self) -> bool:
         with self._lock:
-            if self._closed or (
-                self.validity_callback is not None and not self.validity_callback()
-            ):
+            if self._closed:
                 return False
-            return bool(self.renew_callback())
+        with self._renew_lock:
+            if not self.is_current():
+                return False
+            # The callback can synchronously wait for the service event loop.
+            # That loop must remain free to check this consumer's authority.
+            renewed = bool(self.renew_callback())
+            current = self.is_current()
+            return renewed and current
 
     def is_current(self) -> bool:
         """Check source authority before each private media delivery."""
         with self._lock:
-            return not self._closed and (
-                self.validity_callback is None or bool(self.validity_callback())
-            )
+            if self._closed:
+                return False
+        current = self.validity_callback is None or bool(self.validity_callback())
+        with self._lock:
+            return not self._closed and current
 
     def close(self) -> None:
         with self._lock:
@@ -50,6 +58,9 @@ class BufferedMediaConsumer:
             with self._lock:
                 if self._released:
                     return
-            self.close_callback()
+            # Fence first, then join renewal before actual release. A late
+            # renewal must never race behind the final lease release.
+            with self._renew_lock:
+                self.close_callback()
             with self._lock:
                 self._released = True
