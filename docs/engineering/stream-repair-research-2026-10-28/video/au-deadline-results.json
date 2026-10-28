@@ -1,0 +1,12 @@
+{
+  "accepted": true,
+  "valid_generated_h264_bytes": 3379,
+  "protected_packets": 6,
+  "source_age_at_admission_ms": 490,
+  "source_age_at_last_send_ms": 573,
+  "freshness_limit_ms": 500,
+  "all_packets_after_500ms": 3,
+  "actual_AU_sender_and_pacer": true,
+  "deterministic_clock": true,
+  "saved_media": false
+}

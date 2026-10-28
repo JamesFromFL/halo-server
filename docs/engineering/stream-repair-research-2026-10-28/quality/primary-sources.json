@@ -1,0 +1,67 @@
+[
+  {
+    "title": "HAP VideoInfo",
+    "url": "https://developers.homebridge.io/HAP-NodeJS/types/VideoInfo.html",
+    "use": "Selected dimensions, fps, profile/level, maximum bitrate, packetization and RTCP parameters are distinct from advertised options."
+  },
+  {
+    "title": "HAP ReconfiguredVideoInfo",
+    "url": "https://developers.homebridge.io/HAP-NodeJS/types/ReconfiguredVideoInfo.html",
+    "use": "RECONFIGURE has width/height/fps/max_bit_rate/rtcp_interval; retains other negotiated transport fields."
+  },
+  {
+    "title": "HAP VideoStreamingOptions",
+    "url": "https://developers.homebridge.io/HAP-NodeJS/types/VideoStreamingOptions.html",
+    "use": "Advertised codec options and resolution tuples do not expose a preferred-quality property."
+  },
+  {
+    "title": "HAP selected RTP parser",
+    "url": "https://github.com/homebridge/HAP-NodeJS/blob/25e8bea26a64309a47184dec478479483fbdd50c/src/lib/camera/RTPStreamManagement.ts",
+    "use": "Pinned released parser forwards controller-selected TLV values to delegate, including bitrate. Current official latest parser crosschecked. Deprecated wiki is not the current API authority."
+  },
+  {
+    "title": "RTP synchronization and reports",
+    "url": "https://www.rfc-editor.org/rfc/rfc3550",
+    "use": "RTP media clocks differ; SR relates RTP to a common time reference. Receiver reports loss/jitter/LSR/DLSR are observations, not Apple rendered timing."
+  },
+  {
+    "title": "H264 RTP constraints",
+    "url": "https://www.rfc-editor.org/rfc/rfc6184",
+    "use": "RTP packetization does not alter encoded profile/geometry; exact profile compatibility and reference preservation matter."
+  },
+  {
+    "title": "Reduced-size RTCP",
+    "url": "https://www.rfc-editor.org/rfc/rfc5506",
+    "use": "Do not assume reduced-size SR alone is negotiated; assess compound SR/SDES CNAME requirements against classic HAP behavior."
+  },
+  {
+    "title": "Opus RTP standard clock",
+    "url": "https://www.rfc-editor.org/rfc/rfc7587",
+    "use": "Standard Opus RTP clock is48k independent of internal bandwidth; classic HAP implementation exception must be kept separate from modern Scrypted mode."
+  },
+  {
+    "title": "FFmpeg streamcopy",
+    "url": "https://ffmpeg.org/ffmpeg.html#Streamcopy",
+    "use": "Streamcopy avoids decode/encode; scaling/rate conversion requires real decoded-frame processing."
+  },
+  {
+    "title": "FFmpeg codec rate control",
+    "url": "https://ffmpeg.org/ffmpeg-codecs.html",
+    "use": "Target bitrate, maximum rate and buffer size are different settings. Wire framing/loss recovery also consume bandwidth."
+  },
+  {
+    "title": "Scrypted exact sender",
+    "url": "https://github.com/koush/scrypted/blob/50b8668ea8d36f281d5ab6d152cd47f3d45e57f5/plugins/homekit/src/types/camera/camera-streaming-srtp-sender.ts",
+    "use": "Classic sender associates last RTP with send wall clock; optional modern audio clock is separate."
+  },
+  {
+    "title": "Scrypted exact stream negotiation",
+    "url": "https://github.com/koush/scrypted/blob/50b8668ea8d36f281d5ab6d152cd47f3d45e57f5/plugins/homekit/src/types/camera/camera-streaming.ts",
+    "use": "Selected dimensions are upstream client hints; reconfigure sends bitrate feedback when provider supports it."
+  },
+  {
+    "title": "Scrypted exact FFmpeg path",
+    "url": "https://github.com/koush/scrypted/blob/50b8668ea8d36f281d5ab6d152cd47f3d45e57f5/plugins/homekit/src/types/camera/camera-streaming-ffmpeg.ts",
+    "use": "Default path copies compatible video codec; debug transcoding uses selected rate/dimension hints."
+  }
+]

@@ -1,0 +1,29 @@
+{
+  "control": {
+    "source_frames": 60,
+    "selected_fps": 30,
+    "source_timestamp_steps": [
+      3000
+    ],
+    "output_frames": 60,
+    "output_timestamp_steps": [
+      3000
+    ],
+    "worker_reaped": true,
+    "saved_media": false
+  },
+  "one_tick_jitter": {
+    "source_frames": 60,
+    "selected_fps": 30,
+    "source_timestamp_steps": [
+      2999,
+      3001
+    ],
+    "output_frames": 30,
+    "output_timestamp_steps": [
+      6000
+    ],
+    "worker_reaped": true,
+    "saved_media": false
+  }
+}

@@ -1,0 +1,55 @@
+{
+  "source": "two logical600ms batches, exact0x58 single60ms SILK/WB mono56kbps",
+  "deadline": "local receipt500ms; logical second batch arrives at600ms",
+  "limitations": "Native attribution/valid-decode probe only; timing and resampler contributor boundary need qualification before adoption.",
+  "cases": [
+    {
+      "candidate": "reset_then_reuse_fresh_batch",
+      "source_packets": 20,
+      "source_seconds": 1.2,
+      "generated": 58,
+      "stale_contributor_outputs": 0,
+      "retirements": 1,
+      "kept_outputs": 58,
+      "decoded_samples_48k": 55680,
+      "output_durations_48k": [
+        960
+      ],
+      "boundary": [
+        {
+          "retained_spans": 1,
+          "retained_direct_samples_48k": 1080,
+          "oldest_receipt_age_ms": 600
+        }
+      ],
+      "native_feed_latency_ms_max": 61.164,
+      "pts_gaps": 1,
+      "real_time_pacing_or_Apple_qualification": false,
+      "saved_audio": false
+    },
+    {
+      "candidate": "keep_worker_drop_only_expired_output",
+      "source_packets": 20,
+      "source_seconds": 1.2,
+      "generated": 59,
+      "stale_contributor_outputs": 2,
+      "retirements": 0,
+      "kept_outputs": 57,
+      "decoded_samples_48k": 54720,
+      "output_durations_48k": [
+        960
+      ],
+      "boundary": [
+        {
+          "retained_spans": 1,
+          "retained_direct_samples_48k": 1080,
+          "oldest_receipt_age_ms": 600
+        }
+      ],
+      "native_feed_latency_ms_max": 61.95,
+      "pts_gaps": 1,
+      "real_time_pacing_or_Apple_qualification": false,
+      "saved_audio": false
+    }
+  ]
+}

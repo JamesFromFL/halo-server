@@ -1,0 +1,12 @@
+{
+  "case": "stale reference then two nonIDR outputs from one fresh feed",
+  "sent_outputs": [
+    "freshP2"
+  ],
+  "keyframe_requests": 1,
+  "sent_before_any_IDR": true,
+  "actual_sender_state_machine": true,
+  "adapter_synthetic": true,
+  "no_product_edits": true,
+  "saved_media": false
+}

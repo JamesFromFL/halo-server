@@ -1,0 +1,37 @@
+{
+  "control": {
+    "source_frames": 180,
+    "selected_fps": 30,
+    "source_timestamp_steps": [
+      3000
+    ],
+    "output_frames": 180,
+    "keyframe_timestamp_steps": [
+      180000
+    ],
+    "keyframe_count": 3,
+    "output_timestamp_steps": [
+      3000
+    ],
+    "worker_reaped": true,
+    "saved_media": false
+  },
+  "one_tick_jitter": {
+    "source_frames": 180,
+    "selected_fps": 30,
+    "source_timestamp_steps": [
+      2999,
+      3001
+    ],
+    "output_frames": 90,
+    "keyframe_timestamp_steps": [
+      360000
+    ],
+    "keyframe_count": 2,
+    "output_timestamp_steps": [
+      6000
+    ],
+    "worker_reaped": true,
+    "saved_media": false
+  }
+}

@@ -1,0 +1,41 @@
+{
+  "source_compatibility_only_not_bitrate_proof": {
+    "matching_720p30": true,
+    "source_1080p30": false,
+    "unknown_source_fps": false,
+    "source_720p15": true,
+    "source_baseline": false,
+    "source_reordered": false
+  },
+  "negotiated_payload_budget_299kbps_at30fps_bytes_per_frame": 1245.8333333333333,
+  "synthetic_keyframe_minimum_payload_only_send_seconds_299kbps": {
+    "44032": 1.178113712374582,
+    "70656": 1.8904615384615384
+  },
+  "actual_no_SR_60ms_input_to_three20ms_outputs": {
+    "output_source_pts_48k": [
+      -120,
+      840,
+      1800
+    ],
+    "current_presentation_estimates": [
+      100.0,
+      100.0,
+      100.0
+    ],
+    "report_evaluation_time": 100.06,
+    "current_report_rtp": 3400,
+    "one_fixed_input_anchor_report_rtp": 2500,
+    "mapping_difference_ms": 37.5,
+    "not_a_physical_AV_measurement": true
+  },
+  "actual_reconfigure_reset_same_capture_epoch": {
+    "last_source_pts": 90000,
+    "next_source_pts": 270000,
+    "last_output_rtp": 90000,
+    "current_next_output_rtp": 93000,
+    "affine_continuity_next_output_rtp": 270000,
+    "compressed_elapsed_time_ms": 1966.6666666666667,
+    "not_a_physical_receiver_failure_claim": true
+  }
+}
