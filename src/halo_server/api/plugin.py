@@ -35,6 +35,8 @@ EVENT_WAIT_SECONDS = 15.0
 MAX_RATE_LIMIT_CLIENTS = 256
 MAX_EVENT_CONNECTIONS = 32
 MAX_EVENT_CONNECTIONS_PER_CLIENT = 4
+MAX_ACTIVE_REQUESTS = 128
+MAX_ACTIVE_REQUESTS_PER_CLIENT = 8
 INTERCOM_FRAME_BYTES = 1920
 INTERCOM_IDLE_TIMEOUT = 15.0
 INTERCOM_RENEW_INTERVAL = 10.0
@@ -88,6 +90,7 @@ class PluginApiServer:
         intercom_provider: (Callable[[str], Awaitable[PluginIntercomStream]] | None) = None,
         control_provider: (Callable[[str, str, bool], Awaitable[None]] | None) = None,
         snapshot_provider: (Callable[[str, bool], Awaitable[bytes]] | None) = None,
+        provider_admission: bool = False,
         ssl_context: ssl.SSLContext | None = None,
         rate_limit: int = DEFAULT_RATE_LIMIT,
     ) -> None:
@@ -107,11 +110,14 @@ class PluginApiServer:
         self._intercom_provider = intercom_provider
         self._control_provider = control_provider
         self._snapshot_provider = snapshot_provider
+        self._provider_admission = provider_admission
         self._ssl_context = ssl_context
         self._rate_limit = rate_limit
         self._requests: dict[str, deque[float]] = defaultdict(deque)
         self._event_connections: dict[str, int] = {}
         self._event_connection_total = 0
+        self._active_requests: dict[str, set[asyncio.Task]] = {}
+        self._live_sockets: dict[asyncio.Task, web.WebSocketResponse] = {}
         self._runner: web.AppRunner | None = None
         self._site: web.TCPSite | None = None
 
@@ -162,10 +168,50 @@ class PluginApiServer:
         self._runner = None
         self._site = None
         self.bound_port = None
+        for client_id in tuple(self._active_requests):
+            await self.revoke_client(client_id)
         if runner is not None:
             await runner.cleanup()
         self._event_connections.clear()
         self._event_connection_total = 0
+
+    async def revoke_client(self, client_id: str) -> None:
+        """Retire owned requests after token-store revocation, without replay."""
+        current = asyncio.current_task()
+        tasks = tuple(
+            task for task in self._active_requests.get(client_id, ()) if task is not current
+        )
+        for task in tasks:
+            task.cancel()
+        sockets = [self._live_sockets[task] for task in tasks if task in self._live_sockets]
+        if sockets:
+            try:
+                async with asyncio.timeout(1.0):
+                    await asyncio.gather(
+                        *(
+                            socket.close(code=4003, message=b"plugin credential revoked")
+                            for socket in sockets
+                        )
+                    )
+            except TimeoutError:
+                pass
+        if tasks:
+            # Retain an uncooperative task in admission accounting until its
+            # middleware finally runs. Revocation cannot undo admitted writes.
+            await asyncio.wait(tasks, timeout=1.0)
+
+    def _authenticated(self, request: web.Request) -> bool:
+        try:
+            current = self._token_store.verify(request.get(PLUGIN_TOKEN_KEY, ""))
+        except PluginTokenStoreError:
+            return False
+        original = request.get(PLUGIN_IDENTITY_KEY)
+        return current is not None and original is not None and current.id == original.id
+
+    def _admission_kwargs(self, request: web.Request) -> dict:
+        if self._provider_admission:
+            return {"admission": lambda: self._authenticated(request)}
+        return {}
 
     @web.middleware
     async def _error_middleware(self, request, handler):
@@ -233,8 +279,28 @@ class PluginApiServer:
             )
         request[PLUGIN_IDENTITY_KEY] = identity
         request[PLUGIN_TOKEN_KEY] = token
-        response = await handler(request)
-        return response if response.prepared else _secure_response(response)
+        tasks = self._active_requests.get(identity.id)
+        if (
+            sum(len(active) for active in self._active_requests.values()) >= MAX_ACTIVE_REQUESTS
+            or len(tasks or ()) >= MAX_ACTIVE_REQUESTS_PER_CLIENT
+        ):
+            return _secure_response(
+                _error_response("connection_limit", "Plugin request limit reached", status=429)
+            )
+        task = asyncio.current_task()
+        self._active_requests.setdefault(identity.id, set()).add(task)
+        try:
+            response = await handler(request)
+            if not response.prepared and not self._authenticated(request):
+                response = _unauthorized()
+            return response if response.prepared else _secure_response(response)
+        finally:
+            self._live_sockets.pop(task, None)
+            active = self._active_requests.get(identity.id)
+            if active is not None:
+                active.discard(task)
+                if not active:
+                    self._active_requests.pop(identity.id, None)
 
     async def _health(self, _request: web.Request) -> web.Response:
         status = self._status_provider()
@@ -374,8 +440,12 @@ class PluginApiServer:
                 status=400,
             )
         try:
+            if not self._authenticated(request):
+                return _unauthorized()
             async with asyncio.timeout(SNAPSHOT_TIMEOUT_SECONDS):
-                image = await provider(camera_id, fresh_raw == "1")
+                image = await provider(
+                    camera_id, fresh_raw == "1", **self._admission_kwargs(request)
+                )
         except TimeoutError:
             return _error_response(
                 "snapshot_timeout",
@@ -384,6 +454,8 @@ class PluginApiServer:
             )
         except PluginCameraOperationError as exc:
             return _error_response(exc.code, str(exc), status=exc.status)
+        if not self._authenticated(request):
+            return _unauthorized()
         if (image := validated_snapshot_bytes(image)) is None:
             return _error_response(
                 "snapshot_invalid",
@@ -405,6 +477,7 @@ class PluginApiServer:
         capability: str,
     ) -> web.Response:
         provider = self._control_provider
+        deadline = asyncio.get_running_loop().time() + CAMERA_CONTROL_TIMEOUT_SECONDS
         if provider is None:
             return _error_response(
                 "control_unavailable",
@@ -422,7 +495,12 @@ class PluginApiServer:
                 status=400,
             )
         try:
-            body = await request.json(loads=_strict_json_loads)
+            async with asyncio.timeout_at(deadline):
+                body = await request.json(loads=_strict_json_loads)
+        except TimeoutError:
+            return _error_response(
+                "control_timeout", "Ring camera control request timed out", status=504
+            )
         except (LookupError, UnicodeError, ValueError):
             return _error_response(
                 "bad_request",
@@ -436,8 +514,10 @@ class PluginApiServer:
                 status=400,
             )
         try:
-            async with asyncio.timeout(CAMERA_CONTROL_TIMEOUT_SECONDS):
-                await provider(camera_id, control, body["on"])
+            if not self._authenticated(request):
+                return _unauthorized()
+            async with asyncio.timeout_at(deadline):
+                await provider(camera_id, control, body["on"], **self._admission_kwargs(request))
         except TimeoutError:
             return _error_response(
                 "control_timeout",
@@ -446,6 +526,8 @@ class PluginApiServer:
             )
         except PluginCameraOperationError as exc:
             return _error_response(exc.code, str(exc), status=exc.status)
+        if not self._authenticated(request):
+            return _unauthorized()
         return web.Response(status=204)
 
     def _camera_operation_target(
@@ -555,7 +637,12 @@ class PluginApiServer:
     ) -> web.StreamResponse:
         socket = web.WebSocketResponse(heartbeat=30, max_msg_size=MAX_REQUEST_BYTES)
         _secure_response(socket)
+        if not self._authenticated(request):
+            return _unauthorized()
         await socket.prepare(request)
+        self._live_sockets[asyncio.current_task()] = socket
+        if not await self._event_delivery_allowed(request, socket, epoch):
+            return socket
         await socket.send_json(
             {
                 "type": "hello",
@@ -565,11 +652,14 @@ class PluginApiServer:
             }
         )
         for event in replay:
+            if not await self._event_delivery_allowed(request, socket, event.epoch):
+                return socket
             await socket.send_json({"type": "event", "event": event.as_dict()})
             after_sequence = event.sequence
 
-        token = request[PLUGIN_TOKEN_KEY]
         while not socket.closed:
+            if not await self._event_delivery_allowed(request, socket, epoch):
+                break
             sent_events = False
             receive_task = asyncio.create_task(socket.receive())
             event_task = asyncio.create_task(
@@ -579,14 +669,16 @@ class PluginApiServer:
                     timeout=EVENT_WAIT_SECONDS,
                 )
             )
-            done, pending = await asyncio.wait(
-                {receive_task, event_task},
-                return_when=asyncio.FIRST_COMPLETED,
-            )
-            for task in pending:
-                task.cancel()
-            if pending:
-                await asyncio.gather(*pending, return_exceptions=True)
+            try:
+                done, _pending = await asyncio.wait(
+                    {receive_task, event_task},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+            finally:
+                for task in (receive_task, event_task):
+                    if not task.done():
+                        task.cancel()
+                await asyncio.gather(receive_task, event_task, return_exceptions=True)
 
             if receive_task in done:
                 message = receive_task.result()
@@ -605,20 +697,20 @@ class PluginApiServer:
                 try:
                     events = event_task.result()
                 except EventJournalError:
+                    if not self._authenticated(request):
+                        await socket.close(code=4003, message=b"plugin credential revoked")
+                        break
                     await socket.send_json({"type": "resync_required"})
                     await socket.close(code=1012, message=b"event history gap")
                     break
                 for event in events:
+                    if not await self._event_delivery_allowed(request, socket, event.epoch):
+                        return socket
                     await socket.send_json({"type": "event", "event": event.as_dict()})
                     after_sequence = event.sequence
                 sent_events = bool(events)
 
-            try:
-                identity = self._token_store.verify(token)
-            except PluginTokenStoreError:
-                identity = None
-            if identity is None:
-                await socket.close(code=4003, message=b"plugin credential revoked")
+            if not await self._event_delivery_allowed(request, socket, epoch):
                 break
             if not sent_events:
                 await socket.send_json(
@@ -629,6 +721,19 @@ class PluginApiServer:
                     }
                 )
         return socket
+
+    async def _event_delivery_allowed(self, request, socket, epoch: str) -> bool:
+        if not self._authenticated(request):
+            await socket.close(code=4003, message=b"plugin credential revoked")
+            return False
+        sync = getattr(self._events, "sync_authority", None)
+        if sync is not None:
+            sync()
+        if epoch != self._events.epoch:
+            await socket.send_json({"type": "resync_required"})
+            await socket.close(code=1012, message=b"event history gap")
+            return False
+        return True
 
     async def _intercom_socket(self, request: web.Request) -> web.StreamResponse:
         provider = self._intercom_provider
@@ -671,7 +776,14 @@ class PluginApiServer:
             )
         _log.info("Halo intercom WebSocket requested camera_id=%s", camera_id)
         try:
-            stream = await provider(camera_id)
+            if not self._authenticated(request):
+                return _unauthorized()
+            async with asyncio.timeout(INTERCOM_ACTIVATION_TIMEOUT):
+                stream = await provider(camera_id, **self._admission_kwargs(request))
+        except TimeoutError:
+            return _error_response(
+                "intercom_timeout", "Ring intercom request timed out", status=504
+            )
         except PluginIntercomOpenError as exc:
             return _error_response(exc.code, str(exc), status=exc.status)
 
@@ -688,8 +800,14 @@ class PluginApiServer:
         frame_count = 0
         close_reason = "client_closed"
         try:
+            if not self._authenticated(request):
+                return _unauthorized()
             await socket.prepare(request)
             prepared = True
+            self._live_sockets[asyncio.current_task()] = socket
+            if not self._authenticated(request):
+                await socket.close(code=4003, message=b"plugin credential revoked")
+                return socket
             await socket.send_json(
                 {
                     "type": "ready",
@@ -697,7 +815,6 @@ class PluginApiServer:
                 }
             )
             _log.info("Halo intercom WebSocket accepted camera_id=%s", camera_id)
-            token = request[PLUGIN_TOKEN_KEY]
             next_renewal = time.monotonic() + INTERCOM_RENEW_INTERVAL
             audio_deadline = asyncio.get_running_loop().time() + INTERCOM_IDLE_TIMEOUT
             while not socket.closed:
@@ -724,6 +841,10 @@ class PluginApiServer:
                     close_reason = "invalid_frame_size"
                     await socket.close(code=1007, message=b"invalid PCM frame size")
                     break
+                if not self._authenticated(request):
+                    close_reason = "credential_revoked"
+                    await socket.close(code=4003, message=b"plugin credential revoked")
+                    break
                 await stream.write(payload)
                 audio_deadline = asyncio.get_running_loop().time() + INTERCOM_IDLE_TIMEOUT
                 frame_count += 1
@@ -740,6 +861,10 @@ class PluginApiServer:
                             message=b"camera speaker activation failed",
                         )
                         break
+                    if not self._authenticated(request):
+                        close_reason = "credential_revoked"
+                        await socket.close(code=4003, message=b"plugin credential revoked")
+                        break
                     await socket.send_json({"type": "active"})
                     audio_deadline = asyncio.get_running_loop().time() + INTERCOM_IDLE_TIMEOUT
                     _log.info("Halo intercom active camera_id=%s", camera_id)
@@ -747,11 +872,7 @@ class PluginApiServer:
                 now = time.monotonic()
                 if now < next_renewal:
                     continue
-                try:
-                    identity = self._token_store.verify(token)
-                except PluginTokenStoreError:
-                    identity = None
-                if identity is None:
+                if not self._authenticated(request):
                     close_reason = "credential_revoked"
                     await socket.close(code=4003, message=b"plugin credential revoked")
                     break
@@ -838,6 +959,10 @@ def _error_response(code: str, message: str, *, status: int) -> web.Response:
         {"error": {"code": code, "message": message}},
         status=status,
     )
+
+
+def _unauthorized() -> web.Response:
+    return _error_response("unauthorized", "Plugin authentication failed", status=401)
 
 
 def _strict_json_loads(value: str) -> Any:

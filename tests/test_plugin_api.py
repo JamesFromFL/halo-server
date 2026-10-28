@@ -1275,7 +1275,12 @@ async def test_plugin_event_websocket_limits_each_client_and_releases_slot(
             limited = await client.get(url, headers=_headers(issued.token))
             limited_body = await limited.json()
             await first.close()
-            await asyncio.sleep(0)
+            # A completed client close handshake does not join the server's
+            # canceled journal wait. Observe resource retirement, not one
+            # interpreter-dependent event-loop scheduling turn.
+            async with asyncio.timeout(1):
+                while server._event_connection_total:
+                    await asyncio.sleep(0.001)
             replacement = await client.ws_connect(url, headers=_headers(issued.token))
             await replacement.receive_json()
             await replacement.close()
@@ -1307,3 +1312,277 @@ def test_non_loopback_plugin_api_requires_tls(tmp_path):
             event_journal=EventJournal(),
             status_provider=_status,
         )
+
+
+class _PausedRequest(dict):
+    def __init__(self, token, *, path="/v1/devices/42/light", release=None):
+        super().__init__()
+        from multidict import MultiDict
+
+        self.headers = _headers(token)
+        self.path = path
+        self.method = "PUT" if path.endswith("light") else "GET"
+        self.match_info = {"camera_id": "42"}
+        self.query = MultiDict()
+        self.content_type = "application/json"
+        self.entered = asyncio.Event()
+        self.release = release
+
+    async def json(self, *, loads):
+        self.entered.set()
+        if self.release is not None:
+            await self.release.wait()
+        return loads('{"on":true}')
+
+
+def _offline_server(tmp_path, **providers):
+    tokens = PluginTokenStore(tmp_path / "integrations")
+    issued = tokens.create("fixture")
+    events = EventJournal(max_events=4)
+
+    def status():
+        value = _status()
+        value["cameras"][0]["has_light"] = True
+        return value
+
+    server = PluginApiServer(
+        host="127.0.0.1",
+        port=0,
+        token_store=tokens,
+        event_journal=events,
+        status_provider=status,
+        **providers,
+    )
+    return server, tokens, issued, events
+
+
+class _OfflineSocket:
+    def __init__(self, on_send=None, receive=None):
+        self.closed = False
+        self.prepared = False
+        self.headers = {}
+        self.messages = []
+        self.close_code = None
+        self.on_send = on_send
+        self.receiver = receive
+
+    async def prepare(self, _request):
+        self.prepared = True
+
+    async def send_json(self, message):
+        self.messages.append(message)
+        if self.on_send:
+            self.on_send(message)
+
+    async def receive(self):
+        if self.receiver:
+            return await self.receiver()
+        await asyncio.Event().wait()
+
+    async def close(self, *, code=1000, message=b""):
+        self.closed = True
+        self.close_code = code
+
+
+@pytest.mark.asyncio
+async def test_revocation_during_body_does_not_submit_control(tmp_path):
+    calls = []
+
+    async def provider(*args):
+        calls.append(args)
+
+    server, tokens, issued, _events = _offline_server(tmp_path, control_provider=provider)
+    release = asyncio.Event()
+    request = _PausedRequest(issued.token, release=release)
+    task = asyncio.create_task(server._security_middleware(request, server._set_light))
+    await request.entered.wait()
+    tokens.revoke(issued.identity.id)
+    release.set()
+    response = await task
+    assert response.status == 401
+    assert calls == []
+    assert not server._active_requests
+
+
+@pytest.mark.asyncio
+async def test_revocation_after_provider_queue_checks_submission_admission(tmp_path):
+    entered, release = asyncio.Event(), asyncio.Event()
+    effects = []
+
+    async def provider(*_args, admission):
+        entered.set()
+        await release.wait()
+        if not admission():
+            raise PluginCameraOperationError(
+                "unauthorized", "Plugin authentication failed", status=401
+            )
+        effects.append(True)
+
+    server, tokens, issued, _events = _offline_server(
+        tmp_path,
+        control_provider=provider,
+        provider_admission=True,
+    )
+    request = _PausedRequest(issued.token)
+    task = asyncio.create_task(server._security_middleware(request, server._set_light))
+    await entered.wait()
+    tokens.revoke(issued.identity.id)
+    release.set()
+    assert (await task).status == 401
+    assert not effects
+
+
+@pytest.mark.asyncio
+async def test_control_body_wait_has_whole_request_deadline(tmp_path, monkeypatch):
+    monkeypatch.setattr(plugin_api, "CAMERA_CONTROL_TIMEOUT_SECONDS", 0.01)
+
+    async def provider(*_args):
+        raise AssertionError("body never completed")
+
+    server, _tokens, issued, _events = _offline_server(tmp_path, control_provider=provider)
+    request = _PausedRequest(issued.token, release=asyncio.Event())
+    response = await server._security_middleware(request, server._set_light)
+    assert response.status == 504
+
+
+@pytest.mark.asyncio
+async def test_snapshot_result_after_revocation_is_not_delivered(tmp_path):
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def provider(*_args):
+        entered.set()
+        await release.wait()
+        return b"\xff\xd8private\xff\xd9"
+
+    server, tokens, issued, _events = _offline_server(tmp_path, snapshot_provider=provider)
+    request = _PausedRequest(issued.token, path="/v1/devices/42/snapshot")
+    task = asyncio.create_task(server._security_middleware(request, server._snapshot))
+    await entered.wait()
+    tokens.revoke(issued.identity.id)
+    release.set()
+    response = await task
+    assert response.status == 401
+    assert b"private" not in response.body
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("replay", [True, False])
+async def test_revoked_event_socket_never_delivers_replay_or_live_events(
+    tmp_path, monkeypatch, replay
+):
+    from multidict import MultiDict
+
+    server, tokens, issued, events = _offline_server(tmp_path)
+    request = _PausedRequest(issued.token, path="/v1/events")
+    if replay:
+        events.publish("doorbell", camera_id="42", payload={"event_id": "private"})
+        request.query = MultiDict(epoch=events.epoch, after="0")
+
+    def sent(message):
+        if message["type"] == "hello":
+            tokens.revoke(issued.identity.id)
+            if not replay:
+                events.publish("doorbell", camera_id="42", payload={"event_id": "private"})
+
+    socket = _OfflineSocket(on_send=sent)
+    monkeypatch.setattr(plugin_api.web, "WebSocketResponse", lambda **_kwargs: socket)
+    await server._security_middleware(request, server._event_socket)
+    assert [message["type"] for message in socket.messages] == ["hello"]
+    assert socket.close_code == 4003
+
+
+@pytest.mark.asyncio
+async def test_old_epoch_replay_is_rejected_after_hello(tmp_path, monkeypatch):
+    from multidict import MultiDict
+
+    server, _tokens, issued, events = _offline_server(tmp_path)
+    events.publish("doorbell", camera_id="42", payload={"event_id": "private"})
+    request = _PausedRequest(issued.token, path="/v1/events")
+    request.query = MultiDict(epoch=events.epoch, after="0")
+    socket = _OfflineSocket(
+        on_send=lambda message: events.reset() if message["type"] == "hello" else None
+    )
+    monkeypatch.setattr(plugin_api.web, "WebSocketResponse", lambda **_kwargs: socket)
+    await server._security_middleware(request, server._event_socket)
+    assert [message["type"] for message in socket.messages] == ["hello", "resync_required"]
+    assert socket.close_code == 1012
+
+
+@pytest.mark.asyncio
+async def test_intercom_revocation_blocks_pcm_and_active_feedback(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    stream = FakeIntercomStream()
+
+    async def provider(_camera_id):
+        return stream
+
+    server, tokens, issued, _events = _offline_server(tmp_path, intercom_provider=provider)
+    request = _PausedRequest(issued.token, path="/v1/intercom/42")
+
+    async def receive():
+        return SimpleNamespace(type=aiohttp.WSMsgType.BINARY, data=bytes(INTERCOM_FRAME_BYTES))
+
+    socket = _OfflineSocket(
+        on_send=lambda message: (
+            tokens.revoke(issued.identity.id) if message["type"] == "ready" else None
+        ),
+        receive=receive,
+    )
+    monkeypatch.setattr(plugin_api.web, "WebSocketResponse", lambda **_kwargs: socket)
+    await server._security_middleware(request, server._intercom_socket)
+    assert stream.frames == []
+    assert stream.closed.is_set()
+    assert [message["type"] for message in socket.messages] == ["ready"]
+    assert socket.close_code == 4003
+
+
+@pytest.mark.asyncio
+async def test_intercom_revocation_during_activation_has_no_active_feedback(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    stream = FakeIntercomStream()
+
+    async def provider(_camera_id):
+        return stream
+
+    server, tokens, issued, _events = _offline_server(tmp_path, intercom_provider=provider)
+
+    async def ready(_timeout):
+        tokens.revoke(issued.identity.id)
+        return True
+
+    stream.wait_ready = ready
+
+    async def receive():
+        return SimpleNamespace(type=aiohttp.WSMsgType.BINARY, data=bytes(INTERCOM_FRAME_BYTES))
+
+    socket = _OfflineSocket(receive=receive)
+    monkeypatch.setattr(plugin_api.web, "WebSocketResponse", lambda **_kwargs: socket)
+    request = _PausedRequest(issued.token, path="/v1/intercom/42")
+    await server._security_middleware(request, server._intercom_socket)
+    assert len(stream.frames) == 1  # Admitted before revocation; cannot be undone.
+    assert [message["type"] for message in socket.messages] == ["ready"]
+    assert stream.closed.is_set()
+
+
+@pytest.mark.asyncio
+async def test_revoke_client_cancels_paused_request_and_releases_admission(tmp_path):
+    entered, retired = asyncio.Event(), asyncio.Event()
+
+    async def provider(*_args):
+        entered.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            retired.set()
+
+    server, tokens, issued, _events = _offline_server(tmp_path, snapshot_provider=provider)
+    request = _PausedRequest(issued.token, path="/v1/devices/42/snapshot")
+    task = asyncio.create_task(server._security_middleware(request, server._snapshot))
+    await entered.wait()
+    tokens.revoke(issued.identity.id)
+    await server.revoke_client(issued.identity.id)
+    assert task.cancelled()
+    assert retired.is_set()
+    assert not server._active_requests

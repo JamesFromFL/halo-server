@@ -517,16 +517,21 @@ def test_media_compatibility_gate_accepts_installed_validated_contracts():
 
 
 def test_media_compatibility_gate_rejects_unvalidated_aiortc(monkeypatch):
-    monkeypatch.setattr(aiortc, "__version__", "1.15.0")
+    monkeypatch.setattr(aiortc, "__version__", "99.0.0")
 
-    with pytest.raises(ring_media.MediaCompatibilityError, match="aiortc 1.15.0"):
+    with pytest.raises(ring_media.MediaCompatibilityError, match="aiortc 99.0.0"):
         ring_media.validate_media_compatibility()
 
 
 @pytest.mark.asyncio
 async def test_microphone_track_never_opens_a_server_local_capture_device(monkeypatch):
+    import gi
+
+    gi.require_version("Gst", "1.0")
+    from gi.repository import Gst
+
     monkeypatch.setattr(
-        ring_media.Gst,
+        Gst,
         "parse_launch",
         lambda _description: (_ for _ in ()).throw(AssertionError("local capture opened")),
     )
@@ -640,9 +645,9 @@ async def test_encoded_frame_adapter_forwards_unsupported_codec_to_decoder():
 async def test_encoded_frame_adapter_rejects_unvalidated_aiortc_version(monkeypatch):
     peer = aiortc.RTCPeerConnection()
     transceiver = peer.addTransceiver("video", direction="recvonly")
-    monkeypatch.setattr(aiortc, "__version__", "1.15.0")
+    monkeypatch.setattr(aiortc, "__version__", "99.0.0")
     try:
-        with pytest.raises(ring_media.EncodedFrameAdapterError, match="1.15.0"):
+        with pytest.raises(ring_media.EncodedFrameAdapterError, match="99.0.0"):
             ring_media.install_encoded_frame_adapter(
                 transceiver.receiver,
                 "video",
@@ -721,6 +726,7 @@ async def test_receiver_installs_per_track_encoded_adapters(monkeypatch):
     peer = install_media_fakes(monkeypatch)
     stop = threading.Event()
     installed = []
+    received = []
 
     def install(receiver, kind, callback, *, forward_to_decoder, on_incompatible=None):
         installed.append((receiver, kind, callback, forward_to_decoder, on_incompatible))
@@ -729,10 +735,11 @@ async def test_receiver_installs_per_track_encoded_adapters(monkeypatch):
     monkeypatch.setattr(ring_media, "install_encoded_frame_adapter", install)
 
     async def finish_generate(_session_id, _on_rtc_message):
+        installed[0][2](b"\x00\x00\x00\x01\x65frame", 200)
         stop.set()
 
     def on_video(*_args):
-        return None
+        received.append(_args)
 
     def on_audio(*_args):
         return None
@@ -750,10 +757,12 @@ async def test_receiver_installs_per_track_encoded_adapters(monkeypatch):
 
     await receiver.receive(stop)
 
-    assert [(kind, callback, forward) for _, kind, callback, forward, _ in installed] == [
-        ("video", on_video, False),
-        ("audio", on_audio, False),
+    assert [(kind, forward) for _, kind, _, forward, _ in installed] == [
+        ("video", False),
+        ("audio", False),
     ]
+    assert installed[1][2] is on_audio
+    assert received == [(b"\x00\x00\x00\x01\x65frame", 200)]
     assert peer.closed is True
 
 
@@ -1033,3 +1042,139 @@ async def test_receiver_cancels_pending_signaling_tasks(monkeypatch):
     assert peer.closed is True
     assert len(device.closed_sessions) == 1
     assert FakeMicrophoneTrack.instances[0].stopped is True
+
+
+def _progress_receiver(monkeypatch, *, payload=None, audio=False, accepted=True):
+    peer = install_media_fakes(monkeypatch)
+    callbacks = {}
+
+    def install(_receiver, kind, callback, **_kwargs):
+        callbacks[kind] = callback
+
+    monkeypatch.setattr(ring_media, "install_encoded_frame_adapter", install)
+
+    async def apply_answer(_answer):
+        peer.connectionState = "connected"
+
+    peer.setRemoteDescription = apply_answer
+
+    async def generate(_session_id, on_message):
+        on_message(SimpleNamespace(answer="answer", candidate=None, error_code=None))
+        if payload is not None:
+            callbacks["video"](payload, 10)
+        if audio:
+            callbacks["audio"](b"\xf8audio", 0)
+
+    device = FakeDevice(on_generate=generate)
+    receiver = ring_media.RingStreamReceiver(
+        device,
+        None,
+        on_encoded_video=lambda *_args: accepted,
+        on_encoded_audio=lambda *_args: None,
+        decode_video=False,
+        decode_audio=False,
+        first_video_timeout=0.03,
+        video_stall_timeout=0.03,
+    )
+    return receiver, peer, device, callbacks
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "payload,audio",
+    [
+        (None, False),
+        (None, True),
+        (b"not-h264", False),
+        (b"\x00\x00\x00\x01\x41pframe", False),
+        (b"\x00\x00\x00\x01\x65idr-without-parameters", False),
+    ],
+)
+async def test_receiver_requires_keyframe_startup_even_when_connected_or_audio_active(
+    monkeypatch, payload, audio
+):
+    receiver, peer, device, _callbacks = _progress_receiver(
+        monkeypatch, payload=payload, audio=audio
+    )
+    with pytest.raises(ring_media.RingMediaProgressError, match="video_startup_timeout"):
+        await asyncio.wait_for(receiver.receive(threading.Event()), 0.5)
+    assert peer.closed
+    assert len(device.closed_sessions) == 1
+
+
+@pytest.mark.asyncio
+async def test_receiver_accepted_keyframe_then_stall_retires_and_rejects_late_video(monkeypatch):
+    keyframe = b"\x00\x00\x01\x67sps\x00\x00\x01\x68pps\x00\x00\x01\x65idr"
+    receiver, peer, device, callbacks = _progress_receiver(monkeypatch, payload=keyframe)
+    with pytest.raises(ring_media.RingMediaProgressError, match="video_stalled"):
+        await asyncio.wait_for(receiver.receive(threading.Event()), 0.5)
+    assert peer.closed
+    assert len(device.closed_sessions) == 1
+    assert callbacks["video"](keyframe, 20) is False
+
+
+@pytest.mark.asyncio
+async def test_receiver_rejected_keyframe_does_not_hide_startup_timeout(monkeypatch):
+    keyframe = b"\x00\x00\x01\x67sps\x00\x00\x01\x68pps\x00\x00\x01\x65idr"
+    receiver, _peer, _device, _callbacks = _progress_receiver(
+        monkeypatch, payload=keyframe, accepted=False
+    )
+    with pytest.raises(ring_media.RingMediaProgressError, match="video_startup_timeout"):
+        await asyncio.wait_for(receiver.receive(threading.Event()), 0.5)
+
+
+@pytest.mark.asyncio
+async def test_receiver_startup_deadline_survives_signaling_cancellation_suppression(monkeypatch):
+    receiver, peer, device, callbacks = _progress_receiver(monkeypatch)
+    accepted = []
+    receiver._on_encoded_video = lambda *_args: accepted.append(True)
+    original_generate = device.on_generate
+
+    async def slow_generate(session_id, on_message):
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            # Model an SDK await that returns after swallowing timeout cancellation.
+            await original_generate(session_id, on_message)
+            keyframe = b"\x00\x00\x01\x67sps\x00\x00\x01\x68pps\x00\x00\x01\x65idr"
+            assert callbacks["video"](keyframe, 20) is False
+
+    device.on_generate = slow_generate
+    with pytest.raises(ring_media.RingMediaProgressError, match="video_startup_timeout"):
+        await asyncio.wait_for(receiver.receive(threading.Event()), 0.5)
+    assert not accepted
+    assert peer.closed
+
+
+@pytest.mark.asyncio
+async def test_receiver_retains_cleanup_barrier_when_ring_close_suppresses_cancellation(
+    monkeypatch,
+):
+    peer = install_media_fakes(monkeypatch)
+    stop = threading.Event()
+    blocked = asyncio.Event()
+    release = asyncio.Event()
+
+    async def generate(_session_id, _on_message):
+        stop.set()
+
+    async def close_ring(_session_id):
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            blocked.set()
+            await release.wait()
+
+    device = FakeDevice(on_generate=generate)
+    device.close_webrtc_stream = close_ring
+    monkeypatch.setattr(ring_media, "RECEIVER_CLOSE_TIMEOUT", 0.01)
+    task = asyncio.create_task(ring_media.RingStreamReceiver(device, None).receive(stop))
+    await asyncio.wait_for(blocked.wait(), 0.5)
+    assert peer.closed  # Stalled Ring teardown does not prevent closing the peer.
+    assert not task.done()
+    task.cancel()
+    await asyncio.sleep(0)
+    assert not task.done()  # Cancellation is a request, not teardown completion.
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(task, 0.5)

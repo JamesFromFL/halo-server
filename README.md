@@ -6,6 +6,13 @@ administers it through an owner-only Unix socket.
 
 ## Current Status
 
+Direct HomeKit implementation has started. The account/capture/request reliability
+foundation and a private, synthetic HAP process lifecycle are implemented. The
+adapter does **not** publish accessories or deliver HomeKit media yet. The current
+working integration remains the existing plugin/RTSP path. See
+[direct HomeKit engineering status](docs/direct-homekit-status.md) for completed
+work, validation boundaries, and remaining implementation gates.
+
 Implemented:
 
 - private, transactional Ring account and push-event credential storage

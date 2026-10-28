@@ -188,3 +188,20 @@ def test_named_lease_id_length_is_bounded():
 
     with pytest.raises(ValueError, match="128"):
         coordinator.acquire(LeasePurpose.EVENT, lease_id="x" * 129)
+
+
+def test_speaker_and_homekit_budgets_are_enforced_across_all_callers():
+    clock = FakeClock()
+    coordinator = MediaLeaseCoordinator(clock=clock)
+    speaker, _ = coordinator.acquire(LeasePurpose.INTERCOM)
+    with pytest.raises(RuntimeError, match="purpose limit"):
+        coordinator.acquire(LeasePurpose.INTERCOM)
+    coordinator.acquire(LeasePurpose.HOMEKIT_LIVE)
+    coordinator.acquire(LeasePurpose.HOMEKIT_LIVE)
+    with pytest.raises(RuntimeError, match="purpose limit"):
+        coordinator.acquire(LeasePurpose.HOMEKIT_LIVE)
+    renewed, _ = coordinator.acquire(LeasePurpose.INTERCOM, lease_id=speaker.id)
+    assert renewed.absolute_deadline == speaker.absolute_deadline
+    coordinator.release(speaker.id)
+    replacement, _ = coordinator.acquire(LeasePurpose.INTERCOM)
+    assert replacement.id != speaker.id

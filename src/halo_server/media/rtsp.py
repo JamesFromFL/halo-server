@@ -10,7 +10,6 @@ import secrets
 import threading
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
 from urllib.parse import quote
 
 import gi
@@ -20,8 +19,8 @@ gi.require_version("GstRtsp", "1.0")
 gi.require_version("GstRtspServer", "1.0")
 from gi.repository import GLib, Gst, GstRtsp, GstRtspServer  # noqa: E402
 
-from halo_server.media.buffer import EncodedMediaBuffer, MediaStreamKind  # noqa: E402
-from halo_server.media.ring_media import gst_push_succeeded  # noqa: E402
+from halo_server.media.buffer import MediaStreamKind  # noqa: E402
+from halo_server.media.consumers import BufferedMediaConsumer  # noqa: E402
 from halo_server.media.timestamps import EncodedTimestampMapper  # noqa: E402
 
 _log = logging.getLogger(__name__)
@@ -49,28 +48,9 @@ class RtspGatewayError(RuntimeError):
     """The bounded RTSP gateway could not start or serve a stream."""
 
 
-@dataclass
-class BufferedMediaConsumer:
-    """One downstream claim on a camera media session."""
-
-    buffer: EncodedMediaBuffer
-    renew_callback: Callable[[], bool]
-    close_callback: Callable[[], None]
-
-    def __post_init__(self) -> None:
-        self._lock = threading.Lock()
-        self._closed = False
-
-    def renew(self) -> bool:
-        with self._lock:
-            return False if self._closed else bool(self.renew_callback())
-
-    def close(self) -> None:
-        with self._lock:
-            if self._closed:
-                return
-            self._closed = True
-        self.close_callback()
+def gst_push_succeeded(result) -> bool:
+    """Return True only while the optional RTSP pipeline accepts a buffer."""
+    return result == Gst.FlowReturn.OK
 
 
 class RtspMediaGateway:
@@ -434,6 +414,9 @@ class _BufferedCameraFactory(GstRtspServer.RTSPMediaFactory):
                 MediaStreamKind.AUDIO: media_read.resynchronized,
             }
             for packet in media_read.packets:
+                if not consumer.is_current():
+                    stop.set()
+                    break
                 is_video = packet.stream is MediaStreamKind.VIDEO
                 source = video_source if is_video else audio_source
                 mapper = video_timestamps if is_video else audio_timestamps

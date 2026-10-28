@@ -3,6 +3,7 @@ import stat
 
 import pytest
 
+from halo_server.account_scope import new_profile_id, valid_profile_id
 from halo_server.ring.credentials import (
     FILE_STORE_VERSION,
     CredentialStore,
@@ -56,6 +57,7 @@ def test_store_atomically_migrates_v1_credentials_on_load(tmp_path):
         "ring_token": {"refresh_token": "legacy"},
         "account_email": "person@example.com",
         "event_credentials": None,
+        "profile_id": credentials.profile_id,
     }
 
 
@@ -247,3 +249,111 @@ def test_store_rejects_invalid_v2_event_credentials_without_replacing_file(
         CredentialStore(path).load()
 
     assert path.read_bytes() == original
+
+
+def test_v2_migration_preserves_fcm_and_allocates_profile_once(tmp_path):
+    path = tmp_path / "credentials.json"
+    path.write_text(
+        json.dumps(
+            {
+                "version": 2,
+                "revision": 8,
+                "ring_token": {"refresh_token": "old"},
+                "account_email": "person@example.com",
+                "event_credentials": {"gcm": {"id": "fcm"}},
+            }
+        )
+    )
+    path.chmod(0o600)
+    first = CredentialStore(path).load()
+    second = CredentialStore(path).load()
+    assert first == second
+    assert first.revision == 9
+    assert valid_profile_id(first.profile_id)
+    assert first.event_credentials == {"gcm": {"id": "fcm"}}
+
+
+def test_token_maintenance_keeps_profile_but_explicit_reassociation_clears_fcm(tmp_path):
+    store = CredentialStore(tmp_path / "credentials.json")
+    profile = new_profile_id()
+    store.save_session({"refresh_token": "initial"}, "person@example.com", profile_id=profile)
+    store.save_event_credentials({"id": "old-push"})
+    store.save_session({"refresh_token": "renewed"}, "person@example.com", profile_id=profile)
+    assert store.load().profile_id == profile
+    assert store.load().event_credentials == {"id": "old-push"}
+    replacement = new_profile_id()
+    store.save_session({"refresh_token": "new-login"}, "person@example.com", profile_id=replacement)
+    assert store.load().profile_id == replacement
+    assert store.load().event_credentials is None
+    store.clear()
+    assert store.load().profile_id is None
+
+
+@pytest.mark.parametrize("profile", [None, "email@example.com", "../profile", "0" * 32])
+def test_v3_invalid_profile_is_not_silently_replaced(tmp_path, profile):
+    path = tmp_path / "credentials.json"
+    path.write_text(
+        json.dumps(
+            {
+                "version": 3,
+                "revision": 8,
+                "ring_token": {"refresh_token": "old"},
+                "account_email": "person@example.com",
+                "event_credentials": None,
+                "profile_id": profile,
+            }
+        )
+    )
+    path.chmod(0o600)
+    original = path.read_bytes()
+    with pytest.raises(CredentialStoreError, match="invalid format"):
+        CredentialStore(path).load()
+    assert path.read_bytes() == original
+
+
+def test_failed_profile_migration_does_not_publish_identity_or_overwrite_old_file(
+    tmp_path, monkeypatch
+):
+    path = tmp_path / "credentials.json"
+    path.write_text(
+        json.dumps(
+            {
+                "version": 2,
+                "revision": 4,
+                "ring_token": {"refresh_token": "old"},
+                "account_email": "person@example.com",
+                "event_credentials": None,
+            }
+        )
+    )
+    path.chmod(0o600)
+    before = path.read_bytes()
+
+    def fail_replace(*_args):
+        raise OSError("synthetic write failure")
+
+    monkeypatch.setattr("halo_server.ring.credentials.os.replace", fail_replace)
+    with pytest.raises(CredentialStoreError, match="Cannot write"):
+        CredentialStore(path).load()
+    assert path.read_bytes() == before
+    assert not list(path.parent.glob("*.tmp"))
+
+
+@pytest.mark.parametrize("version", [1, 2])
+def test_legacy_unknown_profile_field_cannot_promote_identity_without_token(tmp_path, version):
+    path = tmp_path / "credentials.json"
+    path.write_text(
+        json.dumps(
+            {
+                "version": version,
+                "revision": 1,
+                "ring_token": None,
+                "account_email": None,
+                "event_credentials": None,
+                "profile_id": new_profile_id(),
+            }
+        )
+    )
+    path.chmod(0o600)
+    assert CredentialStore(path).load().profile_id is None
+    assert CredentialStore(path).load().profile_id is None

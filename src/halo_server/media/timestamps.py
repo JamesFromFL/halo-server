@@ -2,14 +2,11 @@
 
 from __future__ import annotations
 
-import gi
-
-gi.require_version("Gst", "1.0")
-from gi.repository import Gst  # noqa: E402
+NANOSECONDS_PER_SECOND = 1_000_000_000
 
 
 class EncodedTimestampMapper:
-    """Map one encoded RTP clock to a monotonic GStreamer timeline."""
+    """Map one encoded RTP clock to a monotonic nanosecond timeline."""
 
     def __init__(self, *, clock_rate: int, default_duration_ns: int) -> None:
         self._clock_rate = clock_rate
@@ -29,7 +26,7 @@ class EncodedTimestampMapper:
             discontinuity = True
 
         relative = max(0, timestamp - self._source_base)
-        pts = self._output_base + (relative * Gst.SECOND // self._clock_rate)
+        pts = self._output_base + (relative * NANOSECONDS_PER_SECOND // self._clock_rate)
         if self._output_last is not None and pts <= self._output_last:
             pts = self._output_last + 1
         self._source_last = timestamp
@@ -48,7 +45,7 @@ class SampleTimestampMapper:
         if samples <= 0 or rate <= 0:
             raise ValueError("audio samples and rate must be positive")
         pts = self._next_pts
-        duration = samples * Gst.SECOND // rate
+        duration = samples * NANOSECONDS_PER_SECOND // rate
         self._next_pts += duration
         discontinuity = self._first
         self._first = False

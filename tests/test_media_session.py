@@ -115,6 +115,38 @@ def test_multiple_leases_submit_exactly_one_ring_receiver():
     session.stop_all()
 
 
+def test_session_source_identity_does_not_accept_same_api_id_replacement():
+    client = FakeClient()
+    device = SimpleNamespace(id=42, name="Original")
+    session = CameraMediaSession(client, device, receiver_supervisor=fake_supervisor)
+    assert session.owns_source(client, device)
+    assert not session.owns_source(client, SimpleNamespace(id=42, name="Replacement"))
+    assert not session.owns_source(FakeClient(), device)
+
+
+def test_fast_lease_check_rejects_expiry_without_tick_and_release_without_renewal():
+    clock = FakeClock()
+    client = FakeClient()
+    session = CameraMediaSession(
+        client,
+        SimpleNamespace(id=42, name="Camera"),
+        clock=clock,
+        lease_coordinator=MediaLeaseCoordinator(clock=clock),
+        receiver_supervisor=fake_supervisor,
+    )
+    lease = session.acquire(LeasePurpose.SNAPSHOT, ttl=1)
+    assert session.is_lease_active(lease.id)
+    clock.value = 1
+    assert not session.is_lease_active(lease.id)
+    assert session.snapshot().lease_count == 1  # The fast check has no expiration side effects.
+    session.release(lease.id)
+    fresh = session.acquire(LeasePurpose.EVENT)
+    assert session.is_lease_active(fresh.id)
+    assert not session.is_lease_active(lease.id)
+    session.release(fresh.id)
+    assert not session.is_lease_active(fresh.id)
+
+
 def test_last_release_stops_receiver_but_first_release_does_not():
     session, client = _session()
     event = session.acquire(LeasePurpose.EVENT)
@@ -648,16 +680,21 @@ def test_stop_timeout_preserves_receiver_barrier(monkeypatch):
     client = TimeoutClient()
     session, _ = _session(client)
     first = session.acquire(LeasePurpose.EVENT)
+    _receiver_kwargs(client.futures[0])["on_encoded_video"](SPS_PPS_IDR, 100)
+    assert session.snapshot().buffer_ready
 
     session.release(first.id)
 
     assert client.futures[0].cancelled is False
     assert session.snapshot().state is MediaSessionState.STOPPING
     assert session.snapshot().failure == "receiver_stop_timeout"
+    assert not session.receiver_retired
+    assert not session.snapshot().buffer_ready
 
     second = session.acquire(LeasePurpose.EVENT)
     assert second.generation == 2
     assert len(client.futures) == 1
+    assert not session.snapshot().buffer_ready
 
     client.futures[0].complete_unexpectedly()
     assert len(client.futures) == 2
@@ -666,3 +703,50 @@ def test_stop_timeout_preserves_receiver_barrier(monkeypatch):
     session.stop_all()
     client.futures[1].complete_unexpectedly()
     assert session.snapshot().state is MediaSessionState.IDLE
+    assert session.receiver_retired
+
+
+def test_capture_attempt_restart_clears_history_and_audio_encoder():
+    session, client = _session()
+    lease = session.acquire(LeasePurpose.EVENT)
+    callbacks = _receiver_kwargs(client.futures[0])
+    callbacks["on_encoded_video"](SPS_PPS_IDR, 200)
+    first = session.snapshot()
+    assert first.capture_attempt == 1
+    assert first.buffer_ready
+    callbacks["on_attempt_end"](1, RuntimeError("transient"))
+    assert not session.snapshot().buffer_ready
+    assert session.snapshot().state is MediaSessionState.FAILED
+    callbacks["on_attempt"](2)
+    restarted = session.snapshot()
+    assert restarted.capture_attempt == 2
+    assert restarted.generation == lease.generation
+    assert restarted.state is MediaSessionState.STARTING
+    assert callbacks["on_encoded_video"](b"\x00\x00\x01\x41p-only", 400) is False
+    assert not session.snapshot().buffer_ready
+    assert callbacks["on_encoded_video"](SPS_PPS_IDR, 500) is True
+    assert session.snapshot().buffer_ready
+    session.stop_all()
+    assert session.receiver_retired
+
+
+def test_incompatible_receiver_is_not_retried_by_session_expiry():
+    clock = FakeClock()
+    client = FakeClient()
+    session = CameraMediaSession(
+        client,
+        SimpleNamespace(id=42, name="Camera"),
+        clock=clock,
+        lease_coordinator=MediaLeaseCoordinator(clock=clock),
+        receiver_supervisor=fake_supervisor,
+    )
+    session.acquire(LeasePurpose.EVENT)
+    _receiver_kwargs(client.futures[0])["on_encoded_incompatible"]("video", "video/vp8")
+    client.futures[0].complete_unexpectedly()
+    clock.value = 20
+    session.expire()
+    assert len(client.futures) == 1
+    assert session.snapshot().failure == "unsupported_video_codec"
+    assert not session.receiver_retired
+    session.stop_all()
+    assert session.receiver_retired

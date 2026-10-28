@@ -24,7 +24,12 @@ from halo_server.media.leases import (
     MediaLease,
     MediaLeaseCoordinator,
 )
-from halo_server.media.ring_media import MicrophonePcmBuffer
+from halo_server.media.ring_media import (
+    EncodedFrameAdapterError,
+    MediaCompatibilityError,
+    MicrophonePcmBuffer,
+    RingMediaProgressError,
+)
 from halo_server.media.supervisor import supervise_receiver
 
 _log = logging.getLogger(__name__)
@@ -54,6 +59,7 @@ class MediaSessionSnapshot:
     buffer_bytes: int
     opus_frame_duration_ms: float | None
     failure: str | None
+    capture_attempt: int = 0
 
 
 @dataclass(frozen=True)
@@ -109,10 +115,33 @@ class CameraMediaSession:
         self._retry_max = float(retry_max)
         self._retry_delay = self._retry_initial
         self._retry_at: float | None = None
+        self._capture_attempt = 0
+        self._permanent_failure = False
 
     @property
     def buffer(self) -> EncodedMediaBuffer:
         return self._buffer
+
+    @property
+    def receiver_retired(self) -> bool:
+        """Completion evidence for the shared manager's retirement barrier."""
+        with self._lock:
+            return (
+                self._future is None
+                and not self._leases.snapshot().leases
+                and self._state is MediaSessionState.IDLE
+            )
+
+    def owns_source(self, client, device) -> bool:
+        """Match the exact account client and reconciled SDK wrapper owner."""
+        with self._lock:
+            return self._client is client and self._device is device
+
+    def is_lease_active(self, lease_id: str) -> bool:
+        """Check delivery authority without renewing or mutating lease state."""
+        with self._lock:
+            lease = self._current_lease_locked(lease_id)
+            return lease is not None and self._clock() < lease.expires_at
 
     def acquire(
         self,
@@ -268,6 +297,7 @@ class CameraMediaSession:
                 buffer_bytes=media.payload_bytes,
                 opus_frame_duration_ms=self._opus_frame_duration_ms,
                 failure=self._failure,
+                capture_attempt=self._capture_attempt,
             )
 
     def _apply_actions_locked(
@@ -295,6 +325,8 @@ class CameraMediaSession:
             )
             return
         self._runner_generation = action.generation
+        self._capture_attempt += 1
+        self._permanent_failure = False
         self._retry_at = None
         self._state = MediaSessionState.STARTING
         self._failure = None
@@ -313,6 +345,10 @@ class CameraMediaSession:
         stop = threading.Event()
         self._stop = stop
         receiver_kwargs = {
+            "on_attempt": lambda attempt: self._attempt_started(action.generation, attempt),
+            "on_attempt_end": lambda attempt, error: self._attempt_ended(
+                action.generation, attempt, error
+            ),
             "on_encoded_video": lambda payload, timestamp: self._encoded_video(
                 action.generation,
                 payload,
@@ -384,6 +420,8 @@ class CameraMediaSession:
         self._cancel_retry_locked()
         self._state = MediaSessionState.STOPPING
         self._failure = None
+        self._buffer.clear()
+        self._opus_frame_duration_ms = None
         if stop is not None:
             stop.set()
         if future is None:
@@ -423,10 +461,42 @@ class CameraMediaSession:
         )
         self._microphone_source.end_intercom()
 
-    def _encoded_video(self, generation: int, payload: bytes, timestamp: int) -> None:
+    def _attempt_started(self, generation: int, attempt: int) -> None:
+        with self._lock:
+            if not self._accepts_media_locked(generation) or attempt == 1:
+                return
+            self._capture_attempt += 1
+            self._buffer.clear()
+            self._state = MediaSessionState.STARTING
+            self._failure = None
+            self._opus_frame_duration_ms = None
+            self._started_at = self._clock()
+            self._first_video_at = None
+            self._first_audio_at = None
+            self._audio_encoder = self._audio_encoder_factory()
+            self._microphone_source.clear()
+
+    def _attempt_ended(self, generation: int, _attempt: int, error: Exception | None) -> None:
         with self._lock:
             if not self._accepts_media_locked(generation):
                 return
+            self._buffer.clear()
+            self._opus_frame_duration_ms = None
+            self._audio_encoder = None
+            self._microphone_source.clear()
+            self._state = MediaSessionState.FAILED
+            if isinstance(error, (MediaCompatibilityError, EncodedFrameAdapterError)):
+                self._permanent_failure = True
+                self._failure = "media_incompatible"
+            elif isinstance(error, RingMediaProgressError):
+                self._failure = str(error)
+            else:
+                self._failure = "receiver_restarting"
+
+    def _encoded_video(self, generation: int, payload: bytes, timestamp: int) -> bool:
+        with self._lock:
+            if not self._accepts_media_locked(generation):
+                return False
             now = self._clock()
             if self._first_video_at is None:
                 self._first_video_at = now
@@ -440,14 +510,17 @@ class CameraMediaSession:
                     timestamp,
                 )
             try:
-                self._buffer.append_video(payload, timestamp)
+                packet = self._buffer.append_video(payload, timestamp)
             except MediaBufferError as exc:
                 self._state = MediaSessionState.FAILED
                 self._failure = "encoded_video_rejected"
                 if self._stop is not None:
                     self._stop.set()
                 _log.warning("Rejected encoded Ring video for %s: %s", self._device.name, exc)
-                return
+                return False
+            useful = self._buffer.ready and bool(packet.h264_nal_types & {1, 5})
+            if not useful:
+                return False
             self._media_recovered_locked()
             if self._state is not MediaSessionState.READY and self._buffer.ready:
                 self._state = MediaSessionState.READY
@@ -457,6 +530,7 @@ class CameraMediaSession:
                     generation,
                     self._elapsed_locked(now),
                 )
+            return True
 
     def _raw_audio(
         self,
@@ -489,7 +563,6 @@ class CameraMediaSession:
                     for packet in encoder.encode(payload, channels, rate):
                         self._buffer.append_audio(packet.payload, packet.rtp_timestamp)
                     self._opus_frame_duration_ms = OPUS_FRAME_DURATION_MS
-                    self._media_recovered_locked()
                 except (AudioNormalizationError, MediaBufferError) as exc:
                     self._state = MediaSessionState.FAILED
                     self._failure = "audio_normalization_failed"
@@ -510,6 +583,7 @@ class CameraMediaSession:
                 return
             self._state = MediaSessionState.FAILED
             self._failure = f"unsupported_{kind}_codec"
+            self._permanent_failure = True
             if self._stop is not None:
                 self._stop.set()
         _log.warning(
@@ -620,6 +694,9 @@ class CameraMediaSession:
             self._schedule_retry_locked(now)
 
     def _schedule_retry_locked(self, now: float | None = None) -> None:
+        if self._permanent_failure:
+            self._retry_at = None
+            return
         if not self._leases.snapshot().leases:
             self._cancel_retry_locked()
             return

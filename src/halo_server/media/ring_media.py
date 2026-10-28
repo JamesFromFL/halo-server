@@ -18,6 +18,7 @@ import functools
 import logging
 import math
 import queue
+import sys
 import threading
 import time
 import uuid
@@ -26,22 +27,18 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from importlib import metadata as importlib_metadata
 
-import gi
+from aiortc.mediastreams import AudioStreamTrack, MediaStreamError
+from av import AudioFrame
 
+from halo_server.media.buffer import h264_nal_types
 from halo_server.media.ring_speaker import (
     RingSpeakerControlError,
     activate_ring_camera_speaker,
 )
 
-gi.require_version("Gst", "1.0")
-
-from aiortc.mediastreams import AudioStreamTrack, MediaStreamError  # noqa: E402
-from av import AudioFrame  # noqa: E402
-from gi.repository import Gst  # noqa: E402
-
 _log = logging.getLogger(__name__)
 
-_ENCODED_FRAME_AIORTC_VERSIONS = frozenset({"1.14.0"})
+_ENCODED_FRAME_AIORTC_VERSIONS = frozenset({"1.15.0"})
 _RING_DOORBELL_WEBRTC_CLOSE_VERSIONS = frozenset({"0.9.14"})
 _DECODER_QUEUE_ATTRIBUTE = "_RTCRtpReceiver__decoder_queue"
 _DECODER_THREAD_ATTRIBUTE = "_RTCRtpReceiver__decoder_thread"
@@ -66,6 +63,8 @@ WEBRTC_ANSWER_TIMEOUT = 15.0
 WEBRTC_REMOTE_DESCRIPTION_TIMEOUT = 5.0
 RECEIVER_TASK_CLEANUP_TIMEOUT = 0.5
 RECEIVER_CLOSE_TIMEOUT = 2.0
+FIRST_VIDEO_TIMEOUT = 20.0
+VIDEO_STALL_TIMEOUT = 10.0
 _DIAGNOSTIC_VALUE_LIMIT = 128
 
 
@@ -79,6 +78,14 @@ class MediaCompatibilityError(RuntimeError):
 
 class RingMediaNegotiationError(RuntimeError):
     """Raised when Ring's WebRTC answer cannot be applied to the local peer."""
+
+
+class RingMediaProgressError(RuntimeError):
+    """A negotiated attempt did not deliver timely accepted video."""
+
+
+class RingMediaUnsupportedCodecError(MediaCompatibilityError):
+    """Negotiated codecs cannot use the validated encoded-media boundary."""
 
 
 @dataclass(frozen=True)
@@ -208,7 +215,7 @@ def install_encoded_frame_adapter(
     forward_to_decoder: bool,
     on_incompatible: Callable[[str, str], None] | None = None,
 ) -> queue.Queue:
-    """Install Halo's validated aiortc 1.14 encoded-frame queue on one receiver."""
+    """Install Halo's validated aiortc 1.15 encoded-frame queue on one receiver."""
     import aiortc
 
     version = str(getattr(aiortc, "__version__", "unknown"))
@@ -499,11 +506,6 @@ MIC_SAMPLE_RATE = 48000
 MIC_SAMPLES = 960  # 20 ms at 48 kHz — matches aiortc's AUDIO_PTIME
 MIC_FRAME_BYTES = MIC_SAMPLES * 2
 MIC_QUEUE_FRAMES = 10
-
-
-def gst_push_succeeded(result) -> bool:
-    """Return True only while appsrc accepted the buffer."""
-    return result == Gst.FlowReturn.OK
 
 
 def retain_aiortc_connect_tasks(peer_connection, retain) -> None:
@@ -1039,9 +1041,20 @@ def _safe_direction(value: object) -> str:
     return "unknown"
 
 
-def _consume_cleanup_result(task: asyncio.Task) -> None:
-    with contextlib.suppress(asyncio.CancelledError, Exception):
-        task.exception()
+async def _settle_cleanup(tasks) -> None:
+    """Keep ownership through cancellation until real cleanup has completed."""
+    if not tasks:
+        return
+    settled = asyncio.gather(*tasks, return_exceptions=True)
+    cancelled = False
+    while not settled.done():
+        try:
+            await asyncio.shield(settled)
+        except asyncio.CancelledError:
+            cancelled = True
+    settled.result()
+    if cancelled:
+        raise asyncio.CancelledError
 
 
 async def _run_bounded_cleanup(
@@ -1057,11 +1070,10 @@ async def _run_bounded_cleanup(
         done, _ = await asyncio.wait((task,), timeout=timeout)
     except asyncio.CancelledError:
         task.cancel()
-        task.add_done_callback(_consume_cleanup_result)
+        await _settle_cleanup((task,))
         raise
     if not done:
         task.cancel()
-        task.add_done_callback(_consume_cleanup_result)
         _log.warning(
             "%s timed out camera_id=%s session=%s timeout=%.1f",
             label,
@@ -1069,6 +1081,7 @@ async def _run_bounded_cleanup(
             session_reference,
             timeout,
         )
+        await _settle_cleanup((task,))
         return False
     try:
         task.result()
@@ -1118,6 +1131,9 @@ class RingStreamReceiver:
         decode_audio: bool = True,
         on_encoded_incompatible: Callable[[str, str], None] | None = None,
         microphone_source: MicrophonePcmBuffer | None = None,
+        first_video_timeout: float = FIRST_VIDEO_TIMEOUT,
+        video_stall_timeout: float = VIDEO_STALL_TIMEOUT,
+        on_terminating: Callable[[BaseException | None], None] | None = None,
     ) -> None:
         self._device = device
         self._on_video = on_video
@@ -1128,6 +1144,12 @@ class RingStreamReceiver:
         self._decode_audio = decode_audio
         self._on_encoded_incompatible = on_encoded_incompatible
         self._microphone_source = microphone_source
+        for value in (first_video_timeout, video_stall_timeout):
+            if isinstance(value, bool) or not math.isfinite(value) or value <= 0:
+                raise ValueError("Video progress timeout must be finite and positive")
+        self._first_video_timeout = first_video_timeout
+        self._video_stall_timeout = video_stall_timeout
+        self._on_terminating = on_terminating
 
     async def receive(self, stop: threading.Event) -> None:
         import numpy as np
@@ -1152,6 +1174,33 @@ class RingStreamReceiver:
         stream_errors: list[str] = []
         remote_description_error: Exception | None = None
         tasks: set[asyncio.Task] = set()
+        last_video_at: float | None = None
+        startup_expires_at = loop.time() + self._first_video_timeout
+        startup_deadline = None
+        have_sps = have_pps = have_keyframe = False
+
+        def video_progress() -> None:
+            nonlocal last_video_at
+            last_video_at = loop.time()
+            if startup_deadline is not None and not startup_deadline.expired():
+                startup_deadline.reschedule(None)
+
+        def encoded_video(payload: bytes, timestamp: int):
+            nonlocal have_sps, have_pps, have_keyframe
+            if (
+                stop.is_set()
+                or terminal.is_set()
+                or (last_video_at is None and loop.time() >= startup_expires_at)
+            ):
+                return False
+            accepted = self._on_encoded_video(payload, timestamp)
+            nal_types = h264_nal_types(payload)
+            have_sps |= 7 in nal_types
+            have_pps |= 8 in nal_types
+            have_keyframe |= have_sps and have_pps and 5 in nal_types
+            if accepted is not False and have_keyframe and nal_types & {1, 5}:
+                video_progress()
+            return accepted
 
         def retain(task: asyncio.Task, label: str) -> asyncio.Task:
             if task in tasks:
@@ -1190,9 +1239,12 @@ class RingStreamReceiver:
                         if w4 != w
                         else rgb.tobytes()
                     )
+                    if last_video_at is None and loop.time() >= startup_expires_at:
+                        continue
                     if self._on_video is not None:
                         try:
-                            self._on_video(raw, w4, h)
+                            if self._on_video(raw, w4, h) is not False:
+                                video_progress()
                         except Exception as exc:  # noqa: BLE001
                             _log.debug("on_video error: %s", exc)
             finally:
@@ -1251,6 +1303,8 @@ class RingStreamReceiver:
                 _log.debug("cand err: %s", exc)
 
         def on_rtc_message(msg) -> None:
+            if stop.is_set() or terminal.is_set():
+                return
             if msg.answer:
                 spawn(on_answer(msg.answer), "Ring answer")
             elif msg.candidate is not None and msg.sdp_m_line_index is not None:
@@ -1275,167 +1329,187 @@ class RingStreamReceiver:
             terminal.set()
 
         try:
-            pc = RTCPeerConnection(
-                RTCConfiguration(iceServers=[RTCIceServer(urls=self._device.get_ice_servers())])
-            )
-            video_transceiver = pc.addTransceiver("video", direction="recvonly")
-            mic_track = MicrophoneTrack(self._microphone_source)
-            audio_transceiver = pc.addTransceiver(mic_track, direction="sendrecv")
-            if self._on_encoded_video is not None:
-                install_encoded_frame_adapter(
-                    video_transceiver.receiver,
-                    "video",
-                    self._on_encoded_video,
-                    forward_to_decoder=self._decode_video,
-                    on_incompatible=on_encoded_incompatible,
+            async with asyncio.timeout(self._first_video_timeout) as startup_deadline:
+                pc = RTCPeerConnection(
+                    RTCConfiguration(iceServers=[RTCIceServer(urls=self._device.get_ice_servers())])
                 )
-            if self._on_encoded_audio is not None:
-                install_encoded_frame_adapter(
-                    audio_transceiver.receiver,
-                    "audio",
-                    self._on_encoded_audio,
-                    forward_to_decoder=self._decode_audio,
-                    on_incompatible=on_encoded_incompatible,
-                )
-
-            @pc.on("icecandidate")
-            def _on_ice(candidate) -> None:
-                if candidate is not None and not terminal.is_set():
-                    spawn(
-                        self._device.on_webrtc_candidate(
-                            session_id,
-                            candidate.candidate,
-                            candidate.sdpMLineIndex or 0,
-                        ),
-                        "local ICE candidate",
+                video_transceiver = pc.addTransceiver("video", direction="recvonly")
+                mic_track = MicrophoneTrack(self._microphone_source)
+                audio_transceiver = pc.addTransceiver(mic_track, direction="sendrecv")
+                if self._on_encoded_video is not None:
+                    install_encoded_frame_adapter(
+                        video_transceiver.receiver,
+                        "video",
+                        encoded_video,
+                        forward_to_decoder=self._decode_video,
+                        on_incompatible=on_encoded_incompatible,
+                    )
+                if self._on_encoded_audio is not None:
+                    install_encoded_frame_adapter(
+                        audio_transceiver.receiver,
+                        "audio",
+                        self._on_encoded_audio,
+                        forward_to_decoder=self._decode_audio,
+                        on_incompatible=on_encoded_incompatible,
                     )
 
-            @pc.on("track")
-            def _on_track(track) -> None:
+                @pc.on("icecandidate")
+                def _on_ice(candidate) -> None:
+                    if candidate is not None and not terminal.is_set():
+                        spawn(
+                            self._device.on_webrtc_candidate(
+                                session_id,
+                                candidate.candidate,
+                                candidate.sdpMLineIndex or 0,
+                            ),
+                            "local ICE candidate",
+                        )
+
+                @pc.on("track")
+                def _on_track(track) -> None:
+                    _log.info(
+                        "Ring WebRTC track camera_id=%s kind=%s session=%s media=%s",
+                        camera_id,
+                        camera_kind,
+                        session_reference,
+                        _diagnostic_value(track.kind),
+                    )
+                    if track.kind == "video" and self._decode_video:
+                        spawn(recv_video(track), "video receiver")
+                    elif track.kind == "audio" and self._decode_audio:
+                        spawn(recv_audio(track), "audio receiver")
+
+                @pc.on("connectionstatechange")
+                def _on_connection_state_change() -> None:
+                    state = getattr(pc, "connectionState", None)
+                    _log.info(
+                        "Ring WebRTC connection camera_id=%s session=%s state=%s",
+                        camera_id,
+                        session_reference,
+                        _diagnostic_value(state),
+                    )
+                    if state in {"failed", "closed"}:
+                        if state == "failed":
+                            stream_errors.append("WebRTC peer connection failed")
+                        terminal.set()
+
+                @pc.on("iceconnectionstatechange")
+                def _on_ice_connection_state_change() -> None:
+                    _log.info(
+                        "Ring WebRTC ICE camera_id=%s session=%s state=%s",
+                        camera_id,
+                        session_reference,
+                        _diagnostic_value(getattr(pc, "iceConnectionState", None)),
+                    )
+
+                try:
+                    async with asyncio.timeout(WEBRTC_OFFER_TIMEOUT):
+                        offer = await pc.createOffer()
+                        await pc.setLocalDescription(offer)
+                except TimeoutError as exc:
+                    raise RingMediaNegotiationError(
+                        "Ring WebRTC local offer preparation timed out"
+                    ) from exc
                 _log.info(
-                    "Ring WebRTC track camera_id=%s kind=%s session=%s media=%s",
+                    "Ring WebRTC offer camera_id=%s kind=%s session=%s codecs=%s",
                     camera_id,
                     camera_kind,
                     session_reference,
-                    _diagnostic_value(track.kind),
+                    summarize_sdp_codecs(pc.localDescription.sdp),
                 )
-                if track.kind == "video" and self._decode_video:
-                    spawn(recv_video(track), "video receiver")
-                elif track.kind == "audio" and self._decode_audio:
-                    spawn(recv_audio(track), "audio receiver")
-
-            @pc.on("connectionstatechange")
-            def _on_connection_state_change() -> None:
-                state = getattr(pc, "connectionState", None)
-                _log.info(
-                    "Ring WebRTC connection camera_id=%s session=%s state=%s",
-                    camera_id,
-                    session_reference,
-                    _diagnostic_value(state),
-                )
-                if state in {"failed", "closed"}:
-                    if state == "failed":
-                        stream_errors.append("WebRTC peer connection failed")
-                    terminal.set()
-
-            @pc.on("iceconnectionstatechange")
-            def _on_ice_connection_state_change() -> None:
-                _log.info(
-                    "Ring WebRTC ICE camera_id=%s session=%s state=%s",
-                    camera_id,
-                    session_reference,
-                    _diagnostic_value(getattr(pc, "iceConnectionState", None)),
-                )
-
-            try:
-                async with asyncio.timeout(WEBRTC_OFFER_TIMEOUT):
-                    offer = await pc.createOffer()
-                    await pc.setLocalDescription(offer)
-            except TimeoutError as exc:
-                raise RingMediaNegotiationError(
-                    "Ring WebRTC local offer preparation timed out"
-                ) from exc
-            _log.info(
-                "Ring WebRTC offer camera_id=%s kind=%s session=%s codecs=%s",
-                camera_id,
-                camera_kind,
-                session_reference,
-                summarize_sdp_codecs(pc.localDescription.sdp),
-            )
-            retain_aiortc_connect_tasks(pc, retain)
-            ring_session_started = True
-            try:
-                async with asyncio.timeout(WEBRTC_SIGNALING_TIMEOUT):
-                    await self._device.generate_async_webrtc_stream(
-                        pc.localDescription.sdp,
-                        session_id,
-                        on_rtc_message,
-                        keep_alive_timeout=300,
-                    )
-            except TimeoutError as exc:
-                raise RingMediaNegotiationError("Ring WebRTC signaling timed out") from exc
-            _log.info(
-                "Ring WebRTC initiated camera_id=%s kind=%s session=%s",
-                camera_id,
-                camera_kind,
-                session_reference,
-            )
-            if not stop.is_set() and not terminal.is_set():
+                retain_aiortc_connect_tasks(pc, retain)
+                ring_session_started = True
                 try:
-                    async with asyncio.timeout(WEBRTC_ANSWER_TIMEOUT):
-                        while (
-                            not answer_applied.is_set()
-                            and not stop.is_set()
-                            and not terminal.is_set()
-                        ):
-                            await asyncio.sleep(INTERCOM_SPEAKER_POLL_SECONDS)
+                    async with asyncio.timeout(WEBRTC_SIGNALING_TIMEOUT):
+                        await self._device.generate_async_webrtc_stream(
+                            pc.localDescription.sdp,
+                            session_id,
+                            on_rtc_message,
+                            keep_alive_timeout=300,
+                        )
                 except TimeoutError as exc:
-                    raise RingMediaNegotiationError("Ring WebRTC answer timed out") from exc
-            if remote_description_error is not None:
-                raise RingMediaNegotiationError(
-                    "Ring WebRTC remote description could not be applied"
-                ) from remote_description_error
-            if stream_errors:
-                raise RuntimeError(stream_errors[-1])
-            audio_sender = getattr(audio_transceiver, "sender", None)
-            if (
-                answer_applied.is_set()
-                and self._microphone_source is not None
-                and audio_sender is not None
-            ):
-                spawn(
-                    manage_intercom_speaker(
-                        self._device,
-                        session_id,
-                        camera_id,
-                        session_reference,
-                        self._microphone_source,
-                        audio_sender,
-                        audio_transceiver,
-                        pc,
-                        stop,
-                        terminal,
-                    ),
-                    "intercom speaker controller",
+                    raise RingMediaNegotiationError("Ring WebRTC signaling timed out") from exc
+                _log.info(
+                    "Ring WebRTC initiated camera_id=%s kind=%s session=%s",
+                    camera_id,
+                    camera_kind,
+                    session_reference,
                 )
-            if answer_applied.is_set() and self._on_encoded_video is not None:
-                spawn(
-                    request_startup_keyframes(
-                        video_transceiver.receiver,
-                        stop,
-                        terminal,
-                    ),
-                    "startup keyframe requests",
-                )
-            while not stop.is_set() and not terminal.is_set():
-                await asyncio.sleep(0.1)
-            if remote_description_error is not None:
-                raise RingMediaNegotiationError(
-                    "Ring WebRTC remote description could not be applied"
-                ) from remote_description_error
-            if stream_errors:
-                raise RuntimeError(stream_errors[-1])
+                if not stop.is_set() and not terminal.is_set():
+                    try:
+                        async with asyncio.timeout(WEBRTC_ANSWER_TIMEOUT):
+                            while (
+                                not answer_applied.is_set()
+                                and not stop.is_set()
+                                and not terminal.is_set()
+                            ):
+                                await asyncio.sleep(INTERCOM_SPEAKER_POLL_SECONDS)
+                    except TimeoutError as exc:
+                        raise RingMediaNegotiationError("Ring WebRTC answer timed out") from exc
+                if remote_description_error is not None:
+                    raise RingMediaNegotiationError(
+                        "Ring WebRTC remote description could not be applied"
+                    ) from remote_description_error
+                if stream_errors:
+                    if stream_errors[-1].startswith("Ring negotiated unsupported"):
+                        raise RingMediaUnsupportedCodecError(stream_errors[-1])
+                    raise RuntimeError(stream_errors[-1])
+                audio_sender = getattr(audio_transceiver, "sender", None)
+                if (
+                    answer_applied.is_set()
+                    and self._microphone_source is not None
+                    and audio_sender is not None
+                ):
+                    spawn(
+                        manage_intercom_speaker(
+                            self._device,
+                            session_id,
+                            camera_id,
+                            session_reference,
+                            self._microphone_source,
+                            audio_sender,
+                            audio_transceiver,
+                            pc,
+                            stop,
+                            terminal,
+                        ),
+                        "intercom speaker controller",
+                    )
+                if answer_applied.is_set() and self._on_encoded_video is not None:
+                    spawn(
+                        request_startup_keyframes(
+                            video_transceiver.receiver,
+                            stop,
+                            terminal,
+                        ),
+                        "startup keyframe requests",
+                    )
+                while not stop.is_set() and not terminal.is_set():
+                    if last_video_at is None and loop.time() >= startup_expires_at:
+                        raise RingMediaProgressError("video_startup_timeout")
+                    if last_video_at is not None and (
+                        loop.time() - last_video_at >= self._video_stall_timeout
+                    ):
+                        raise RingMediaProgressError("video_stalled")
+                    await asyncio.sleep(0.1)
+                if remote_description_error is not None:
+                    raise RingMediaNegotiationError(
+                        "Ring WebRTC remote description could not be applied"
+                    ) from remote_description_error
+                if stream_errors:
+                    if stream_errors[-1].startswith("Ring negotiated unsupported"):
+                        raise RingMediaUnsupportedCodecError(stream_errors[-1])
+                    raise RuntimeError(stream_errors[-1])
+        except TimeoutError as exc:
+            terminal.set()
+            raise RingMediaProgressError("video_startup_timeout") from exc
         finally:
+            terminal.set()
+            if self._on_terminating is not None:
+                try:
+                    self._on_terminating(sys.exception())
+                except Exception:
+                    _log.warning("Media termination callback failed camera_id=%s", camera_id)
             _log.info(
                 "Ring WebRTC stopping camera_id=%s session=%s requested=%s terminal=%s "
                 "errors=%d connection=%s ice=%s",
@@ -1447,44 +1521,58 @@ class RingStreamReceiver:
                 _diagnostic_value(getattr(pc, "connectionState", None)),
                 _diagnostic_value(getattr(pc, "iceConnectionState", None)),
             )
-            if mic_track is not None:
-                with contextlib.suppress(Exception):
-                    mic_track.stop()
 
-            pending = [task for task in tasks if not task.done()]
-            for task in pending:
-                task.cancel()
-            if pending:
-                _, unfinished = await asyncio.wait(
-                    pending,
-                    timeout=RECEIVER_TASK_CLEANUP_TIMEOUT,
-                )
-                if unfinished:
-                    for task in unfinished:
-                        task.cancel()
-                    _log.warning(
-                        "Ring WebRTC task cleanup timed out camera_id=%s session=%s tasks=%d",
-                        camera_id,
-                        session_reference,
-                        len(unfinished),
+            async def cleanup():
+                if mic_track is not None:
+                    with contextlib.suppress(Exception):
+                        mic_track.stop()
+
+                pending = [task for task in tasks if not task.done()]
+                for task in pending:
+                    task.cancel()
+                if pending:
+                    _, unfinished = await asyncio.wait(
+                        pending,
+                        timeout=RECEIVER_TASK_CLEANUP_TIMEOUT,
                     )
+                    if unfinished:
+                        for task in unfinished:
+                            task.cancel()
+                        _log.warning(
+                            "Ring WebRTC task cleanup timed out camera_id=%s session=%s tasks=%d",
+                            camera_id,
+                            session_reference,
+                            len(unfinished),
+                        )
 
-            if ring_session_started:
-                await _run_bounded_cleanup(
-                    self._device.close_webrtc_stream(session_id),
-                    timeout=RECEIVER_CLOSE_TIMEOUT,
-                    label="Ring WebRTC stream close",
-                    camera_id=camera_id,
-                    session_reference=session_reference,
-                )
-            if pc is not None:
-                await _run_bounded_cleanup(
-                    pc.close(),
-                    timeout=RECEIVER_CLOSE_TIMEOUT,
-                    label="WebRTC peer close",
-                    camera_id=camera_id,
-                    session_reference=session_reference,
-                )
+                closers = []
+                if ring_session_started:
+                    closers.append(
+                        asyncio.create_task(
+                            _run_bounded_cleanup(
+                                self._device.close_webrtc_stream(session_id),
+                                timeout=RECEIVER_CLOSE_TIMEOUT,
+                                label="Ring WebRTC stream close",
+                                camera_id=camera_id,
+                                session_reference=session_reference,
+                            )
+                        )
+                    )
+                if pc is not None:
+                    closers.append(
+                        asyncio.create_task(
+                            _run_bounded_cleanup(
+                                pc.close(),
+                                timeout=RECEIVER_CLOSE_TIMEOUT,
+                                label="WebRTC peer close",
+                                camera_id=camera_id,
+                                session_reference=session_reference,
+                            )
+                        )
+                    )
+                await _settle_cleanup([*closers, *pending])
+
+            await _settle_cleanup((asyncio.create_task(cleanup()),))
 
 
 def summarize_sdp_codecs(sdp: object) -> str:

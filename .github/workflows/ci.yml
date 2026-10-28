@@ -13,6 +13,7 @@ jobs:
     timeout-minutes: 20
     env:
       VIRTUAL_ENV: ${{ github.workspace }}/.venv
+      PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: Install GStreamer runtime
@@ -20,6 +21,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends \
             python3-gi \
+            ffmpeg \
             gir1.2-gst-rtsp-server-1.0 \
             gstreamer1.0-plugins-base \
             gstreamer1.0-plugins-good \
@@ -34,23 +36,133 @@ jobs:
           uv lock --check
           uv venv --python /usr/bin/python3 --system-site-packages "$VIRTUAL_ENV"
           uv sync --active --frozen --all-groups
+      - name: Install pinned Node runtime
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "26.12.1"
+          package-manager-cache: false
+      - name: Install pinned npm without lifecycle scripts
+        run: npm install --global --ignore-scripts --no-audit --no-fund npm@12.2.1
+      - name: Verify and build the isolated HAP adapter
+        working-directory: homekit-adapter
+        run: |
+          test "$(node --version)" = "v26.12.1"
+          test "$(npm --version)" = "12.2.1"
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm run check
+          npm run build
+          npm test
       - run: .venv/bin/ruff check --no-cache src tests
       - run: .venv/bin/ruff format --check --no-cache src tests
-      - run: .venv/bin/pytest -q -p no:cacheprovider
-      - run: .venv/bin/pip-audit --local --progress-spinner=off
+      - run: .venv/bin/pytest -q -p pytest_asyncio.plugin -p no:cacheprovider
+      - name: Audit locked runtime and tooling separately
+        run: |
+          mkdir -p audit
+          uv export --frozen --no-dev --no-emit-project --output-file audit/runtime.txt
+          uv export --frozen --all-groups --no-emit-project --output-file audit/all-groups.txt
+          .venv/bin/python - <<'PY'
+          import json
+          import pathlib
+          import subprocess
+          import sys
+
+          reports = {}
+          for group in ("runtime", "all-groups"):
+              path = pathlib.Path(f"audit/{group}.json")
+              result = subprocess.run([
+                  sys.executable, "-m", "pip_audit", "-r", f"audit/{group}.txt",
+                  "--require-hashes", "--disable-pip", "--format=json",
+                  "--output", str(path), "--progress-spinner=off", "--timeout", "20",
+              ], timeout=180)
+              if result.returncode not in (0, 1) or not path.is_file():
+                  raise SystemExit(f"{group} audit did not complete")
+              report = json.loads(path.read_text())
+              if not isinstance(report.get("dependencies"), list) or not report["dependencies"]:
+                  raise SystemExit(f"{group} audit returned invalid data")
+              reports[group] = report["dependencies"]
+
+          # Ring 0.9.14 requires oauthlib<4 and uses LegacyApplicationClient
+          # password/refresh, not an OAuth authorization/token server.
+          # Provider-only exceptions, exact locked version, reviewed 2026-10-28:
+          # https://github.com/oauthlib/oauthlib/security/advisories/GHSA-xpv3-w29h-x7cv
+          # https://github.com/oauthlib/oauthlib/security/advisories/GHSA-3jp2-3mrg-2vxc
+          # Revisit when Ring permits a patched release; raw findings stay intact.
+          allowed = {
+              "PYSEC-2026-4114", "CVE-2026-49265", "GHSA-xpv3-w29h-x7cv",
+              "CVE-2026-49272", "GHSA-3jp2-3mrg-2vxc",
+          }
+          failures = []
+          exceptions = set()
+          runtime_versions = {(d["name"], d["version"]) for d in reports["runtime"]}
+          all_versions = {(d["name"], d["version"]) for d in reports["all-groups"]}
+          if not runtime_versions <= all_versions:
+              raise SystemExit("All-groups audit omitted or changed runtime dependencies")
+          for dependency in reports["runtime"]:
+              for vulnerability in dependency.get("vulns", []):
+                  ids = {vulnerability["id"], *vulnerability.get("aliases", [])}
+                  if (dependency["name"] == "oauthlib" and dependency["version"] == "3.3.1"
+                          and ids and ids <= allowed):
+                      exceptions.add(vulnerability["id"])
+                  else:
+                      failures.append(("runtime", dependency["name"], vulnerability["id"]))
+          # Shared runtime rows are gated above. No exceptions for tool-only code.
+          tooling = [d for d in reports["all-groups"]
+                     if (d["name"], d["version"]) not in runtime_versions]
+          pathlib.Path("audit/tooling-only.json").write_text(json.dumps(tooling, indent=2))
+          for dependency in tooling:
+              for vulnerability in dependency.get("vulns", []):
+                  failures.append(("tooling", dependency["name"], vulnerability["id"]))
+          print("Known provider-only runtime advisories:", sorted(exceptions))
+          if failures:
+              raise SystemExit(f"Unreviewed dependency advisories: {failures}")
+          PY
+      - name: Preserve unfiltered advisory reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: dependency-audit
+          path: audit/
+          retention-days: 14
       - name: Build artifacts
         run: uv build --out-dir dist
       - name: Smoke test wheel
         run: |
           uv venv --python /usr/bin/python3 --system-site-packages .artifact-venv
-          uv pip install --python .artifact-venv/bin/python dist/*.whl
+          uv pip install --python .artifact-venv/bin/python --require-hashes -r audit/runtime.txt
+          uv pip install --python .artifact-venv/bin/python --no-deps dist/*.whl
           .artifact-venv/bin/halo-server --version
           .artifact-venv/bin/python -c \
             "from halo_server.media.ring_media import validate_media_compatibility; validate_media_compatibility()"
           .artifact-venv/bin/python -c \
             "from importlib.resources import files; root = files('halo_server.api'); assert all(root.joinpath(f'protocol/{version}/schema.json').is_file() for version in ('v2', 'v3'))"
+          .artifact-venv/bin/python -c \
+            "from importlib.resources import files; root = files('halo_server.homekit'); assert all(root.joinpath(f'protocol/v1/{name}.json').is_file() for name in ('schema', 'fixtures'))"
       - name: Verify artifact identity
         run: |
           printf 'commit=%s\n' "$GITHUB_SHA" > dist/BUILD-INFO
           sha256sum dist/*.whl dist/*.tar.gz > dist/SHA256SUMS
           cat dist/BUILD-INFO dist/SHA256SUMS
+
+  python-contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12", "3.13", "3.14"]
+    env:
+      PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
+        with:
+          version: "0.11.24"
+          python-version: ${{ matrix.python }}
+          enable-cache: true
+      - run: uv sync --frozen --all-groups
+      - name: Verify portable codec, buffer and authenticated download contracts
+        run: |
+          uv run --frozen pytest -q -p pytest_asyncio.plugin -p no:cacheprovider \
+            tests/test_media_audio.py tests/test_media_buffer.py \
+            tests/test_media_leases.py tests/test_ring_snapshots.py \
+            tests/test_plugin_api.py tests/test_ring_client.py

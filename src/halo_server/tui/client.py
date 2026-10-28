@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import itertools
 import json
 from pathlib import Path
 from typing import Any
 
-from halo_server.api.admin import ADMIN_PROTOCOL_VERSION, MAX_REQUEST_BYTES
+from halo_server.api.admin import (
+    ADMIN_PROTOCOL_VERSION,
+    CLOSE_TIMEOUT,
+    MAX_REQUEST_BYTES,
+    MAX_RESPONSE_BYTES,
+)
 
 DEFAULT_TIMEOUT = 95.0
 
@@ -44,37 +48,52 @@ class AdminClient:
         if len(encoded) > MAX_REQUEST_BYTES:
             raise AdminClientError("request_too_large", "Admin request is too large")
 
+        writer = None
         try:
-            reader, writer = await asyncio.wait_for(
-                asyncio.open_unix_connection(self.socket_path),
-                timeout=self.timeout,
-            )
-        except (OSError, TimeoutError) as exc:
-            raise AdminClientError(
-                "daemon_unavailable",
-                "Halo Server daemon is not available",
-            ) from exc
-
-        try:
-            writer.write(encoded)
-            await asyncio.wait_for(writer.drain(), timeout=self.timeout)
-            response_line = await asyncio.wait_for(reader.readline(), timeout=self.timeout)
+            async with asyncio.timeout(self.timeout):
+                try:
+                    reader, writer = await asyncio.open_unix_connection(
+                        self.socket_path, limit=MAX_RESPONSE_BYTES
+                    )
+                except OSError as exc:
+                    raise AdminClientError(
+                        "daemon_unavailable", "Halo Server daemon is not available"
+                    ) from exc
+                writer.write(encoded)
+                await writer.drain()
+                try:
+                    response_line = await reader.readline()
+                except ValueError as exc:
+                    raise AdminClientError("bad_response", "Daemon response is too large") from exc
         except (OSError, TimeoutError) as exc:
             raise AdminClientError("request_failed", "Admin request did not complete") from exc
         finally:
-            writer.close()
-            with contextlib.suppress(OSError):
-                await writer.wait_closed()
+            if writer is not None:
+                writer.close()
+                try:
+                    async with asyncio.timeout(min(self.timeout, CLOSE_TIMEOUT)):
+                        await writer.wait_closed()
+                except asyncio.CancelledError:
+                    writer.transport.abort()
+                    raise
+                except (OSError, TimeoutError):
+                    writer.transport.abort()
 
-        if not response_line or len(response_line) > MAX_REQUEST_BYTES:
+        if (
+            not response_line
+            or len(response_line) > MAX_RESPONSE_BYTES
+            or not response_line.endswith(b"\n")
+        ):
             raise AdminClientError("bad_response", "Daemon returned an invalid response")
         try:
             response = json.loads(response_line)
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        except (UnicodeDecodeError, json.JSONDecodeError, RecursionError) as exc:
             raise AdminClientError("bad_response", "Daemon returned invalid JSON") from exc
         if (
             not isinstance(response, dict)
-            or response.get("version") != ADMIN_PROTOCOL_VERSION
+            or type(response.get("version")) is not int
+            or response["version"] != ADMIN_PROTOCOL_VERSION
+            or type(response.get("id")) is not int
             or response.get("id") != request_id
             or not isinstance(response.get("ok"), bool)
         ):

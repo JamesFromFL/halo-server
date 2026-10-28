@@ -16,8 +16,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-FILE_STORE_VERSION = 2
-_LEGACY_FILE_STORE_VERSION = 1
+from halo_server.account_scope import new_profile_id, valid_profile_id
+
+FILE_STORE_VERSION = 3
+_LEGACY_FILE_STORE_VERSIONS = {1, 2}
 _UNCHANGED = object()
 _path_locks_guard = threading.Lock()
 _path_locks: dict[Path, threading.RLock] = {}
@@ -50,6 +52,7 @@ class StoredCredentials:
     account_email: str | None
     event_credentials: dict[str, Any] | None
     revision: int
+    profile_id: str | None = None
 
 
 class CredentialStore:
@@ -84,6 +87,7 @@ class CredentialStore:
                     copy.deepcopy(event_credentials) if event_credentials is not None else None
                 ),
                 revision=payload["revision"],
+                profile_id=payload["profile_id"],
             )
 
     def load_token(self) -> dict[str, Any] | None:
@@ -105,27 +109,40 @@ class CredentialStore:
             raise CredentialStoreError("Ring account email must be a string")
         self._update(account_email=email)
 
-    def save_session(self, token: dict[str, Any], email: str) -> None:
-        """Atomically store a validated token and its account identity."""
+    def save_session(
+        self, token: dict[str, Any], email: str, *, profile_id: str | None = None
+    ) -> None:
+        """Store tokens in a profile; explicit login callers supply a fresh ID.
+
+        Omitting the profile preserves an existing same-email credential session
+        for token-maintenance callers. Email alone is not identity evidence for
+        interactive login: RingSessionManager always supplies a new profile.
+        """
         if not isinstance(token, dict):
             raise CredentialStoreError("Ring token must be a JSON object")
         if not isinstance(email, str):
             raise CredentialStoreError("Ring account email must be a string")
-        self._update(ring_token=dict(token), account_email=email)
+        if profile_id is not None and not valid_profile_id(profile_id):
+            raise CredentialStoreError("Invalid Ring credential profile identity")
+        self._update(
+            ring_token=dict(token),
+            account_email=email,
+            profile_id=profile_id if profile_id is not None else _UNCHANGED,
+        )
 
     def save_event_credentials(self, credentials: dict[str, Any]) -> None:
         """Atomically store the FCM registration used for Ring push events."""
         self._update(event_credentials=_validated_json_object(credentials))
 
     def clear_token(self) -> None:
-        self._update(ring_token=None)
+        self._update(ring_token=None, profile_id=None, event_credentials=None)
 
     def clear_account_email(self) -> None:
         self._update(account_email=None)
 
     def clear(self) -> None:
         """Atomically tombstone all stored Ring credentials."""
-        self._update(ring_token=None, account_email=None, event_credentials=None)
+        self._update(ring_token=None, account_email=None, event_credentials=None, profile_id=None)
 
     def assert_revision(self, expected: int) -> None:
         """Reject a decision based on credentials changed by another process."""
@@ -142,6 +159,7 @@ class CredentialStore:
         ring_token: dict[str, Any] | None | object = _UNCHANGED,
         account_email: str | None | object = _UNCHANGED,
         event_credentials: dict[str, Any] | None | object = _UNCHANGED,
+        profile_id: str | None | object = _UNCHANGED,
     ) -> None:
         with self._transaction():
             payload, _ = self._read_locked()
@@ -154,7 +172,15 @@ class CredentialStore:
             if account_email is not _UNCHANGED:
                 if payload["account_email"] != account_email:
                     payload["event_credentials"] = None
+                    if profile_id is _UNCHANGED:
+                        payload["profile_id"] = None
                 payload["account_email"] = account_email
+            if profile_id is not _UNCHANGED:
+                if payload["profile_id"] != profile_id:
+                    payload["event_credentials"] = None
+                payload["profile_id"] = profile_id
+            if payload["ring_token"] is not None and payload["profile_id"] is None:
+                payload["profile_id"] = new_profile_id()
             if event_credentials is not _UNCHANGED:
                 payload["event_credentials"] = event_credentials
             payload["revision"] += 1
@@ -207,6 +233,7 @@ class CredentialStore:
                     "ring_token": None,
                     "account_email": None,
                     "event_credentials": None,
+                    "profile_id": None,
                 },
                 False,
             )
@@ -236,7 +263,8 @@ class CredentialStore:
         version = payload.get("version") if isinstance(payload, dict) else None
         if (
             not isinstance(payload, dict)
-            or version not in {_LEGACY_FILE_STORE_VERSION, FILE_STORE_VERSION}
+            or type(version) is not int
+            or version not in _LEGACY_FILE_STORE_VERSIONS | {FILE_STORE_VERSION}
             or type(payload.get("revision")) is not int
             or payload["revision"] < 0
             or (
@@ -248,14 +276,23 @@ class CredentialStore:
                 and not isinstance(payload.get("account_email"), str)
             )
             or (
-                version == FILE_STORE_VERSION
+                version in {2, FILE_STORE_VERSION}
                 and payload.get("event_credentials") is not None
                 and not isinstance(payload.get("event_credentials"), dict)
             )
         ):
             raise CredentialStoreError("Stored Ring credential file has an invalid format")
+        profile_id = payload.get("profile_id") if version == FILE_STORE_VERSION else None
+        if version == FILE_STORE_VERSION and (
+            (profile_id is not None and not valid_profile_id(profile_id))
+            or (payload.get("ring_token") is not None and profile_id is None)
+            or (payload.get("ring_token") is None and profile_id is not None)
+        ):
+            raise CredentialStoreError("Stored Ring credential file has an invalid format")
+        if version in _LEGACY_FILE_STORE_VERSIONS and payload.get("ring_token") is not None:
+            profile_id = new_profile_id()
         event_credentials = payload.get("event_credentials")
-        if version == FILE_STORE_VERSION and event_credentials is not None:
+        if version in {2, FILE_STORE_VERSION} and event_credentials is not None:
             try:
                 event_credentials = _validated_json_object(event_credentials)
             except CredentialStoreError as exc:
@@ -268,9 +305,10 @@ class CredentialStore:
                 "revision": payload["revision"],
                 "ring_token": payload.get("ring_token"),
                 "account_email": payload.get("account_email"),
-                "event_credentials": (event_credentials if version == FILE_STORE_VERSION else None),
+                "event_credentials": (event_credentials if version != 1 else None),
+                "profile_id": profile_id,
             },
-            version == _LEGACY_FILE_STORE_VERSION,
+            version in _LEGACY_FILE_STORE_VERSIONS,
         )
 
     def _write_locked(self, payload: dict[str, Any]) -> None:

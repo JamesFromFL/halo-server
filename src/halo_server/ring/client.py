@@ -4,14 +4,16 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import copy
 import logging
 import threading
 import time
 from collections.abc import Callable
 from typing import Any
 
+from halo_server.account_scope import AccountScope, new_profile_id
 from halo_server.ring.credentials import CredentialStore, CredentialStoreError
-from halo_server.ring.snapshots import validated_snapshot_bytes
+from halo_server.ring.snapshots import SnapshotHttpSession, SnapshotReader
 
 _log = logging.getLogger(__name__)
 
@@ -27,6 +29,38 @@ class SessionSupersededError(RuntimeError):
     """Raised when newer login, restore, or logout work invalidates an operation."""
 
 
+def _same_device_identity(previous: dict | None, current: dict) -> bool:
+    """Preserve wrappers only with unchanged family-local replacement evidence."""
+    return previous is not None and all(
+        previous.get(key) == current.get(key) for key in ("kind", "location_id", "device_id")
+    )
+
+
+def _validate_device_inventory(rows: object) -> None:
+    """Reject incomplete/ambiguous SDK rows before they remove live devices."""
+    if not isinstance(rows, dict):
+        raise ValueError("Invalid Ring device inventory")
+    seen: set[int] = set()
+    for family in ("stickup_cams", "chimes", "doorbots", "authorized_doorbots", "other"):
+        entries = rows.get(family, {})
+        if not isinstance(entries, dict):
+            raise ValueError("Invalid Ring device inventory")
+        for device_id, row in entries.items():
+            if (
+                type(device_id) is not int
+                or device_id <= 0
+                or device_id in seen
+                or not isinstance(row, dict)
+                or type(row.get("id")) is not int
+                or row["id"] != device_id
+                or not isinstance(row.get("description"), str)
+                or not isinstance(row.get("kind"), str)
+                or not row["kind"]
+            ):
+                raise ValueError("Invalid or ambiguous Ring device inventory")
+            seen.add(device_id)
+
+
 class RingClient:
     """Synchronous owner of one async ring-doorbell session and event loop."""
 
@@ -40,6 +74,10 @@ class RingClient:
         self._loop_thread: threading.Thread | None = None
         self._loop_lock = threading.Lock()
         self._last_device_update_at = 0.0
+        self._inventory_refresh_lock = asyncio.Lock()
+        self._snapshot_transport: SnapshotHttpSession | None = None
+        self._snapshot_reader: SnapshotReader | None = None
+        self._stopped = False
 
     @property
     def ring(self):
@@ -114,12 +152,19 @@ class RingClient:
 
     def submit(self, coro) -> concurrent.futures.Future:
         """Submit work to the Ring event loop without blocking the caller."""
-        return asyncio.run_coroutine_threadsafe(coro, self._ensure_loop())
+        try:
+            return asyncio.run_coroutine_threadsafe(coro, self._ensure_loop())
+        except BaseException:
+            close = getattr(coro, "close", None)
+            if callable(close):
+                close()
+            raise
 
     def stop(self) -> None:
         """Close Ring authentication and terminate the owned event loop."""
         failures: list[Exception] = []
         with self._loop_lock:
+            self._stopped = True
             ring = self._detach_session()
             loop = self._loop
             thread = self._loop_thread
@@ -168,6 +213,8 @@ class RingClient:
 
     def _ensure_loop(self) -> asyncio.AbstractEventLoop:
         with self._loop_lock:
+            if self._stopped:
+                raise RuntimeError("Ring client is stopped")
             thread_alive = self._loop_thread is not None and self._loop_thread.is_alive()
             loop_ready = (
                 self._loop is not None
@@ -219,7 +266,7 @@ class RingClient:
             loop.close()
 
     def _run(self, coro) -> Any:
-        future = asyncio.run_coroutine_threadsafe(coro, self._ensure_loop())
+        future = self.submit(coro)
         try:
             return future.result(timeout=DEFAULT_CALL_TIMEOUT)
         except concurrent.futures.TimeoutError:
@@ -237,18 +284,25 @@ class RingClient:
         self._authenticated = False
         self._ring = None
         self._pending_auth_token = None
-        auth = Auth(APP_USER_AGENT, None, self._capture_auth_token)
+        transport = SnapshotHttpSession()
+        auth = None
         try:
+            auth = Auth(
+                APP_USER_AGENT,
+                None,
+                self._capture_auth_token,
+                http_client_session=transport,
+            )
             token = await auth.async_fetch_token(username, password, otp_code)
             if self._pending_auth_token is None:
                 self._capture_auth_token(token)
             ring = Ring(auth)
-            await ring.async_update_data()
-            self._finish_authentication(auth, ring)
+            await self._async_update_inventory(ring)
+            self._finish_authentication(auth, ring, transport)
             self._last_device_update_at = time.monotonic()
         except BaseException:
             self._pending_auth_token = None
-            await self._close_auth(auth)
+            await self._close_auth(auth, transport)
             raise
 
     async def _async_authenticate_from_token(self, token: dict[str, Any]) -> None:
@@ -257,31 +311,41 @@ class RingClient:
         self._authenticated = False
         self._ring = None
         self._pending_auth_token = None
-        auth = Auth(APP_USER_AGENT, token, self._capture_auth_token)
+        transport = SnapshotHttpSession()
+        auth = None
         try:
+            auth = Auth(
+                APP_USER_AGENT,
+                token,
+                self._capture_auth_token,
+                http_client_session=transport,
+            )
             ring = Ring(auth)
-            await ring.async_update_data()
-            self._finish_authentication(auth, ring)
+            await self._async_update_inventory(ring)
+            self._finish_authentication(auth, ring, transport)
             self._last_device_update_at = time.monotonic()
         except BaseException:
             self._pending_auth_token = None
-            await self._close_auth(auth)
+            await self._close_auth(auth, transport)
             raise
 
     def _capture_auth_token(self, token: dict[str, Any]) -> None:
         self._pending_auth_token = dict(token)
 
-    def _finish_authentication(self, auth, ring) -> None:
+    def _finish_authentication(self, auth, ring, transport: SnapshotHttpSession) -> None:
+        if self._stopped:
+            raise SessionSupersededError("Ring client was stopped during authentication")
         auth.token_updater = self._capture_auth_token
         self._ring = ring
         self._authenticated = True
+        self._snapshot_transport = transport
+        self._snapshot_reader = SnapshotReader(ring)
 
     async def _async_refresh_session_token(self) -> None:
         if self._ring is None:
             raise RuntimeError("Not signed in to Ring")
         await self._ring.auth.async_refresh_tokens()
-        await self._ring.async_update_data()
-        self._last_device_update_at = time.monotonic()
+        await self._async_refresh_devices(None, -1)
 
     async def _async_refresh_devices(
         self,
@@ -290,9 +354,10 @@ class RingClient:
     ) -> list:
         if self._ring is None:
             return []
-        if time.monotonic() - self._last_device_update_at > max_age_seconds:
-            await self._ring.async_update_data()
-            self._last_device_update_at = time.monotonic()
+        async with self._inventory_refresh_lock:
+            if time.monotonic() - self._last_device_update_at > max_age_seconds:
+                await self._async_update_inventory(self._ring)
+                self._last_device_update_at = time.monotonic()
         devices = list(self._ring.devices().all_devices)
         if families is None:
             return devices
@@ -300,24 +365,60 @@ class RingClient:
             device for device in devices if (getattr(device, "family", None) or "other") in families
         ]
 
+    @staticmethod
+    async def _async_update_inventory(ring) -> None:
+        """Stage the pinned SDK's whole refresh before replacing its cached view.
+
+        SDK 0.9.14 never rebuilds RingDevices; clearing it after update_data is
+        too late because update_groups already dereferences removed wrappers.
+        A detached view also prevents a failed dings/groups step from exposing
+        an authoritative-looking partial inventory to the service.
+        """
+        from importlib.metadata import version
+
+        from ring_doorbell.ring import Ring
+
+        if not isinstance(ring, Ring):
+            # Test/custom clients implementing the public update interface.
+            await ring.async_update_data()
+            return
+        if version("ring-doorbell") != "0.9.14":
+            raise RuntimeError("Ring inventory adapter requires ring-doorbell 0.9.14")
+        staged = copy.copy(ring)
+        staged._devices = None
+        await staged.async_update_data()
+        _validate_device_inventory(staged.devices_data)
+        refreshed = staged.devices()
+        previous = ring.devices()
+        old_rows = ring.devices_data
+        for family in refreshed:
+            old_devices = {device.id: device for device in previous[family]}
+            for index, device in enumerate(refreshed[family]):
+                old = old_devices.get(device.id)
+                old_row = old_rows.get(family, {}).get(device.id)
+                row = staged.devices_data[family][device.id]
+                if old is not None and _same_device_identity(old_row, row):
+                    refreshed[family][index] = old
+                else:
+                    device._ring = ring
+        # SDK lookup and family lists must agree, including shared doorbells.
+        refreshed._all_devices = {
+            device.id: device for family in refreshed for device in refreshed[family]
+        }
+        # No awaits after this point: publish only the fully successful refresh.
+        ring.devices_data = staged.devices_data
+        ring.dings_data = staged.dings_data
+        ring.groups_data = staged.groups_data
+        ring.session = staged.session
+        ring.session_refresh_time = staged.session_refresh_time
+        ring._devices = refreshed
+
     async def _async_snapshot_bytes(self, device, *, fresh: bool = False) -> bytes | None:
-        if fresh:
-            try:
-                snapshot = await device.async_get_snapshot(retries=2, delay=1)
-                if image := validated_snapshot_bytes(snapshot):
-                    return image
-            except Exception as exc:
-                _log.debug("Fresh snapshot fetch failed for %s: %s", device.name, exc)
-
-        try:
-            from ring_doorbell.const import SNAPSHOT_ENDPOINT
-
-            response = await self._ring.async_query(SNAPSHOT_ENDPOINT.format(device.id))
-            if response.status_code == 200:
-                return validated_snapshot_bytes(response.content)
-        except Exception as exc:
-            _log.debug("Cached snapshot fetch failed for %s: %s", device.name, exc)
-        return None
+        if self._ring is None:
+            return None
+        if self._snapshot_reader is None:
+            self._snapshot_reader = SnapshotReader(self._ring)
+        return await self._snapshot_reader.fetch(device, fresh=fresh)
 
     async def _async_close(self) -> None:
         ring = self._detach_session()
@@ -333,20 +434,36 @@ class RingClient:
         self._token_updater = None
         return ring
 
-    @staticmethod
-    async def _close_ring_auth(ring) -> None:
-        await ring.auth.async_close()
+    async def _close_ring_auth(self, ring) -> None:
+        reader, transport = self._snapshot_reader, self._snapshot_transport
+        self._snapshot_reader = None
+        self._snapshot_transport = None
+        try:
+            if reader is not None:
+                await reader.close()
+        finally:
+            try:
+                await ring.auth.async_close()
+            finally:
+                if transport is not None:
+                    await transport.close()
 
     @staticmethod
-    async def _close_auth(auth) -> None:
+    async def _close_auth(auth, transport: SnapshotHttpSession | None = None) -> None:
         try:
-            await auth.async_close()
+            if auth is not None:
+                await auth.async_close()
         except Exception as exc:
             _log.debug("Ring auth close failed: %s", exc)
+        finally:
+            if transport is not None:
+                await transport.close()
 
 
 class RingSessionManager:
     """Serialize and publish one active Halo Server Ring client."""
+
+    supports_account_admission = True
 
     def __init__(
         self,
@@ -360,6 +477,8 @@ class RingSessionManager:
         self._generation = 0
         self._client: RingClient | None = None
         self._account_email: str | None = None
+        self._active_scope: AccountScope | None = None
+        self._pending_clients: dict[int, RingClient] = {}
 
     @property
     def active_client(self) -> RingClient | None:
@@ -370,6 +489,23 @@ class RingSessionManager:
     def account_email(self) -> str | None:
         with self._lock:
             return self._account_email
+
+    @property
+    def active_scope(self) -> AccountScope | None:
+        with self._lock:
+            return self._active_scope
+
+    @property
+    def active_context(self) -> tuple[RingClient, AccountScope] | None:
+        """Read current client and publication authority in one transaction."""
+        with self._lock:
+            if self._client is None or self._active_scope is None:
+                return None
+            return self._client, self._active_scope
+
+    def is_current(self, client: RingClient, scope: AccountScope) -> bool:
+        with self._lock:
+            return self._client is client and self._active_scope == scope
 
     def has_stored_credentials(self) -> bool:
         """Return whether a cached Ring session is available for restoration."""
@@ -399,32 +535,43 @@ class RingSessionManager:
         email: str,
         password: str,
         otp_code: str | None = None,
+        *,
+        admission: Callable[[], bool] | None = None,
     ) -> RingClient:
-        generation = self._begin_operation()
+        generation = self._begin_operation(admission)
         candidate = self._client_factory()
         try:
+            self._register_candidate(candidate, generation)
             candidate.authenticate(email, password, otp_code)
-            previous = self._publish(candidate, email, generation)
+            # No canonical Ring principal is exposed by the current adapter.
+            # Even matching email cannot prove interactive account continuity.
+            previous = self._publish(candidate, email, generation, new_profile_id())
         except BaseException:
             _stop_quietly(candidate)
             raise
+        finally:
+            self._remove_candidate(candidate, generation)
         _stop_quietly(previous)
         return candidate
 
-    def restore(self) -> RingClient | None:
+    def restore(self, *, admission: Callable[[], bool] | None = None) -> RingClient | None:
+        generation = self._begin_operation(admission)
         stored = self._credentials.load()
+        with self._lock:
+            if generation != self._generation:
+                return None
         if stored.ring_token is None:
             return None
-
-        generation = self._begin_operation()
         candidate = self._client_factory()
         try:
+            self._register_candidate(candidate, generation)
             candidate.authenticate_from_token(stored.ring_token)
             self._credentials.assert_revision(stored.revision)
             previous = self._publish(
                 candidate,
                 stored.account_email or "",
                 generation,
+                stored.profile_id,
             )
         except CredentialStoreError:
             _stop_quietly(candidate)
@@ -440,6 +587,11 @@ class RingSessionManager:
                     type(exc).__name__,
                 )
             return None
+        except BaseException:
+            _stop_quietly(candidate)
+            raise
+        finally:
+            self._remove_candidate(candidate, generation)
         _stop_quietly(previous)
         return candidate
 
@@ -447,28 +599,65 @@ class RingSessionManager:
         clear_error: BaseException | None = None
         with self._lock:
             self._generation += 1
+            pending = self._take_pending_locked()
             client = self._client
             self._client = None
             self._account_email = None
+            self._active_scope = None
             try:
                 self._credentials.clear()
             except BaseException as exc:
                 clear_error = exc
         _stop_quietly(client)
+        failures = _stop_pending_clients(pending, exclude=client)
         if clear_error is not None:
             raise clear_error
+        _raise_stop_failures(failures)
 
     def shutdown(self) -> None:
         with self._lock:
             self._generation += 1
+            pending = self._take_pending_locked()
             client = self._client
             self._client = None
             self._account_email = None
-        if client is not None:
-            client.stop()
+            self._active_scope = None
+        failures = _stop_pending_clients([*pending, *([client] if client is not None else [])])
+        _raise_stop_failures(failures)
 
-    def _begin_operation(self) -> int:
+    def cancel_pending_operations(self) -> None:
+        """Retire authentication attempts without changing active authority.
+
+        Stop is requested outside the manager lock so an async auth cleanup can
+        finish its generation-checked persistence callback without deadlocking.
+        A factory that has not returned yet is rejected before authentication.
+        """
         with self._lock:
+            self._generation += 1
+            pending = self._take_pending_locked()
+            active = self._client
+        _raise_stop_failures(_stop_pending_clients(pending, exclude=active))
+
+    def _take_pending_locked(self) -> list[RingClient]:
+        pending = list(self._pending_clients.values())
+        self._pending_clients.clear()
+        return pending
+
+    def _register_candidate(self, candidate: RingClient, generation: int) -> None:
+        with self._lock:
+            if generation != self._generation:
+                raise SessionSupersededError("Ring authentication admission was superseded")
+            self._pending_clients[generation] = candidate
+
+    def _remove_candidate(self, candidate: RingClient, generation: int) -> None:
+        with self._lock:
+            if self._pending_clients.get(generation) is candidate:
+                self._pending_clients.pop(generation)
+
+    def _begin_operation(self, admission: Callable[[], bool] | None = None) -> int:
+        with self._lock:
+            if admission is not None and not admission():
+                raise SessionSupersededError("Ring account operation is no longer admitted")
             self._generation += 1
             return self._generation
 
@@ -477,21 +666,24 @@ class RingSessionManager:
         candidate: RingClient,
         email: str,
         generation: int,
+        profile_id: str,
     ) -> RingClient | None:
         with self._lock:
             if generation != self._generation:
                 raise SessionSupersededError("A newer Ring login, restore, or logout completed")
+            scope = AccountScope(profile_id, generation)
 
             def persist(token: dict[str, Any]) -> None:
                 with self._lock:
                     if generation != self._generation and self._client is not candidate:
                         raise SessionSupersededError("Ring session was superseded")
-                    self._credentials.save_session(token, email)
+                    self._credentials.save_session(token, email, profile_id=profile_id)
 
             candidate.activate_token_persistence(persist)
             previous = self._client
             self._client = candidate
             self._account_email = email or None
+            self._active_scope = scope
             return previous
 
     def _clear_rejected_if_current(self, generation: int) -> None:
@@ -501,6 +693,7 @@ class RingSessionManager:
                 return
             self._credentials.clear()
             self._account_email = None
+            self._active_scope = None
 
 
 def _stop_quietly(client: RingClient | None) -> None:
@@ -510,6 +703,27 @@ def _stop_quietly(client: RingClient | None) -> None:
         client.stop()
     except Exception as exc:
         _log.debug("Failed to stop discarded Ring client: %s", exc)
+
+
+def _stop_pending_clients(clients: list[RingClient], *, exclude=None) -> list[Exception]:
+    failures = []
+    seen: set[int] = set()
+    for client in clients:
+        if client is exclude or id(client) in seen:
+            continue
+        seen.add(id(client))
+        try:
+            client.stop()
+        except Exception as exc:
+            failures.append(exc)
+    return failures
+
+
+def _raise_stop_failures(failures: list[Exception]) -> None:
+    if len(failures) == 1:
+        raise failures[0]
+    if failures:
+        raise ExceptionGroup("Ring pending session shutdown failed", failures)
 
 
 def is_ring_session_rejected(exc: Exception) -> bool:

@@ -1,3 +1,5 @@
+import asyncio
+import copy
 import threading
 from types import SimpleNamespace
 
@@ -16,7 +18,21 @@ from halo_server.ring.credentials import (
     CredentialStoreError,
     CredentialSupersededError,
 )
-from halo_server.ring.snapshots import MAX_SNAPSHOT_BYTES
+from halo_server.ring.snapshots import MAX_SNAPSHOT_BYTES, SnapshotHttpSession
+
+
+class _FakeSnapshotSession:
+    closed = False
+
+    async def close(self):
+        self.closed = True
+
+
+def _snapshot_fake_ring(ring):
+    ring.auth = SimpleNamespace(
+        http_client_session=SnapshotHttpSession(session=_FakeSnapshotSession())
+    )
+    return ring
 
 
 class _FakeDevices:
@@ -93,7 +109,8 @@ async def test_explicit_auth_defers_token_until_session_is_published(monkeypatch
     auth_instances = []
 
     class FakeAuth:
-        def __init__(self, _user_agent, _token, token_updater):
+        def __init__(self, _user_agent, _token, token_updater, *, http_client_session):
+            self.http_client_session = http_client_session
             self.token_updater = token_updater
             self.closed = False
             auth_instances.append(self)
@@ -131,6 +148,7 @@ async def test_explicit_auth_defers_token_until_session_is_published(monkeypatch
     assert persisted[-1] == {"refresh_token": "refreshed"}
     await client._async_close()
     assert auth_instances[0].closed is True
+    assert auth_instances[0].http_client_session.closed is True
 
 
 @pytest.mark.asyncio
@@ -138,7 +156,8 @@ async def test_explicit_auth_closes_auth_when_two_factor_is_required(monkeypatch
     auth_instances = []
 
     class FakeAuth:
-        def __init__(self, _user_agent, _token, _token_updater):
+        def __init__(self, _user_agent, _token, _token_updater, *, http_client_session):
+            self.http_client_session = http_client_session
             self.closed = False
             auth_instances.append(self)
 
@@ -156,6 +175,7 @@ async def test_explicit_auth_closes_auth_when_two_factor_is_required(monkeypatch
 
     assert auth_instances[0].closed is True
     assert client.is_authenticated is False
+    assert auth_instances[0].http_client_session.closed is True
 
 
 @pytest.mark.asyncio
@@ -163,7 +183,8 @@ async def test_cached_auth_closes_auth_when_account_validation_fails(monkeypatch
     auth_instances = []
 
     class FakeAuth:
-        def __init__(self, _user_agent, _token, _token_updater):
+        def __init__(self, _user_agent, _token, _token_updater, *, http_client_session):
+            self.http_client_session = http_client_session
             self.closed = False
             auth_instances.append(self)
 
@@ -186,6 +207,7 @@ async def test_cached_auth_closes_auth_when_account_validation_fails(monkeypatch
 
     assert auth_instances[0].closed is True
     assert client.is_authenticated is False
+    assert auth_instances[0].http_client_session.closed is True
 
 
 @pytest.mark.asyncio
@@ -207,7 +229,7 @@ async def test_device_refresh_uses_ttl_and_family_filter(monkeypatch):
             return _FakeDevices(devices)
 
     client = RingClient()
-    client._ring = FakeRing()
+    client._ring = _snapshot_fake_ring(FakeRing())
     client._authenticated = True
     client._last_device_update_at = 0
     monkeypatch.setattr("halo_server.ring.client.time.monotonic", lambda: 100.0)
@@ -235,7 +257,7 @@ async def test_cached_snapshot_does_not_request_a_fresh_camera_image(monkeypatch
             return SimpleNamespace(status_code=200, content=b"\xff\xd8cached\xff\xd9")
 
     client = RingClient()
-    client._ring = FakeRing()
+    client._ring = _snapshot_fake_ring(FakeRing())
     monkeypatch.setattr(
         "ring_doorbell.const.SNAPSHOT_ENDPOINT",
         "/clients_api/snapshots/image/{0}",
@@ -263,7 +285,7 @@ async def test_fresh_snapshot_returns_live_jpeg_without_cached_request():
             raise AssertionError("valid fresh snapshot must not use cached endpoint")
 
     client = RingClient()
-    client._ring = FakeRing()
+    client._ring = _snapshot_fake_ring(FakeRing())
 
     assert await client._async_snapshot_bytes(FakeDevice(), fresh=True) == (
         b"\xff\xd8fresh\xff\xd9"
@@ -307,7 +329,7 @@ async def test_fresh_snapshot_falls_back_to_cached_jpeg(monkeypatch, fresh_resul
             return SimpleNamespace(status_code=200, content=b"\xff\xd8cached\xff\xd9")
 
     client = RingClient()
-    client._ring = FakeRing()
+    client._ring = _snapshot_fake_ring(FakeRing())
     monkeypatch.setattr(
         "ring_doorbell.const.SNAPSHOT_ENDPOINT",
         "/clients_api/snapshots/image/{0}",
@@ -345,7 +367,7 @@ async def test_snapshot_rejects_invalid_cached_response(monkeypatch, cached_resu
             return cached_result
 
     client = RingClient()
-    client._ring = FakeRing()
+    client._ring = _snapshot_fake_ring(FakeRing())
     monkeypatch.setattr(
         "ring_doorbell.const.SNAPSHOT_ENDPOINT",
         "/clients_api/snapshots/image/{0}",
@@ -665,3 +687,420 @@ def _capture_error(errors, operation):
         operation()
     except BaseException as exc:
         errors.append(exc)
+
+
+@pytest.mark.parametrize("retire", ["shutdown", "logout"])
+def test_restore_load_is_admitted_before_shutdown_or_logout(tmp_path, retire):
+    store = CredentialStore(tmp_path / "credentials.json")
+    store.save_session({"refresh_token": "stored"}, "person@example.com")
+    stored = store.load()
+    entered = threading.Event()
+    release = threading.Event()
+
+    def blocked_load():
+        entered.set()
+        assert release.wait(2)
+        return stored
+
+    store.load = blocked_load
+    created = []
+    manager = RingSessionManager(store, client_factory=lambda: created.append(True))
+    results = []
+    worker = threading.Thread(target=lambda: results.append(manager.restore()))
+    worker.start()
+    assert entered.wait(2)
+    getattr(manager, retire)()
+    release.set()
+    worker.join(2)
+    assert not worker.is_alive()
+    assert results == [None]
+    assert not created
+    assert manager.active_context is None
+    assert manager.active_scope is None
+
+
+def test_scope_survives_refresh_failed_replacement_and_restart_but_not_interactive_login(tmp_path):
+    path = tmp_path / "credentials.json"
+    first = _ManagedClient("initial")
+    failed = _ManagedClient("failed", login_error=AuthenticationError("rejected"))
+    replacement = _ManagedClient("replacement")
+    store = CredentialStore(path)
+    manager = RingSessionManager(store, client_factory=_factory(first, failed, replacement))
+    manager.login("same@example.com", "password")
+    client, scope = manager.active_context
+    assert client is first
+    first.persist({"refresh_token": "refreshed"})
+    assert store.load().profile_id == scope.profile_id
+    with pytest.raises(AuthenticationError):
+        manager.login("same@example.com", "wrong")
+    assert manager.is_current(first, scope)
+    assert manager.active_scope == scope
+    manager.login("same@example.com", "password")
+    second_scope = manager.active_scope
+    assert second_scope.profile_id != scope.profile_id
+    assert not manager.is_current(first, scope)
+    manager.shutdown()
+    assert not manager.is_current(replacement, second_scope)
+    restored = _ManagedClient("restored")
+    restarted = RingSessionManager(CredentialStore(path), client_factory=lambda: restored)
+    restarted.restore()
+    assert restarted.active_scope.profile_id == second_scope.profile_id
+    assert restarted.is_current(restored, restarted.active_scope)
+
+
+def _real_sdk_ring(rows):
+    from ring_doorbell import Ring
+    from ring_doorbell.const import DEVICES_ENDPOINT, DINGS_ENDPOINT
+
+    ring = Ring(SimpleNamespace())
+    ring.session = {}
+    state = SimpleNamespace(fail=None, group_entered=None, group_release=None)
+
+    async def query(url, **_kwargs):
+        if url == DEVICES_ENDPOINT:
+            payload = copy.deepcopy({"stickup_cams": rows})
+        elif url == DINGS_ENDPOINT:
+            if state.fail == "dings":
+                raise RuntimeError("synthetic dings failure")
+            payload = []
+        else:
+            if state.group_entered is not None:
+                state.group_entered.set()
+                await state.group_release.wait()
+            if state.fail == "groups":
+                raise RuntimeError("synthetic groups failure")
+            payload = {"device_groups": []}
+        return SimpleNamespace(json=lambda: payload)
+
+    ring._async_query = query
+    return ring, state
+
+
+def _camera_row(device_id, **overrides):
+    return {
+        "id": device_id,
+        "description": f"Camera {device_id}",
+        "kind": "stickup_cam_mini",
+        "location_id": "location",
+        "device_id": f"hardware-{device_id}",
+        **overrides,
+    }
+
+
+@pytest.mark.asyncio
+async def test_real_sdk_inventory_add_remove_preserves_surviving_wrapper():
+    rows = [_camera_row(1)]
+    ring, _state = _real_sdk_ring(rows)
+    client = RingClient()
+    client._ring = ring
+    first = (await client._async_refresh_devices(None, -1))[0]
+    first._health_attrs["saved"] = "health state"
+    rows.append(_camera_row(2))
+    rows[0]["description"] = "Renamed"
+    updated = await client._async_refresh_devices(None, -1)
+    assert [device.id for device in updated] == [1, 2]
+    assert updated[0] is first
+    assert first.name == "Renamed"
+    assert first._health_attrs["saved"] == "health state"
+    second = updated[1]
+    assert second._ring is ring
+    rows.pop(0)
+    assert await client._async_refresh_devices(None, -1) == [second]
+    assert ring.devices().get_device(2) is second
+    assert client.get_device_by_id(1) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "change", [{"kind": "different"}, {"location_id": "moved"}, {"device_id": "new"}]
+)
+async def test_real_sdk_replacement_evidence_allocates_new_wrapper(change):
+    rows = [_camera_row(1)]
+    ring, _state = _real_sdk_ring(rows)
+    client = RingClient()
+    client._ring = ring
+    first = (await client._async_refresh_devices(None, -1))[0]
+    rows[0].update(change)
+    replacement = (await client._async_refresh_devices(None, -1))[0]
+    assert replacement is not first
+    assert replacement._ring is ring
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["dings", "groups"])
+async def test_real_sdk_partial_refresh_cannot_publish_removed_devices(failure):
+    rows = [_camera_row(1)]
+    ring, state = _real_sdk_ring(rows)
+    client = RingClient()
+    client._ring = ring
+    first = (await client._async_refresh_devices(None, -1))[0]
+    last_update = client._last_device_update_at
+    rows[:] = [_camera_row(2)]
+    state.fail = failure
+    with pytest.raises(RuntimeError, match="synthetic"):
+        await client._async_refresh_devices(None, -1)
+    assert client.all_devices == [first]
+    assert first.name == "Camera 1"
+    assert client._last_device_update_at == last_update
+    state.fail = None
+    assert [device.id for device in await client._async_refresh_devices(None, -1)] == [2]
+
+
+@pytest.mark.asyncio
+async def test_real_sdk_inflight_and_cancelled_refresh_keep_authoritative_old_view():
+    rows = [_camera_row(1)]
+    ring, state = _real_sdk_ring(rows)
+    client = RingClient()
+    client._ring = ring
+    first = (await client._async_refresh_devices(None, -1))[0]
+    rows[:] = [_camera_row(2)]
+    state.group_entered = asyncio.Event()
+    state.group_release = asyncio.Event()
+    updating = asyncio.create_task(client._async_refresh_devices(None, -1))
+    await state.group_entered.wait()
+    assert client.all_devices == [first]
+    assert first.name == "Camera 1"
+    updating.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await updating
+    assert client.all_devices == [first]
+    state.group_release.set()
+    assert [device.id for device in await client._async_refresh_devices(None, -1)] == [2]
+
+
+@pytest.mark.asyncio
+async def test_real_sdk_malformed_inventory_does_not_replace_last_good_view():
+    rows = [_camera_row(1)]
+    ring, _state = _real_sdk_ring(rows)
+    client = RingClient()
+    client._ring = ring
+    first = (await client._async_refresh_devices(None, -1))[0]
+    rows[:] = [_camera_row(2, kind=None)]
+    with pytest.raises(ValueError, match="inventory"):
+        await client._async_refresh_devices(None, -1)
+    assert client.all_devices == [first]
+
+
+@pytest.mark.asyncio
+async def test_client_close_joins_snapshot_before_auth_and_external_transport_close():
+    entered = asyncio.Event()
+    order = []
+
+    class Session:
+        closed = False
+
+        async def close(self):
+            self.closed = True
+            order.append("transport")
+
+    class Device:
+        id = 42
+
+        async def async_get_snapshot(self, **_kwargs):
+            entered.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                order.append("snapshot")
+
+    async def close_auth():
+        order.append("auth")
+
+    transport = SnapshotHttpSession(session=Session())
+    client = RingClient()
+    client._snapshot_transport = transport
+    client._ring = SimpleNamespace(
+        auth=SimpleNamespace(http_client_session=transport, async_close=close_auth)
+    )
+    task = asyncio.create_task(client._async_snapshot_bytes(Device(), fresh=True))
+    await entered.wait()
+    await client._async_close()
+    assert task.cancelled()
+    assert transport.closed
+    assert order == ["snapshot", "auth", "transport"]
+    assert client.ring is None
+    assert client._snapshot_reader is None
+
+
+@pytest.mark.parametrize("operation", ["cancel_pending_operations", "shutdown", "logout"])
+def test_pending_auth_is_stopped_without_retiring_existing_scope(tmp_path, operation):
+    entered = threading.Event()
+    stopped = threading.Event()
+    active = _ManagedClient("active")
+
+    class BlockedClient(_ManagedClient):
+        def authenticate(self, *_args):
+            entered.set()
+            assert stopped.wait(2)
+            raise SessionSupersededError("stopped during auth")
+
+        def stop(self):
+            super().stop()
+            stopped.set()
+
+    pending = BlockedClient("pending")
+    store = CredentialStore(tmp_path / "credentials.json")
+    manager = RingSessionManager(store, client_factory=_factory(active, pending))
+    manager.login("first@example.com", "password")
+    original_scope = manager.active_scope
+    errors = []
+    worker = threading.Thread(
+        target=lambda: _capture_error(
+            errors, lambda: manager.login("second@example.com", "password")
+        )
+    )
+    worker.start()
+    assert entered.wait(2)
+    getattr(manager, operation)()
+    worker.join(2)
+    assert not worker.is_alive()
+    assert pending.stopped
+    assert not manager._pending_clients
+    assert errors and isinstance(errors[0], SessionSupersededError)
+    if operation == "cancel_pending_operations":
+        assert manager.is_current(active, original_scope)
+        assert not active.stopped
+        active.persist({"refresh_token": "still-valid"})
+        assert store.load().profile_id == original_scope.profile_id
+    else:
+        assert manager.active_context is None
+        assert active.stopped
+
+
+def test_cancel_after_factory_starts_prevents_authentication_admission(tmp_path):
+    entered = threading.Event()
+    release = threading.Event()
+
+    class Client(_ManagedClient):
+        auth_calls = 0
+
+        def authenticate(self, *_args):
+            self.auth_calls += 1
+
+    candidate = Client("late")
+
+    def factory():
+        entered.set()
+        assert release.wait(2)
+        return candidate
+
+    manager = RingSessionManager(
+        CredentialStore(tmp_path / "credentials.json"), client_factory=factory
+    )
+    errors = []
+    worker = threading.Thread(
+        target=lambda: _capture_error(
+            errors, lambda: manager.login("person@example.com", "password")
+        )
+    )
+    worker.start()
+    assert entered.wait(2)
+    manager.cancel_pending_operations()
+    release.set()
+    worker.join(2)
+    assert not worker.is_alive()
+    assert candidate.auth_calls == 0
+    assert candidate.stopped
+    assert isinstance(errors[0], SessionSupersededError)
+
+
+def test_stopped_client_cannot_restart_loop_for_late_auth_or_submission():
+    client = RingClient()
+    client.stop()
+    with pytest.raises(RuntimeError, match="stopped"):
+        client.authenticate("person@example.com", "password")
+    with pytest.raises(RuntimeError, match="stopped"):
+        client.authenticate_from_token({"refresh_token": "late"})
+    coroutine = asyncio.sleep(0)
+    with pytest.raises(RuntimeError, match="stopped"):
+        client.submit(coroutine)
+    assert coroutine.cr_frame is None
+    assert client._loop_thread is None
+
+
+@pytest.mark.parametrize("suppress_cancellation", [False, True])
+def test_cancel_pending_restore_closes_real_client_loop_and_owned_auth_transport(
+    tmp_path, monkeypatch, suppress_cancellation
+):
+    entered = threading.Event()
+    auth_instances = []
+
+    class Auth:
+        def __init__(self, *_args, http_client_session):
+            self.http_client_session = http_client_session
+            self.closed = False
+            auth_instances.append(self)
+
+        async def async_close(self):
+            self.closed = True
+
+    class Ring:
+        def __init__(self, auth):
+            self.auth = auth
+
+        async def async_update_data(self):
+            entered.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                if not suppress_cancellation:
+                    raise
+
+    monkeypatch.setattr(ring_doorbell, "Auth", Auth)
+    monkeypatch.setattr(ring_doorbell, "Ring", Ring)
+    store = CredentialStore(tmp_path / "credentials.json")
+    store.save_session({"refresh_token": "stored"}, "person@example.com")
+    before = store.load()
+    candidate = RingClient()
+    manager = RingSessionManager(store, client_factory=lambda: candidate)
+    result = []
+    worker = threading.Thread(target=lambda: result.append(manager.restore()))
+    worker.start()
+    assert entered.wait(2)
+    manager.cancel_pending_operations()
+    worker.join(2)
+    assert not worker.is_alive()
+    assert result == [None]
+    assert candidate._loop_thread is None
+    assert auth_instances[0].closed
+    assert auth_instances[0].http_client_session.closed
+    assert not manager._pending_clients
+    assert manager.active_scope is None
+    assert store.load() == before
+
+
+@pytest.mark.parametrize("operation", ["login", "restore"])
+def test_delayed_worker_cannot_admit_account_operation_after_stop(tmp_path, operation):
+    worker_dispatched = threading.Event()
+    worker_execute = threading.Event()
+    stopping = threading.Event()
+    created = []
+    manager = RingSessionManager(
+        CredentialStore(tmp_path / "credentials.json"),
+        client_factory=lambda: created.append(True),
+    )
+    errors = []
+
+    def delayed_worker():
+        worker_dispatched.set()
+        assert worker_execute.wait(2)
+        kwargs = {"admission": lambda: not stopping.is_set()}
+
+        def operation_call():
+            if operation == "login":
+                return manager.login("person@example.com", "password", **kwargs)
+            return manager.restore(**kwargs)
+
+        _capture_error(errors, operation_call)
+
+    worker = threading.Thread(target=delayed_worker)
+    worker.start()
+    assert worker_dispatched.wait(2)
+    stopping.set()
+    manager.cancel_pending_operations()
+    worker_execute.set()
+    worker.join(2)
+    assert not worker.is_alive()
+    assert not created
+    assert errors and isinstance(errors[0], SessionSupersededError)
+    assert manager.active_context is None

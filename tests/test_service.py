@@ -206,6 +206,13 @@ def _service(tmp_path, sessions=None, media_session_factory=FakeMediaSession):
     )
 
 
+async def _start_service(service):
+    """Wait for fake restore in tests that assert post-restore state."""
+    await service.start()
+    if service._initial_restore_task is not None:
+        await asyncio.wait_for(asyncio.shield(service._initial_restore_task), 1)
+
+
 class FakeGateway:
     def __init__(self, *, host, port, open_consumer):
         self.host = host
@@ -352,6 +359,10 @@ async def test_logout_stops_listener_and_clears_incident_state(tmp_path):
     assert result["account"]["authenticated"] is False
     assert result["events"]["connection"] is EventConnectionState.OFFLINE
     assert result["incidents"] == {}
+    assert result["events"]["recent"] == []
+    assert result["recent_actions"] == []
+    assert service._incidents == {}
+    assert service._plugin_events.latest_sequence == 0
 
 
 @pytest.mark.asyncio
@@ -780,7 +791,7 @@ async def test_service_starts_stops_and_reports_optional_rtsp_gateway(tmp_path):
         rtsp_gateway_factory=FakeGateway,
     )
 
-    await service.start()
+    await _start_service(service)
     status = service.status()
     inventory_task = service._inventory_task
     await service.stop()
@@ -840,7 +851,7 @@ async def test_inventory_refresh_updates_gateway_and_retires_stale_media_session
     removed = FakeMediaSession(None, SimpleNamespace(id=1))
     refreshed = FakeMediaSession(None, SimpleNamespace(id=2))
     refreshed.state = MediaSessionState.IDLE
-    service._media_sessions = {"1": removed, "2": refreshed}
+    service._media_sessions.update({"1": removed, "2": refreshed})
 
     await service._refresh_active_inventory()
 
@@ -914,7 +925,7 @@ async def test_service_retries_transient_cached_session_restore(tmp_path):
         restore_retry_max=0.02,
     )
 
-    await service.start()
+    await _start_service(service)
     assert service.status()["account"]["authenticated"] is False
     assert "retrying" in service.status()["account"]["last_error"]
 
@@ -971,7 +982,7 @@ async def test_service_repairs_rtsp_sync_without_reauthenticating(tmp_path):
         restore_retry_max=0.02,
     )
 
-    await service.start()
+    await _start_service(service)
     try:
         for _ in range(30):
             if service._listener is not None:
@@ -1013,7 +1024,7 @@ async def test_service_repairs_listener_start_without_reauthenticating(tmp_path)
         restore_retry_max=0.02,
     )
 
-    await service.start()
+    await _start_service(service)
     try:
         for _ in range(30):
             if len(listeners) >= 2 and listeners[-1].started:
@@ -1054,7 +1065,7 @@ async def test_login_repairs_listener_start_without_repeating_login(tmp_path):
         restore_retry_max=0.02,
     )
 
-    await service.start()
+    await _start_service(service)
     try:
         result = await service.handle_admin(
             "login",
@@ -1113,7 +1124,7 @@ async def test_service_repairs_listener_that_terminates_after_start(tmp_path):
         restore_retry_max=0.02,
     )
 
-    await service.start()
+    await _start_service(service)
     try:
         assert service.status()["account"]["integrations_ready"] is True
         listeners[0].future.set_exception(RuntimeError("injected listener termination"))
@@ -1170,7 +1181,7 @@ async def test_service_repairs_listener_that_fails_during_async_startup(tmp_path
         restore_retry_max=0.02,
     )
 
-    await service.start()
+    await _start_service(service)
     try:
         for _ in range(30):
             if len(listeners) >= 2 and service._listener is listeners[-1]:
@@ -1192,7 +1203,7 @@ async def test_service_does_not_retry_without_cached_credentials(tmp_path):
     sessions = FakeSessions()
     service = _service(tmp_path, sessions)
 
-    await service.start()
+    await _start_service(service)
     await asyncio.sleep(0.02)
 
     assert sessions.restore_calls == 1
@@ -1218,7 +1229,7 @@ async def test_service_releases_remaining_resources_when_one_stop_fails(tmp_path
         rtsp_port=0,
         rtsp_gateway_factory=FakeGateway,
     )
-    await service.start()
+    await _start_service(service)
     service._plugin_api = FailingPluginApi()
 
     with pytest.raises(ExceptionGroup, match="shutdown failed"):
@@ -1241,7 +1252,7 @@ async def test_media_session_stop_failures_are_propagated_after_all_cameras_stop
     service = _service(tmp_path)
     first = FailingMediaSession(None, SimpleNamespace(id=1))
     second = FailingMediaSession(None, SimpleNamespace(id=2))
-    service._media_sessions = {"1": first, "2": second}
+    service._media_sessions.update({"1": first, "2": second})
 
     with pytest.raises(ExceptionGroup, match="media session shutdown failed") as raised:
         await service._stop_media_sessions("service_stop")
@@ -1777,6 +1788,233 @@ async def test_plugin_intercom_rejects_camera_without_validated_support(tmp_path
         await service._open_plugin_intercom("42")
 
     assert raised.value.code == "intercom_unsupported"
+
+
+def _compatible_intercom_camera():
+    return SimpleNamespace(
+        id=42,
+        name="Front Door",
+        has_capability=lambda capability: capability == "video",
+        generate_async_webrtc_stream=lambda: None,
+        on_webrtc_candidate=lambda: None,
+        close_webrtc_stream=lambda: None,
+        get_ice_servers=lambda: [],
+    )
+
+
+@pytest.mark.asyncio
+async def test_cancelled_intercom_start_is_released_before_second_owner_admission(tmp_path):
+    entered = threading.Event()
+    resume = threading.Event()
+
+    class BlockingSession(FakeMediaSession):
+        def acquire(self, purpose, *, lease_id):
+            entered.set()
+            assert resume.wait(2)
+            return super().acquire(purpose, lease_id=lease_id)
+
+    sessions = FakeSessions()
+    sessions.client.all_devices = [_compatible_intercom_camera()]
+    sessions.active_client = sessions.client
+    service = _service(tmp_path, sessions, BlockingSession)
+    service._media_client = sessions.client
+    task = asyncio.create_task(service._open_plugin_intercom("42"))
+    assert await asyncio.to_thread(entered.wait, 1)
+    task.cancel()
+    await asyncio.sleep(0)
+    assert "42" in service._intercom_leases
+    assert not task.done()
+    media = service._media_sessions["42"]
+    resume.set()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(task, 1)
+    assert media.leases == set()
+    assert service._intercom_leases == {}
+    replacement = await service._open_plugin_intercom("42")
+    assert len(media.leases) == 1
+    await replacement.close()
+
+
+@pytest.mark.asyncio
+async def test_retiring_capture_blocks_replacement_after_stop_timeout(tmp_path):
+    class RetiringSession(FakeMediaSession):
+        receiver_retired = False
+
+        def stop_all(self, reason):
+            self.stop_reasons.append(reason)
+            self.leases.clear()
+            self.state = MediaSessionState.STOPPING
+
+    sessions = FakeSessions()
+    sessions.client.all_devices = [SimpleNamespace(id=42, name="Camera")]
+    sessions.active_client = sessions.client
+    service = _service(tmp_path, sessions, RetiringSession)
+    service._media_client = sessions.client
+    media, _lease = await service._acquire_rtsp_consumer("42")
+    await service._stop_media_sessions("account_replaced")
+    service._media_client = sessions.client
+
+    with pytest.raises(RuntimeError, match="unavailable"):
+        await service._acquire_rtsp_consumer("42")
+    assert service._captures.retiring == {"42": media}
+    media.receiver_retired = True
+    replacement, lease = await service._acquire_rtsp_consumer("42")
+    assert replacement is not media
+    await service._close_rtsp_consumer_async("42", lease)
+
+
+@pytest.mark.asyncio
+async def test_inventory_hardware_replacement_retires_capture_even_when_api_id_matches(tmp_path):
+    class SourceAwareSession(FakeMediaSession):
+        def __init__(self, client, device):
+            super().__init__(client, device)
+            self.source = client, device
+
+        def owns_source(self, client, device):
+            return self.source[0] is client and self.source[1] is device
+
+    sessions = FakeSessions()
+    old = SimpleNamespace(id=42, name="Old hardware")
+    sessions.client.all_devices = [old]
+    sessions.active_client = sessions.client
+    service = _service(tmp_path, sessions, SourceAwareSession)
+    service._media_client = sessions.client
+    media, _lease = await service._acquire_rtsp_consumer("42")
+    sessions.client.all_devices = [SimpleNamespace(id=42, name="New hardware")]
+
+    await service._reconcile_refreshed_media(["42"])
+
+    assert media.stop_reasons == ["inventory_refreshed"]
+    assert service._media_sessions == {}
+    replacement, lease = await service._acquire_rtsp_consumer("42")
+    assert replacement is not media
+    await service._close_rtsp_consumer_async("42", lease)
+
+
+def test_account_manager_publication_hides_old_observations_before_service_handoff(tmp_path):
+    sessions = FakeSessions()
+    sessions.active_client = sessions.client
+    service = _service(tmp_path, sessions)
+    service._media_client = sessions.client
+    service._accept_events = True
+    event = NormalizedRingEvent(
+        event_id="old",
+        camera_id="42",
+        camera_name="Old account",
+        camera_kind="lpd_v4",
+        type=RingEventType.DOORBELL,
+        source_kind="ding",
+        source_state="active",
+        occurred_at=100,
+        received_at=10,
+        source_expires_in=180,
+        is_update=False,
+    )
+    service._process_event(event)
+    epoch = service._plugin_events.epoch
+    assert service.status()["events"]["recent"]
+
+    sessions.active_client = FakeClient()
+
+    status = service.status()
+    assert status["events"]["recent"] == []
+    assert status["incidents"] == {}
+    assert status["recent_actions"] == []
+    assert service._plugin_events.epoch != epoch
+    service._process_listener_event(service._listener_generation, event)
+    assert len(service._recent_events) == 1
+
+
+@pytest.mark.asyncio
+async def test_revoked_control_waiting_for_camera_lock_is_never_submitted(tmp_path):
+    device = FakeAccessoryDevice()
+    client = FakeAccessoryClient(device)
+    sessions = FakeSessions()
+    sessions.active_client = client
+    service = _service(tmp_path, sessions)
+    service._media_client = client
+    service._account_integrations_ready = True
+    allowed = [True]
+    lock = service._camera_control_lock("42")
+    await lock.acquire()
+    task = asyncio.create_task(
+        service._set_plugin_camera_control("42", "light", True, admission=lambda: allowed[0])
+    )
+    await asyncio.sleep(0)
+    allowed[0] = False
+    lock.release()
+    with pytest.raises(PluginCameraOperationError) as raised:
+        await task
+    assert raised.value.code == "unauthorized"
+    assert client.submissions == 0
+
+
+@pytest.mark.asyncio
+async def test_disconnected_login_handler_keeps_full_account_handoff_owned(tmp_path):
+    entered = threading.Event()
+    resume = threading.Event()
+
+    class BlockingSessions(FakeSessions):
+        def login(self, *args):
+            entered.set()
+            assert resume.wait(2)
+            return super().login(*args)
+
+    sessions = BlockingSessions()
+    service = _service(tmp_path, sessions)
+    task = asyncio.create_task(
+        service.handle_admin("login", {"email": "person@example.com", "password": "secret"})
+    )
+    assert await asyncio.to_thread(entered.wait, 1)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert len(service._account_tasks) == 1
+    resume.set()
+    await asyncio.wait_for(asyncio.gather(*service._account_tasks), 1)
+    assert service._media_client is sessions.active_client
+    assert service._account_integrations_ready
+    await service.stop()
+
+
+@pytest.mark.asyncio
+async def test_slow_initial_restore_does_not_block_admin_or_shutdown_ownership(tmp_path):
+    entered = threading.Event()
+    resume = threading.Event()
+
+    class SlowRestore(FakeSessions):
+        pending_cancelled = False
+
+        def restore(self):
+            entered.set()
+            assert resume.wait(2)
+            return super().restore()
+
+        def cancel_pending_operations(self):
+            self.pending_cancelled = True
+            resume.set()
+
+    sessions = SlowRestore()
+    service = _service(tmp_path, sessions)
+    await asyncio.wait_for(service.start(), 0.5)
+    assert await asyncio.to_thread(entered.wait, 1)
+    assert (await service.handle_admin("status", {}))["account"]["restoring"]
+    await asyncio.wait_for(service.stop(), 1)
+    assert sessions.pending_cancelled
+    assert sessions.shutdown_called
+    assert service._initial_restore_task is None
+    assert service.status()["shutdown_complete"]
+
+
+@pytest.mark.asyncio
+async def test_immediate_shutdown_never_admits_a_late_initial_restore(tmp_path):
+    sessions = FakeSessions()
+    service = _service(tmp_path, sessions)
+    await service.start()
+    await service.stop()
+    assert sessions.restore_calls == 0
+    assert service._initial_restore_task is None
+    assert sessions.shutdown_called
     assert "42" not in service._media_sessions
 
 

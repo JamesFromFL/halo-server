@@ -8,12 +8,13 @@ import math
 import secrets
 import time
 from collections import deque
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any
 
 MAX_EVENT_BYTES = 64 * 1024
+_UNSCOPED = object()
 
 
 class EventJournalError(RuntimeError):
@@ -46,13 +47,46 @@ class EventJournal:
     def __init__(self, *, max_events: int = 1024) -> None:
         if isinstance(max_events, bool) or not isinstance(max_events, int) or max_events <= 0:
             raise ValueError("maximum event count must be a positive integer")
-        self.epoch = secrets.token_urlsafe(12)
+        self._epoch = secrets.token_urlsafe(12)
         self._events: deque[JournalEvent] = deque(maxlen=max_events)
         self._next_sequence = 1
         self._waiters: set[asyncio.Event] = set()
+        self._scope_provider: Callable[[], object] | None = None
+        self._scope: object = None
+
+    def bind_scope(self, provider: Callable[[], object]) -> None:
+        """Fence retained facts against the actual account publication boundary."""
+        if self._scope_provider is not None:
+            raise RuntimeError("event journal account scope is already bound")
+        self._scope = provider()
+        self._scope_provider = provider
+
+    def sync_authority(self) -> None:
+        """Retire old facts even before a service login continuation can resume."""
+        if self._scope_provider is not None:
+            scope = self._scope_provider()
+            if scope != self._scope:
+                self._scope = scope
+                self.reset()
+
+    def reset(self) -> None:
+        """Rotate the cursor in place and wake old subscribers to resynchronize."""
+        self._epoch = secrets.token_urlsafe(12)
+        self._events.clear()
+        self._next_sequence = 1
+        waiters = tuple(self._waiters)
+        self._waiters.clear()
+        for waiter in waiters:
+            waiter.set()
+
+    @property
+    def epoch(self) -> str:
+        self.sync_authority()
+        return self._epoch
 
     @property
     def latest_sequence(self) -> int:
+        self.sync_authority()
         return self._next_sequence - 1
 
     def publish(
@@ -62,6 +96,7 @@ class EventJournal:
         camera_id: str | None,
         payload: dict[str, Any],
         emitted_at: float | None = None,
+        expected_scope: object = _UNSCOPED,
     ) -> JournalEvent:
         if not isinstance(event_type, str) or not event_type or len(event_type) > 64:
             raise ValueError("event type is invalid")
@@ -79,8 +114,11 @@ class EventJournal:
             or event_time < 0
         ):
             raise ValueError("event time must be finite and non-negative")
+        self.sync_authority()
+        if expected_scope is not _UNSCOPED and expected_scope != self._scope:
+            raise EventJournalError("event account authority changed")
         event = JournalEvent(
-            epoch=self.epoch,
+            epoch=self._epoch,
             sequence=self._next_sequence,
             emitted_at=float(event_time),
             type=event_type,

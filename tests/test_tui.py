@@ -2,9 +2,10 @@ import ast
 from pathlib import Path
 
 import pytest
+from rich.text import Text
 from textual.widgets import Button, DataTable, Input, Static
 
-from halo_server.tui.app import HaloTui
+from halo_server.tui.app import HaloTui, _timestamp
 from halo_server.tui.client import AdminClientError
 
 
@@ -48,6 +49,7 @@ def _status(*, authenticated=False):
 
 class FakeAdminClient:
     def __init__(self):
+        self.authenticated = False
         self.login_calls = []
         self.two_factor_required = False
         self.pair_calls = []
@@ -55,7 +57,7 @@ class FakeAdminClient:
         self.clients = []
 
     async def status(self):
-        status = _status()
+        status = _status(authenticated=self.authenticated)
         status["integrations"] = {
             "clients": list(self.clients),
             "protocol_version": 2,
@@ -70,6 +72,7 @@ class FakeAdminClient:
         return _status(authenticated=True)
 
     async def logout(self):
+        self.authenticated = False
         return _status()
 
     async def pair_plugin(self, label):
@@ -92,8 +95,8 @@ async def test_tui_renders_status_camera_and_event_tables():
         await pilot.pause()
 
         assert "signed out" in str(app.query_one("#account-status", Static).render())
-        assert app.query_one("#cameras", DataTable).row_count == 1
-        assert app.query_one("#events", DataTable).row_count == 1
+        assert app.query_one("#cameras", DataTable).row_count == 0
+        assert app.query_one("#events", DataTable).row_count == 0
         assert app.query_one("#logout", Button).disabled is True
 
 
@@ -161,3 +164,129 @@ async def test_tui_pairs_displays_once_and_revokes_plugin_credential():
 
         assert client.revoke_calls == ["a" * 32]
         assert app.query_one("#integrations", DataTable).row_count == 0
+        assert token.value == ""
+
+
+@pytest.mark.asyncio
+async def test_tui_displays_untrusted_names_account_and_errors_literally():
+    app = HaloTui(FakeAdminClient())
+    hostile = "[bold]Garden[/bold] [/bad] & [link=https://invalid]text[/link]"
+    status = _status(authenticated=True)
+    status["account"]["email"] = hostile
+    status["cameras"][0]["name"] = hostile
+    status["cameras"][0]["model"] = hostile
+    status["events"]["connection"] = hostile
+    status["events"]["recent"][0]["camera_name"] = hostile
+    status["events"]["recent"][0]["type"] = hostile
+    status["integrations"] = {"clients": [{"id": "a" * 32, "label": hostile}]}
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._apply_status(status)
+        app._message(hostile, error=True)
+        await pilot.pause()
+        for table_id, column in (("cameras", 0), ("events", 0), ("integrations", 0)):
+            cell = app.query_one(f"#{table_id}", DataTable).get_row_at(0)[column]
+            assert isinstance(cell, Text)
+            assert cell.plain == hostile
+            assert not cell.spans
+        assert hostile in str(app.query_one("#account-status", Static).render())
+        assert hostile in str(app.query_one("#event-status", Static).render())
+        assert hostile in str(app.query_one("#message", Static).render())
+
+
+@pytest.mark.parametrize("value", [1e100, -1e100, float("inf"), float("nan"), 10**1000, True, None])
+def test_timestamp_rejects_invalid_or_out_of_range_values(value):
+    assert _timestamp(value) == ""
+
+
+@pytest.mark.asyncio
+async def test_tui_refresh_failure_clears_rows_actions_and_revealed_token():
+    client = FakeAdminClient()
+    client.authenticated = True
+    app = HaloTui(client)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.query_one("#plugin-label", Input).value = "Integration"
+        await app._pair_plugin()
+        assert app.query_one("#plugin-token", Input).value
+        assert app.query_one("#cameras", DataTable).row_count == 1
+
+        async def unavailable():
+            raise AdminClientError("daemon_unavailable", "Daemon [/bad] unavailable")
+
+        client.status = unavailable
+        await app._refresh()
+        for table_id in ("cameras", "events", "integrations"):
+            assert app.query_one(f"#{table_id}", DataTable).row_count == 0
+        assert app.query_one("#plugin-token", Input).value == ""
+        assert app._plugin_client_ids == []
+        assert app.query_one("#revoke-plugin", Button).disabled
+        assert app.query_one("#pair-plugin", Button).disabled
+        assert "unavailable" in str(app.query_one("#account-status", Static).render())
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", [False, True])
+async def test_tui_logout_clears_revealed_token_and_account_owned_rows(failure):
+    client = FakeAdminClient()
+    client.authenticated = True
+    app = HaloTui(client)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.query_one("#plugin-label", Input).value = "Integration"
+        await app._pair_plugin()
+        assert app.query_one("#plugin-token", Input).value
+        if failure:
+
+            async def unavailable():
+                raise AdminClientError("request_failed", "Logout did not complete")
+
+            client.logout = unavailable
+        await app._logout()
+        assert app.query_one("#plugin-token", Input).value == ""
+        assert app.query_one("#cameras", DataTable).row_count == 0
+        assert app.query_one("#events", DataTable).row_count == 0
+
+
+@pytest.mark.asyncio
+async def test_tui_pairing_status_failure_never_leaves_new_token_visible():
+    client = FakeAdminClient()
+    app = HaloTui(client)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        async def unavailable():
+            raise AdminClientError("request_failed", "Status failed")
+
+        client.status = unavailable
+        app.query_one("#plugin-label", Input).value = "Integration"
+        await app._pair_plugin()
+        assert client.pair_calls == ["Integration"]
+        assert app.query_one("#plugin-token", Input).value == ""
+
+
+@pytest.mark.asyncio
+async def test_tui_token_reveal_expires_without_revoking_plugin(monkeypatch):
+    monkeypatch.setattr("halo_server.tui.app.TOKEN_REVEAL_SECONDS", 0.05)
+    client = FakeAdminClient()
+    app = HaloTui(client)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.query_one("#plugin-label", Input).value = "Integration"
+        await app._pair_plugin()
+        assert app.query_one("#plugin-token", Input).value
+        await pilot.pause(0.1)
+        assert app.query_one("#plugin-token", Input).value == ""
+        assert len(client.clients) == 1
+        assert client.revoke_calls == []
+
+
+@pytest.mark.asyncio
+async def test_tui_tolerates_malformed_status_sections():
+    app = HaloTui(FakeAdminClient())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._apply_status({"account": None, "events": [], "cameras": None, "integrations": []})
+        assert app.query_one("#cameras", DataTable).row_count == 0
+        assert app._plugin_client_ids == []

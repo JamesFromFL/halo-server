@@ -46,6 +46,58 @@ def test_journal_requires_resync_for_restart_epoch_or_future_sequence():
 
 
 @pytest.mark.asyncio
+async def test_account_retirement_resets_journal_in_place_and_wakes_old_waiters():
+    journal = EventJournal()
+    previous_epoch = journal.epoch
+    waiter = asyncio.create_task(
+        journal.wait_for_events(epoch=previous_epoch, after_sequence=0, timeout=10)
+    )
+    await asyncio.sleep(0)
+
+    journal.reset()
+
+    with pytest.raises(EventJournalError, match="epoch"):
+        await asyncio.wait_for(waiter, 1)
+    assert journal.latest_sequence == 0
+    assert journal.publish("doorbell", camera_id="new", payload={}).sequence == 1
+
+
+def test_account_publication_invalidates_prebuilt_replay_before_service_handoff():
+    account = ["first-profile"]
+    journal = EventJournal()
+    journal.bind_scope(lambda: account[0])
+    event = journal.publish("motion_on", camera_id="old-camera", payload={})
+    previous_epoch = event.epoch
+    assert journal.replay(epoch=previous_epoch, after_sequence=0) == (event,)
+
+    account[0] = "second-profile"
+
+    assert journal.epoch != previous_epoch
+    assert journal.latest_sequence == 0
+    with pytest.raises(EventJournalError, match="epoch"):
+        journal.replay(epoch=previous_epoch, after_sequence=0)
+
+
+def test_account_publication_during_serialization_cannot_relabel_old_source_fact(monkeypatch):
+    from halo_server.api import events
+
+    account = ["first"]
+    journal = EventJournal()
+    journal.bind_scope(lambda: account[0])
+    copy_payload = events._bounded_json_copy
+
+    def replace_account(payload):
+        account[0] = "second"
+        return copy_payload(payload)
+
+    monkeypatch.setattr(events, "_bounded_json_copy", replace_account)
+    with pytest.raises(EventJournalError, match="authority"):
+        journal.publish("doorbell", camera_id="old", payload={}, expected_scope="first")
+    assert journal.latest_sequence == 0
+    assert journal.replay(epoch=journal.epoch, after_sequence=0) == ()
+
+
+@pytest.mark.asyncio
 async def test_waiter_receives_next_event_without_polling():
     journal = EventJournal()
     waiter = asyncio.create_task(

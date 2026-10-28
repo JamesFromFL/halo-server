@@ -38,6 +38,16 @@ DEFAULT_POLICIES: Mapping[LeasePurpose, LeasePolicy] = {
     LeasePurpose.INTERCOM: LeasePolicy(default_ttl=30.0, maximum_lifetime=300.0),
 }
 
+# Independent purposes share one upstream, while expensive/speaker consumers
+# have smaller admission budgets. Renewals never reset absolute lifetimes.
+DEFAULT_PURPOSE_LIMITS: Mapping[LeasePurpose, int] = {
+    LeasePurpose.EVENT: 2,
+    LeasePurpose.HOMEKIT_LIVE: 2,
+    LeasePurpose.SCRYPTED_LIVE: 4,
+    LeasePurpose.SNAPSHOT: 2,
+    LeasePurpose.INTERCOM: 1,
+}
+
 
 def maximum_session_seconds() -> dict[str, float]:
     """Return the public absolute lifetime limit for every media purpose."""
@@ -77,6 +87,7 @@ class MediaLeaseCoordinator:
         policies: Mapping[LeasePurpose, LeasePolicy] = DEFAULT_POLICIES,
         clock: Callable[[], float] = time.monotonic,
         max_leases: int = 32,
+        purpose_limits: Mapping[LeasePurpose, int] = DEFAULT_PURPOSE_LIMITS,
     ) -> None:
         self._policies = dict(policies)
         if set(self._policies) != set(LeasePurpose):
@@ -89,6 +100,11 @@ class MediaLeaseCoordinator:
         if isinstance(max_leases, bool) or not isinstance(max_leases, int) or max_leases <= 0:
             raise ValueError("maximum lease count must be a positive integer")
         self._clock = clock
+        self._purpose_limits = dict(purpose_limits)
+        if set(self._purpose_limits) != set(LeasePurpose) or any(
+            type(limit) is not int or limit <= 0 for limit in self._purpose_limits.values()
+        ):
+            raise ValueError("positive consumer limits are required for every purpose")
         self._max_leases = max_leases
         self._lock = threading.RLock()
         self._generation = 0
@@ -122,6 +138,11 @@ class MediaLeaseCoordinator:
                 raise ValueError("lease id already exists")
             if len(self._leases) >= self._max_leases:
                 raise RuntimeError("camera media lease limit reached")
+            if (
+                sum(lease.purpose == purpose for lease in self._leases.values())
+                >= self._purpose_limits[purpose]
+            ):
+                raise RuntimeError("camera media purpose limit reached")
             if not self._upstream_requested:
                 self._generation += 1
                 self._upstream_requested = True
