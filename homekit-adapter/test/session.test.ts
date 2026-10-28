@@ -89,6 +89,113 @@ test("inventory discovery grants no policy authority; ACK refresh discovers the 
   peer.session.close();
 });
 
+test("concurrent newer policy waiters join the replacement after an earlier policy settles", async () => {
+  const peer = new Peer({capacity: 1});
+  try {
+    await peer.reset(); await peer.inventory();
+    const delegate = peer.session.camera("front");
+    const initial = delegate.ensurePolicy(policy), first = await peer.request("policy_update");
+    const newer = {...policy, live_audio: true};
+    const one = delegate.ensurePolicy(newer), two = delegate.ensurePolicy({...newer});
+    const results = Promise.allSettled([one, two]);
+    await peer.reply(first, "policy_ack", {scope: first.payload.scope, accepted: true, code: "ok"});
+    await peer.inventory([camera("front", 2)], 2); await initial;
+    const replacement = await peer.request("policy_update");
+    assert.deepEqual(replacement.payload.policy, newer);
+    assert.equal((replacement.payload.scope as MediaScope).privacy_generation, 2);
+    assert.equal(delegate.ready, false);
+    await peer.reply(replacement, "policy_ack", {scope: replacement.payload.scope, accepted: true, code: "ok"});
+    await peer.inventory([camera("front", 3)], 3);
+    assert.deepEqual(await results, [{status: "fulfilled", value: undefined}, {status: "fulfilled", value: undefined}]);
+    assert.equal(delegate.ready, true);
+    assert.equal(peer.session.pendingRequests, 0);
+    assert.equal(peer.writes.some(message => message.kind === "policy_update"), false);
+    assert.deepEqual(peer.failures, []);
+  } finally { peer.session.close(); }
+});
+
+test("queued policy intents freeze inputs and serialize distinct replacements with fresh scopes", async () => {
+  const peer = new Peer();
+  try {
+    await peer.reset(); await peer.inventory();
+    const delegate = peer.session.camera("front");
+    const initial = delegate.ensurePolicy(policy), first = await peer.request("policy_update");
+    const input = {...policy, snapshots: false}, wanted = structuredClone(input);
+    const second = delegate.ensurePolicy(input);
+    input.streaming = false;
+    const last = {...policy, talkback: false}, third = delegate.ensurePolicy(last);
+    const results = Promise.allSettled([second, third]);
+    await peer.reply(first, "policy_ack", {scope: first.payload.scope, accepted: true, code: "ok"});
+    await peer.inventory([camera("front", 2)], 2); await initial;
+    const replacement = await peer.request("policy_update");
+    assert.deepEqual(replacement.payload.policy, wanted);
+    assert.equal((replacement.payload.scope as MediaScope).privacy_generation, 2);
+    await peer.reply(replacement, "policy_ack", {scope: replacement.payload.scope, accepted: true, code: "ok"});
+    await peer.inventory([camera("front", 3)], 3);
+    const final = await peer.request("policy_update");
+    assert.deepEqual(final.payload.policy, last);
+    assert.equal((final.payload.scope as MediaScope).privacy_generation, 3);
+    await peer.reply(final, "policy_ack", {scope: final.payload.scope, accepted: true, code: "ok"});
+    await peer.inventory([camera("front", 4)], 4);
+    assert.deepEqual(await results, [{status: "fulfilled", value: undefined}, {status: "fulfilled", value: undefined}]);
+    await delegate.ensurePolicy(last);
+    assert.equal(peer.writes.some(message => message.kind === "policy_update"), false);
+    assert.equal(peer.session.pendingRequests, 0);
+  } finally { peer.session.close(); }
+});
+
+test("shared replacement timeout rejects all waiters and releases synchronization for retry", async context => {
+  context.mock.timers.enable({apis: ["setTimeout"]});
+  const peer = new Peer({timeout: 20});
+  try {
+    await peer.reset(); await peer.inventory();
+    const delegate = peer.session.camera("front");
+    const initial = delegate.ensurePolicy(policy), first = await peer.request("policy_update");
+    const newer = {...policy, live_audio: true};
+    const results = Promise.allSettled([delegate.ensurePolicy(newer), delegate.ensurePolicy(newer)]);
+    await peer.reply(first, "policy_ack", {scope: first.payload.scope, accepted: true, code: "ok"});
+    await peer.inventory([camera("front", 2)], 2); await initial;
+    await peer.request("policy_update");
+    context.mock.timers.tick(20);
+    const settled = await results;
+    assert.equal(settled.length, 2);
+    for (const result of settled) {
+      assert.equal(result.status, "rejected");
+      if (result.status === "rejected") assert.match(String(result.reason), /request-timeout/);
+    }
+    assert.equal(delegate.ready, false); assert.equal(peer.session.pendingRequests, 0);
+    const retry = delegate.ensurePolicy(newer), request = await peer.request("policy_update");
+    await peer.reply(request, "policy_ack", {scope: request.payload.scope, accepted: true, code: "ok"});
+    await peer.inventory([camera("front", 3)], 3); await retry;
+    assert.equal(delegate.ready, true); assert.equal(peer.session.isClosed, false);
+    assert.deepEqual(peer.failures, []);
+  } finally { peer.session.close(); }
+});
+
+test("scope replacement and session close never let waiting policy callers regain stale authority", async () => {
+  for (const close of [false, true]) {
+    const peer = new Peer();
+    try {
+      await peer.reset(); await peer.inventory();
+      const delegate = peer.session.camera("front");
+      const initial = delegate.ensurePolicy(policy), request = await peer.request("policy_update");
+      const wanted = {...policy, live_audio: true};
+      const results = Promise.allSettled([initial, delegate.ensurePolicy(wanted), delegate.ensurePolicy(wanted)]);
+      if (close) peer.session.close();
+      else {
+        await peer.reply(request, "policy_ack", {scope: request.payload.scope, accepted: true, code: "ok"});
+        await peer.inventory([camera("front", 2, 2)], 2);
+      }
+      for (const result of await results) {
+        assert.equal(result.status, "rejected");
+        if (result.status === "rejected") assert.match(String(result.reason), close ? /session-closed/ : /stale-camera/);
+      }
+      assert.equal(peer.writes.some(message => message.kind === "policy_update"), false);
+      assert.equal(peer.session.pendingRequests, 0); assert.equal(delegate.ready, false);
+    } finally { peer.session.close(); }
+  }
+});
+
 test("typed live, renewal, control, and speaker delegates retain full scope and explicit handle identity", async () => {
   const peer = new Peer(), delegate = await peer.ready();
   const acquiring = delegate.acquireLive(1000), request = await peer.request("lease_request");

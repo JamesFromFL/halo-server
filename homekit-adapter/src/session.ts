@@ -341,15 +341,19 @@ export class AdapterSession {
   }
 
   async ensurePolicy(cameraId: string, identity: string, policy: CameraPolicy): Promise<void> {
-    const pending = this.policySynchronization.get(identity);
-    if (pending) await pending;
-    const entry = this.entry(cameraId, identity);
-    if (entry.synchronized && entry.policy && Object.keys(policy).every(name =>
-      entry.policy![name as keyof CameraPolicy] === policy[name as keyof CameraPolicy])) return;
-    const operation = this.updatePolicy(cameraId, identity, policy);
-    this.policySynchronization.set(identity, operation);
-    try { await operation; }
-    finally { if (this.policySynchronization.get(identity) === operation) this.policySynchronization.delete(identity); }
+    policy = structuredClone(policy);
+    while (true) {
+      const pending = this.policySynchronization.get(identity);
+      // A preceding waiter may have installed the next update while this one settled.
+      if (pending) { await pending; continue; }
+      const entry = this.entry(cameraId, identity);
+      if (entry.synchronized && entry.policy && Object.keys(policy).every(name =>
+        entry.policy![name as keyof CameraPolicy] === policy[name as keyof CameraPolicy])) return;
+      const operation = this.updatePolicy(cameraId, identity, policy);
+      this.policySynchronization.set(identity, operation);
+      try { await operation; return; }
+      finally { if (this.policySynchronization.get(identity) === operation) this.policySynchronization.delete(identity); }
+    }
   }
 
   async updateAudioSettings(cameraId: string, identity: string, expectedRevision: number, settings: AudioSettings): Promise<number> {

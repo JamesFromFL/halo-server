@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 import os
 import shutil
 import stat
@@ -36,6 +37,66 @@ from halo_server.homekit.settings import (
 from halo_server.media.manager import owned_thread, settle_owned
 from halo_server.media.recording_policy import RecordingAuthority, RecordingPolicyOwner
 from halo_server.paths import PathSecurityError, open_private_directory
+
+_LOGGER = logging.getLogger(__name__)
+_INTEROP_STAGES = frozenset(
+    {
+        "snapshot",
+        "video-prepare",
+        "video-start",
+        "video-reconfigure",
+        "video-stop",
+        "video-request",
+        "audio-settings",
+    }
+)
+_INTEROP_CODES = frozenset(
+    {
+        "operation-failed",
+        "invalid-video-prepare",
+        "invalid-audio-prepare",
+        "video-retired",
+        "invalid-video-endpoint",
+        "unsupported-video-profile",
+        "unsupported-video-level",
+        "unsupported-video-codec",
+        "unsupported-audio-format",
+        "video-not-prepared",
+        "video-start-conflict",
+        "audio-start-conflict",
+        "video-reconfigure-conflict",
+        "unsupported-video-operation",
+        "video-prepare-rejected",
+        "video-endpoint-mismatch",
+        "video-configuration-rejected",
+        "video-stop-rejected",
+        "video-cleanup-failed",
+        "video-capacity",
+        "request-timeout",
+        "session-closed",
+        "resource-retired",
+        "snapshot-retired",
+        "snapshot-unavailable",
+        "snapshot-cancelled",
+        "snapshot-capacity",
+        "snapshot-rejected",
+        "snapshot-transfer-failed",
+        "invalid-value",
+        "retired",
+        "timeout",
+        "conflict",
+        "cleanup-failed",
+        "persistence-failed",
+        "policy-failed",
+        "policy-update-busy",
+        "policy-denied",
+        "not-ready",
+        "busy",
+        "stale-scope",
+        "source-lost",
+        "unavailable",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -132,6 +193,7 @@ class HomeKitBridge:
         self._config_generation = 0
         self._config_signature = None
         self._publication_status = None
+        self._diagnostic_last = {}
         self._events = (
             EventPump(
                 journal,
@@ -549,7 +611,25 @@ class HomeKitBridge:
             ):
                 self._publication_status = (message["boot_id"], dict(data))
             return
-        if message["kind"] in {"status", "error"}:
+        if message["kind"] == "error":
+            # Existing private notices carry only an allowlisted operation/code.
+            # Never log a peer message, exception or negotiation payload verbatim.
+            data = message["payload"]
+            stage = data["code"].removeprefix("interop-")
+            code = data["message"]
+            if (
+                self._broker.boot_id is not None
+                and message["boot_id"] == self._broker.boot_id
+                and data["code"].startswith("interop-")
+                and stage in _INTEROP_STAGES
+                and code in _INTEROP_CODES
+            ):
+                now = asyncio.get_running_loop().time()
+                if now - self._diagnostic_last.get(stage, float("-inf")) >= 5:
+                    self._diagnostic_last[stage] = now
+                    _LOGGER.warning("HomeKit operation %s failed: %s", stage, code)
+            return
+        if message["kind"] == "status":
             return  # Never elevate media readiness from a peer's generic status.
         await self._broker.notice(message)
 

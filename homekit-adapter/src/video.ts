@@ -21,7 +21,18 @@ export interface VideoCameraOptions {
   policy?: () => CameraPolicy;
   forceStop: (hapId: string) => void;
   failure: () => void;
+  reportError?: (stage: string, code: string) => void;
 }
+export const VIDEO_DIAGNOSTIC_CODES = [
+  "operation-failed", "invalid-video-prepare", "invalid-audio-prepare", "video-retired",
+  "invalid-video-endpoint", "unsupported-video-profile", "unsupported-video-level", "unsupported-video-codec",
+  "unsupported-audio-format", "video-not-prepared", "video-start-conflict", "audio-start-conflict",
+  "video-reconfigure-conflict", "unsupported-video-operation", "video-prepare-rejected", "video-endpoint-mismatch",
+  "video-configuration-rejected", "video-stop-rejected", "video-cleanup-failed", "video-capacity",
+  "request-timeout", "session-closed", "resource-retired", "snapshot-retired", "snapshot-unavailable",
+  "snapshot-cancelled", "snapshot-capacity", "snapshot-rejected", "snapshot-transfer-failed",
+] as const;
+const diagnosticCodes = new Set<string>(VIDEO_DIAGNOSTIC_CODES);
 const forbidden = new BlockList();
 forbidden.addSubnet("0.0.0.0", 8, "ipv4"); forbidden.addSubnet("224.0.0.0", 4, "ipv4");
 forbidden.addSubnet("240.0.0.0", 4, "ipv4"); forbidden.addAddress("::", "ipv6"); forbidden.addSubnet("ff00::", 8, "ipv6");
@@ -33,6 +44,17 @@ export function literalUnicastAddress(value: string, version: "ipv4" | "ipv6"): 
   if (zone !== undefined && (version !== "ipv6" || !linkLocal.check(base, "ipv6") ||
       !/^[A-Za-z0-9_.:-]{1,32}$/.test(zone) || /^\d+$/.test(zone) && (!/^[1-9][0-9]*$/.test(zone) || Number(zone) > 0xffffffff))) return false;
   return true;
+}
+// HAP exposes the TCP socket's raw localAddress; a dual-stack listener reports
+// IPv4 peers as ::ffff:a.b.c.d even when the selected RTP family is IPv4.
+// Normalize only that exact mapped representation before the existing unicast
+// and family checks. True IPv6 and malformed/multicast values remain rejected.
+function mediaSourceAddress(value: string, version: "ipv4" | "ipv6"): string {
+  if (version === "ipv4" && typeof value === "string" && /^::ffff:/i.test(value)) {
+    const mapped = value.slice(7);
+    if (isIP(mapped) === 4) return mapped;
+  }
+  return value;
 }
 const streamingPolicy = (enabled: boolean, snapshots: boolean, audio: AccessoryAudio | null, speaker: boolean): CameraPolicy => ({synchronized: true, streaming: enabled,
   live_audio: enabled && audio?.microphone === true && !audio.microphone_muted && audio.microphone_volume > 0,
@@ -99,22 +121,34 @@ export class HapVideoDelegate implements CameraStreamingDelegate {
         !Buffer.isBuffer(bytes) || bytes.length < 4 || bytes.length > 8 * 1024 * 1024 ||
         bytes[0] !== 0xff || bytes[1] !== 0xd8 || bytes.at(-2) !== 0xff || bytes.at(-1) !== 0xd9) throw new ProtocolError("snapshot-unavailable");
       job.finish(undefined, bytes);
-    })().catch(() => job.finish(HAPStatus.SERVICE_COMMUNICATION_FAILURE));
+    })().catch(error => {this.report("snapshot", error); job.finish(HAPStatus.SERVICE_COMMUNICATION_FAILURE);});
+  }
+  private report(stage: string, error: unknown): void {
+    const code = error instanceof ProtocolError && diagnosticCodes.has(error.code) ? error.code : "operation-failed";
+    // Diagnostics may never change admission, callback completion or cleanup.
+    try { this.options.reportError?.(stage, code); } catch {}
   }
   prepareStream(request: PrepareStreamRequest, callback: Parameters<CameraStreamingDelegate["prepareStream"]>[1]): void {
-    void this.prepare(request).then(response => callback(undefined, response), () => callback(new Error("camera-stream-unavailable")));
+    void this.prepare(request).then(response => callback(undefined, response), error => {
+      this.report("video-prepare", error); callback(new Error("camera-stream-unavailable"));
+    });
   }
   handleStreamRequest(request: StreamingRequest, callback: Parameters<CameraStreamingDelegate["handleStreamRequest"]>[1]): void {
-    void this.handle(request).then(() => callback(), () => callback(new Error("camera-stream-unavailable")));
+    void this.handle(request).then(() => callback(), error => {
+      const stage = request.type === StreamRequestTypes.STOP ? "video-stop" :
+        request.type === StreamRequestTypes.RECONFIGURE ? "video-reconfigure" : "video-start";
+      this.report(stage, error); callback(new Error("camera-stream-unavailable"));
+    });
   }
   private available(): boolean { return !this.closed && this.options.active(); }
   private current(session: OwnedVideo): void {
     if (!this.available() || session.retired || this.sessions.get(session.hapId) !== session) throw new ProtocolError("video-retired");
   }
   private async prepare(request: PrepareStreamRequest): Promise<PrepareStreamResponse> {
+    const sourceAddress = mediaSourceAddress(request.sourceAddress, request.addressVersion);
     if (!this.available() || typeof request.sessionID !== "string" || !request.sessionID || request.sessionID.length > 128 ||
         this.sessions.has(request.sessionID) || this.sessions.size >= 2 ||
-        !["ipv4", "ipv6"].includes(request.addressVersion) || !literalUnicastAddress(request.sourceAddress, request.addressVersion) ||
+        !["ipv4", "ipv6"].includes(request.addressVersion) || !literalUnicastAddress(sourceAddress, request.addressVersion) ||
         !literalUnicastAddress(request.targetAddress, request.addressVersion) ||
         request.video.srtpCryptoSuite !== SRTPCryptoSuites.AES_CM_128_HMAC_SHA1_80 ||
         !Buffer.isBuffer(request.video.srtp_key) || request.video.srtp_key.length !== 16 ||
@@ -131,7 +165,7 @@ export class HapVideoDelegate implements CameraStreamingDelegate {
       !Number.isSafeInteger(request.audio.port) || request.audio.port < 1 || request.audio.port > 65535)) {
       this.sessions.delete(session.hapId); throw new ProtocolError("invalid-audio-prepare");
     }
-    const prepared: VideoPrepare = {source_address: request.sourceAddress, target_address: request.targetAddress, address_version: request.addressVersion,
+    const prepared: VideoPrepare = {source_address: sourceAddress, target_address: request.targetAddress, address_version: request.addressVersion,
       target_port: request.video.port, key: request.video.srtp_key.toString("base64"), salt: request.video.srtp_salt.toString("base64"),
       audio: withAudio ? {target_port: request.audio.port, key: request.audio.srtp_key.toString("base64"), salt: request.audio.srtp_salt.toString("base64")} : null};
     session.timer = setTimeout(() => {

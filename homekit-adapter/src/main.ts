@@ -1,3 +1,4 @@
+import { InteropDiagnostics } from "./diagnostics.js";
 import { randomUUID } from "node:crypto";
 import { fstatSync } from "node:fs";
 import { Socket } from "node:net";
@@ -93,6 +94,10 @@ async function run(): Promise<number> {
   let ending = false;
   let failed = false;
   let idle: NodeJS.Timeout | null = null;
+  const diagnostics = new InteropDiagnostics(payload => {
+    if (boot === null || ending) return Promise.resolve();
+    return channel.send({v: 1, kind: "error", boot_id: boot, request_id: randomUUID(), payload: {...payload}});
+  });
   const hello = setTimeout(() => fail("handshake-timeout"), HANDSHAKE_TIMEOUT_MS);
   const parentWatch = setInterval(() => {
     if (process.ppid !== descriptors.parent) fail("parent-retired");
@@ -150,6 +155,7 @@ async function run(): Promise<number> {
           }});
         const adapterSession = session;
         accessories = new AccessoryManager({session: adapterSession,
+          reportError: diagnostics.report,
           ...(store === undefined ? {} : {store, publisher: hapPublisher(store)}),
           syncEvents: (scope, epoch, sequence) => adapterSession.synchronizeEvents(scope, epoch, sequence),
           onStatus: status => {

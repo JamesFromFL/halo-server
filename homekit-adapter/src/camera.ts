@@ -44,7 +44,7 @@ export class CameraAccessory {
   readonly streamingDelegate: HapVideoDelegate | null;
   readonly recordingDelegate: HapRecordingDelegate | null;
 
-  constructor(readonly identity: AccessoryIdentity, camera: NativeCamera, options: {native?: CameraDelegate; failure?: () => void} = {}) {
+  constructor(readonly identity: AccessoryIdentity, camera: NativeCamera, options: {native?: CameraDelegate; failure?: () => void; reportError?: (stage: string, code: string) => void} = {}) {
     this.current = structuredClone(camera);
     const name = camera.name || (identity.doorbell ? "Ring Doorbell" : "Ring Camera");
     this.accessory = new Accessory(name, identity.accessory_id);
@@ -66,6 +66,7 @@ export class CameraAccessory {
       policy: () => this.policy,
       audio: () => this.audioControls?.current ?? identity.audio ?? null,
       forceStop: hapId => this.controller.forceStopStreamingSession(hapId),
+      ...(options.reportError === undefined ? {} : {reportError: options.reportError}),
       failure: options.failure ?? (() => {}),
     }) : null;
     const controllerOptions = {
@@ -101,6 +102,7 @@ export class CameraAccessory {
       () => !this.retired && this.homeKitActive(), () => this.synchronizePolicy());
     if (identity.audio !== undefined && identity.audio !== null) {
       this.audioControls = new AudioControls(this.accessory, this.controller, identity.audio, {
+        ...(options.reportError === undefined ? {} : {reportError: options.reportError}),
         fence: () => this.fence(),
         persist: (revision, settings) => options.native?.updateAudioSettings(revision, settings) ?? Promise.reject(new ProtocolError("audio-settings-unavailable")),
         synchronize: () => this.streamingDelegate?.synchronizePolicy() ?? Promise.resolve(),

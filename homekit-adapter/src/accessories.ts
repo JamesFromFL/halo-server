@@ -43,6 +43,7 @@ export interface AccessoryManagerOptions {
   syncEvents: (scope: AccountScope | null, epoch: string | null, sequence: number) => Promise<JsonObject>;
   onFailure?: (error: ProtocolError) => void;
   onStatus?: (status: AccessoryPublicationStatus) => Promise<void>;
+  reportError?: (stage: string, code: string) => void;
   monotonicNow?: () => number;
 }
 const sameAccount = (left: AccountScope | null, right: AccountScope | null): boolean =>
@@ -300,6 +301,7 @@ export class AccessoryManager {
         const native = this.options.session.camera?.(identity.camera_id);
         managed = {camera: new CameraAccessory(identity, camera, {
           ...(native === undefined ? {} : {native}),
+          ...(this.options.reportError === undefined ? {} : {reportError: this.options.reportError}),
           failure: () => { this.failed = true; this.invalidate(); this.options.onFailure?.(new ProtocolError("video-cleanup-failed")); },
         }), published: false, listening: false, advertised: false, stateTimer: null};
         this.managed.set(identity.camera_id, managed);

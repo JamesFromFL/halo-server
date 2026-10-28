@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { EventEmitter } from "node:events";
 import { test } from "node:test";
 import {
+  encode as tlvEncode, decode as tlvDecode, writeUInt16, writeUInt32, uuid,
   Characteristic, H264Level, H264Profile, Service, SRTPCryptoSuites, StreamRequestTypes,
   VideoCodecPacketizationMode, VideoCodecType, type PrepareStreamRequest, type PrepareStreamResponse, type StartStreamRequest, type StreamingRequest,
 } from "@homebridge/hap-nodejs";
@@ -9,7 +11,7 @@ import { CameraAccessory } from "../src/camera.js";
 import { AdapterSession, type NativeCamera } from "../src/session.js";
 import { HapVideoDelegate, literalUnicastAddress, PREPARED_VIDEO_TIMEOUT_MS } from "../src/video.js";
 import { receiveTerminalCleanup } from "../src/main.js";
-import type { Envelope, JsonObject, MediaScope } from "../src/protocol.js";
+import { ProtocolError, type Envelope, type JsonObject, type MediaScope } from "../src/protocol.js";
 
 const boot = "00000000-0000-0000-0000-000000000001", account = {profile_id: "00000000-0000-0000-0000-000000000002", account_generation: 1};
 const tick = (): Promise<void> => new Promise(resolve => setImmediate(resolve));
@@ -198,4 +200,85 @@ test("a controller cannot relabel the prepared sender SSRC or select an unadvert
   await assert.rejects(handle(delegate.value, request), /camera-stream-unavailable/);
   assert.equal(peer.sent.filter(message => message.kind === "video_start").length, 0);
   await delegate.value.close(); peer.session.close();
+});
+
+test("IPv4 media prepare accepts the IPv4-mapped source address passed by a dual-stack HAP connection", async () => {
+  const peer = new Peer(); await peer.ready(); const delegate = peer.delegate();
+  const request = prepareRequest("dual-stack mapped source");
+  request.sourceAddress = "::ffff:127.0.0.1";
+  try {
+    const result = await prepare(delegate.value, request);
+    assert.equal(result.addressOverride, "127.0.0.1");
+    const prepared = peer.sent.find(message => message.kind === "video_prepare");
+    assert.equal(prepared?.payload.source_address, "127.0.0.1");
+  } finally {
+    await delegate.value.close(); peer.session.close();
+  }
+});
+
+
+test("released HAP SetupEndpoints and SelectedRTP characteristics carry mapped TCP localAddress through native start", async () => {
+  const peer = new Peer(); await peer.ready();
+  const accessory = new CameraAccessory({camera_id: "front", accessory_id: randomUUID(), username: "02:11:22:33:44:56", doorbell: false},
+    peer.current, {native: peer.session.camera("front")});
+  const connection = Object.assign(new EventEmitter(), {
+    localAddress: "::ffff:127.0.0.1", getLocalAddress: () => "127.0.0.1",
+  });
+  const id = randomUUID();
+  const crypto = tlvEncode(1, 0, 2, Buffer.alloc(16, 7), 3, Buffer.alloc(14, 9));
+  const setupValue = tlvEncode(1, uuid.write(id), 3,
+    tlvEncode(1, 0, 2, "127.0.0.1", 3, writeUInt16(50100), 4, writeUInt16(50102)),
+    4, crypto, 5, crypto).toString("base64");
+  const service = accessory.accessory.services.find(item => item.UUID === Service.CameraRTPStreamManagement.UUID)!;
+  try {
+    const setup = service.getCharacteristic(Characteristic.SetupEndpoints);
+    await setup.handleSetRequest(setupValue, connection as never);
+    const response = tlvDecode(Buffer.from(await setup.handleGetRequest(connection as never) as string, "base64"));
+    assert.equal(response[2]![0], 0);
+    assert.equal(tlvDecode(response[3]!)[2]!.toString(), "127.0.0.1");
+    assert.equal(peer.sent.find(item => item.kind === "video_prepare")!.payload.source_address, "127.0.0.1");
+    const interval = Buffer.alloc(4); interval.writeFloatLE(.5);
+    const selected = tlvEncode(1, tlvEncode(1, uuid.write(id), 2, 1),
+      2, tlvEncode(1, 0, 2, tlvEncode(1, 0, 2, 0, 3, 0),
+        3, tlvEncode(1, writeUInt16(320), 2, writeUInt16(240), 3, 15),
+        4, tlvEncode(1, 99, 2, response[6]!, 3, writeUInt16(500), 4, interval, 5, writeUInt16(1200))),
+      3, tlvEncode(1, 3, 2, tlvEncode(1, 1, 2, 0, 3, 1, 4, 20),
+        3, tlvEncode(1, 110, 2, writeUInt32(5678), 3, writeUInt16(24), 4, interval, 6, 13), 4, 0));
+    await service.getCharacteristic(Characteristic.SelectedRTPStreamConfiguration)
+      .handleSetRequest(selected.toString("base64"), connection as never);
+    assert.equal(peer.sent.filter(item => item.kind === "video_start").length, 1);
+  } finally {
+    connection.emit("closed");
+    accessory.retire(); await accessory.closeStreams(); peer.session.close();
+  }
+});
+
+
+test("mapped source normalization preserves unicast and negotiated-family rejection before IPC", async () => {
+  const peer = new Peer(); await peer.ready(); const delegate = peer.delegate();
+  try {
+    for (const sourceAddress of ["::ffff:224.1.1.1", "::ffff:0.0.0.0", "::ffff:255.255.255.255",
+      "::ffff:240.1.1.1", "::ffff:127.00.0.1", "::1", "example.invalid"]) {
+      await assert.rejects(prepare(delegate.value, {...prepareRequest(sourceAddress), sourceAddress}), /camera-stream-unavailable/);
+    }
+    assert.equal(peer.sent.filter(item => item.kind === "video_prepare").length, 0);
+  } finally {
+    await delegate.value.close(); peer.session.close();
+  }
+});
+
+test("prepare diagnostics emit only fixed protocol codes and cannot change callback behavior", async context => {
+  const peer = new Peer(); await peer.ready();
+  const reported: [string, string][] = [];
+  const delegate = new HapVideoDelegate(peer.session.camera("front"), {active: () => true,
+    forceStop: () => {}, failure: () => {}, reportError: (stage, code) => {reported.push([stage, code]); throw Error("callback ignored");}});
+  try {
+    await assert.rejects(prepare(delegate, {...prepareRequest(), targetAddress: "239.1.1.1"}), /camera-stream-unavailable/);
+    context.mock.method(peer.session, "prepareVideo", async () => {throw new ProtocolError("untrusted secret 192.0.2.4 key=private");});
+    await assert.rejects(prepare(delegate), /camera-stream-unavailable/);
+    assert.deepEqual(reported, [["video-prepare", "invalid-video-prepare"], ["video-prepare", "operation-failed"]]);
+    assert.equal(JSON.stringify(reported).includes("private"), false);
+  } finally {
+    await delegate.close(); peer.session.close();
+  }
 });
