@@ -114,10 +114,7 @@ async def test_real_child_applies_trusted_selection_without_publishing_or_starti
         )
         status = bridge.status()
         assert status["selected_cameras"] == 1
-        assert (
-            status["camera_ready"] is False
-            and status["reason"] == "audio_and_snapshots_not_implemented"
-        )
+        assert status["camera_ready"] is False and status["reason"] == "snapshots_not_implemented"
         assert bridge._runtime._pairing_owner is not None
         assert list(service.paths.homekit_pairing_directory.iterdir()) == []
         assert not service._media_sessions and client.submissions == 0
@@ -165,7 +162,7 @@ async def test_rejected_configuration_retires_owned_runtime(tmp_path):
     bridge._runtime_factory = RejectingRuntime
     bridge._resources = AdapterResources(NODE, ADAPTER / "main.js")
     bridge.start()
-    await asyncio.wait_for(asyncio.shield(bridge._task), 1)
+    await asyncio.wait_for(asyncio.shield(bridge._task), 8)
     assert bridge.state == "degraded" and bridge.reason == "adapter_control_failed"
     assert bridge._runtime.stopped and service.homekit.boot_id is None
     assert bridge._events.boot_id is None

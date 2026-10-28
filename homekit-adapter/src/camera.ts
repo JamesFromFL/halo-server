@@ -1,13 +1,14 @@
 import {
-  Accessory, CameraController, Categories, Characteristic, DoorbellController,
+  Accessory, AudioBitrate, AudioStreamingCodecType, AudioStreamingSamplerate, CameraController, Categories, Characteristic, DoorbellController,
   H264Level, H264Profile, HAPStatus, Service, SRTPCryptoSuites, StreamRequestTypes,
   type CameraStreamingDelegate,
 } from "@homebridge/hap-nodejs";
-import type { MediaScope } from "./protocol.js";
+import { ProtocolError, type AccessoryAudio, type MediaScope } from "./protocol.js";
 import type { NativeCamera, CameraDelegate } from "./session.js";
 import { HapVideoDelegate } from "./video.js";
+import { AudioControls } from "./audio.js";
 
-export interface AccessoryIdentity { camera_id: string; accessory_id: string; username: string; doorbell: boolean }
+export interface AccessoryIdentity { camera_id: string; accessory_id: string; username: string; doorbell: boolean; audio?: AccessoryAudio | null }
 export interface MotionState { motion: boolean | null; synchronized: boolean; source_state: "connected" | "connecting" | "offline" }
 
 /** These delegates intentionally expose no RTP endpoints or synthetic image bytes. */
@@ -28,6 +29,7 @@ export class CameraAccessory {
   readonly controller: CameraController;
   private current: NativeCamera;
   private retired = false;
+  private audioControls: AudioControls | null = null;
   readonly streamingDelegate: HapVideoDelegate | null;
 
   constructor(readonly identity: AccessoryIdentity, camera: NativeCamera, options: {native?: CameraDelegate; failure?: () => void} = {}) {
@@ -42,7 +44,8 @@ export class CameraAccessory {
       .setCharacteristic(Characteristic.FirmwareRevision, "0.1.0");
     this.accessory.on("identify", (_paired, callback) => callback());
     this.streamingDelegate = options.native ? new HapVideoDelegate(options.native, {
-      active: () => !this.retired && this.streamingActive(),
+      active: () => !this.retired && this.streamingActive() && this.audioControls?.available !== false,
+      audio: () => this.audioControls?.current ?? identity.audio ?? null,
       forceStop: hapId => this.controller.forceStopStreamingSession(hapId),
       failure: options.failure ?? (() => {}),
     }) : null;
@@ -54,11 +57,22 @@ export class CameraAccessory {
         video: {codec: {profiles: [H264Profile.BASELINE, H264Profile.MAIN, H264Profile.HIGH],
           levels: [H264Level.LEVEL3_1, H264Level.LEVEL3_2, H264Level.LEVEL4_0]},
           resolutions: [[320, 240, 15], [640, 360, 30], [640, 480, 30], [1280, 720, 30], [1920, 1080, 30]] as [number, number, number][]},
+        ...(identity.audio?.microphone ? {audio: {codecs: [AudioBitrate.VARIABLE, AudioBitrate.CONSTANT].map(bitrate => ({
+          type: AudioStreamingCodecType.OPUS, audioChannels: 1, bitrate,
+          samplerate: [AudioStreamingSamplerate.KHZ_8, AudioStreamingSamplerate.KHZ_16, AudioStreamingSamplerate.KHZ_24],
+        })), twoWayAudio: identity.audio.speaker, comfort_noise: false}} : {}),
       },
       sensors: {motion: true},
     };
     this.controller = identity.doorbell ? new DoorbellController({...controllerOptions, name}) : new CameraController(controllerOptions);
     this.accessory.configureController(this.controller);
+    if (identity.audio !== undefined && identity.audio !== null) {
+      this.audioControls = new AudioControls(this.accessory, this.controller, identity.audio, {
+        fence: () => this.streamingDelegate?.fence() ?? Promise.resolve(),
+        persist: (revision, settings) => options.native?.updateAudioSettings(revision, settings) ?? Promise.reject(new ProtocolError("audio-settings-unavailable")),
+        synchronize: () => this.streamingDelegate?.synchronizePolicy() ?? Promise.resolve(),
+      });
+    }
     for (const service of this.accessory.services.filter(service => service.UUID === Service.CameraRTPStreamManagement.UUID)) {
       service.getCharacteristic(Characteristic.Active).on("change", () => {
         void this.streamingDelegate?.activeChanged().catch(() => options.failure?.());
@@ -74,8 +88,19 @@ export class CameraAccessory {
     return services.length > 0 && services.every(service => service.getCharacteristic(Characteristic.Active).value === true ||
       service.getCharacteristic(Characteristic.Active).value === 1);
   }
-  synchronizePolicy(): Promise<void> { return this.streamingDelegate?.synchronizePolicy() ?? Promise.resolve(); }
-  closeStreams(): Promise<void> { return this.streamingDelegate?.close() ?? Promise.resolve(); }
+  get audio(): AccessoryAudio | null { return this.audioControls?.current ?? null; }
+  async updateAudio(value: AccessoryAudio | null): Promise<void> {
+    if (value === null ? this.audioControls !== null : this.audioControls === null) throw new ProtocolError("audio-graph-changed");
+    if (value !== null) await this.audioControls!.update(value);
+  }
+  async synchronizePolicy(): Promise<void> {
+    await this.audioControls?.changing?.catch(() => {});
+    await this.streamingDelegate?.synchronizePolicy();
+  }
+  async closeStreams(): Promise<void> {
+    this.audioControls?.retire();
+    await Promise.all([this.audioControls?.settle(), this.streamingDelegate?.close()]);
+  }
   update(camera: NativeCamera): void {
     if (this.retired) return;
     this.current = structuredClone(camera);
@@ -98,6 +123,7 @@ export class CameraAccessory {
   }
   retire(): void {
     this.retired = true;
+    this.audioControls?.retire();
     this.applyState({motion: null, synchronized: false, source_state: "offline"});
   }
 }

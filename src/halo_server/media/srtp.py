@@ -32,6 +32,8 @@ class SecureVideo:
         self._tx = self._session(ssrc)
         self._rx = None
         self._remote_ssrc: int | None = None
+        self._media_rx = None
+        self._media_ssrc: int | None = None
         self._closed = False
 
     def _session(self, ssrc):
@@ -82,9 +84,30 @@ class SecureVideo:
             self._rx, self._remote_ssrc = candidate, ssrc
         return result
 
+    def unprotect(self, packet: bytes) -> bytes:
+        """Authenticate media before pinning its bounded native replay context.
+
+        A peer may use a different SSRC for RTP and its RTCP sender. Keep those
+        two authenticated claims independent instead of a wildcard native policy.
+        """
+        if (
+            self._closed
+            or not isinstance(packet, bytes)
+            or not 22 <= len(packet) <= MAX_SECURE_PACKET_BYTES
+        ):
+            raise SrtpError("Secure media packet is outside its bounds")
+        ssrc = struct.unpack_from("!I", packet, 8)[0]
+        if self._media_ssrc is not None and self._media_ssrc != ssrc:
+            raise SrtpError("Secure media sender changed")
+        candidate = self._media_rx if self._media_rx is not None else self._session(ssrc)
+        result = self._call(candidate.unprotect, packet)
+        if self._media_rx is None:
+            self._media_rx, self._media_ssrc = candidate, ssrc
+        return result
+
     def close(self):
         if self._closed:
             return
         self._closed = True
-        self._tx = self._rx = None
+        self._tx = self._rx = self._media_rx = None
         self._material = b""

@@ -8,7 +8,7 @@ import math
 import threading
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 
 from halo_server.media.audio import (
@@ -24,11 +24,13 @@ from halo_server.media.leases import (
     MediaLease,
     MediaLeaseCoordinator,
 )
+from halo_server.media.opus import OpusError, OriginalOpusBuffer
 from halo_server.media.ring_media import (
     EncodedFrameAdapterError,
     MediaCompatibilityError,
     MicrophonePcmBuffer,
     RingMediaProgressError,
+    SourceClockObservation,
 )
 from halo_server.media.supervisor import supervise_receiver
 
@@ -95,6 +97,8 @@ class CameraMediaSession:
         self._clock = clock
         self._leases = lease_coordinator or MediaLeaseCoordinator(clock=clock)
         self._buffer = buffer or EncodedMediaBuffer(clock=clock)
+        self._original_audio_buffer = OriginalOpusBuffer(clock=clock)
+        self._source_clocks = {}
         self._receiver_supervisor = receiver_supervisor
         self._on_raw_audio = on_raw_audio
         self._audio_encoder_factory = audio_encoder_factory
@@ -121,6 +125,56 @@ class CameraMediaSession:
     @property
     def buffer(self) -> EncodedMediaBuffer:
         return self._buffer
+
+    @property
+    def original_audio_buffer(self) -> OriginalOpusBuffer:
+        return self._original_audio_buffer
+
+    def source_clock_snapshot(self):
+        with self._lock:
+            epoch = self._buffer.capture_epoch
+            return tuple(
+                observation
+                for observation in self._source_clocks.values()
+                if observation.capture_epoch == epoch
+                and 0 <= self._clock() - observation.received_at <= 30
+            )
+
+    def _clear_media_locked(self):
+        self._buffer.clear()
+        self._original_audio_buffer.clear(capture_epoch=self._buffer.capture_epoch)
+        self._source_clocks.clear()
+
+    def _source_clock(self, generation, observation):
+        with self._lock:
+            if (
+                not self._accepts_media_locked(generation)
+                or not isinstance(observation, SourceClockObservation)
+                or observation.kind not in {"audio", "video"}
+            ):
+                return
+            if observation.sender_ntp == 0:
+                self._source_clocks.pop(observation.kind, None)
+                return
+            self._source_clocks[observation.kind] = replace(
+                observation, capture_epoch=self._buffer.capture_epoch
+            )
+
+    def _encoded_audio(self, generation, payload, timestamp):
+        with self._lock:
+            if not self._accepts_media_locked(generation):
+                return False
+            epoch = self._buffer.capture_epoch
+            if self._original_audio_buffer.capture_epoch != epoch:
+                self._original_audio_buffer.clear(capture_epoch=epoch)
+                self._source_clocks.clear()
+            try:
+                self._original_audio_buffer.append_audio(payload, timestamp)
+            except OpusError:
+                # Original audio cannot compromise the legacy normalized lane
+                # or turn a functioning video session into a false failure.
+                return False
+            return True
 
     @property
     def receiver_retired(self) -> bool:
@@ -252,9 +306,9 @@ class CameraMediaSession:
                 return None
             return self._microphone_source.snapshot().intercom_generation
 
-    def push_intercom_generation(self, generation: int, payload: bytes) -> None:
+    def push_intercom_generation(self, generation: int, payload: bytes, *, admission=None) -> None:
         """Queue PCM through the short, generation-scoped microphone lock."""
-        if not self._microphone_source.push_intercom(generation, payload):
+        if not self._microphone_source.push_intercom(generation, payload, admission=admission):
             raise RuntimeError("intercom lease is not active")
         if self._microphone_source.snapshot().accepted_frames == 1:
             _log.info(
@@ -334,7 +388,7 @@ class CameraMediaSession:
         self._started_at = self._clock()
         self._first_video_at = None
         self._first_audio_at = None
-        self._buffer.clear()
+        self._clear_media_locked()
         try:
             self._audio_encoder = self._audio_encoder_factory()
         except BaseException:
@@ -353,6 +407,12 @@ class CameraMediaSession:
                 action.generation,
                 payload,
                 timestamp,
+            ),
+            "on_encoded_audio": lambda payload, timestamp: self._encoded_audio(
+                action.generation, payload, timestamp
+            ),
+            "on_source_clock": lambda observation: self._source_clock(
+                action.generation, observation
             ),
             "decode_video": False,
             "decode_audio": True,
@@ -420,7 +480,7 @@ class CameraMediaSession:
         self._cancel_retry_locked()
         self._state = MediaSessionState.STOPPING
         self._failure = None
-        self._buffer.clear()
+        self._clear_media_locked()
         self._opus_frame_duration_ms = None
         if stop is not None:
             stop.set()
@@ -466,7 +526,7 @@ class CameraMediaSession:
             if not self._accepts_media_locked(generation) or attempt == 1:
                 return
             self._capture_attempt += 1
-            self._buffer.clear()
+            self._clear_media_locked()
             self._state = MediaSessionState.STARTING
             self._failure = None
             self._opus_frame_duration_ms = None
@@ -480,7 +540,7 @@ class CameraMediaSession:
         with self._lock:
             if not self._accepts_media_locked(generation):
                 return
-            self._buffer.clear()
+            self._clear_media_locked()
             self._opus_frame_duration_ms = None
             self._audio_encoder = None
             self._microphone_source.clear()

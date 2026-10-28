@@ -1,12 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { BlockList, isIP } from "node:net";
 import {
-  H264Level, H264Profile, HAPStatus, SRTPCryptoSuites, StreamRequestTypes,
+  AudioBitrate, AudioStreamingCodecType, H264Level, H264Profile, HAPStatus, SRTPCryptoSuites, StreamRequestTypes,
   VideoCodecPacketizationMode, VideoCodecType, type CameraStreamingDelegate,
   type PrepareStreamRequest, type PrepareStreamResponse, type ReconfiguredVideoInfo,
-  type StreamingRequest, type VideoInfo,
+  type StreamingRequest, type VideoInfo, type AudioInfo,
 } from "@homebridge/hap-nodejs";
-import type { CameraPolicy, VideoConfiguration } from "./protocol.js";
+import type { AccessoryAudio, AudioConfiguration, CameraPolicy, VideoConfiguration, VideoPrepare } from "./protocol.js";
 import { ProtocolError } from "./protocol.js";
 import type { CameraDelegate, VideoDelegate } from "./session.js";
 
@@ -17,6 +17,7 @@ interface OwnedVideo {
 }
 export interface VideoCameraOptions {
   active: () => boolean;
+  audio?: () => AccessoryAudio | null;
   forceStop: (hapId: string) => void;
   failure: () => void;
 }
@@ -32,8 +33,10 @@ export function literalUnicastAddress(value: string, version: "ipv4" | "ipv6"): 
       !/^[A-Za-z0-9_.:-]{1,32}$/.test(zone) || /^\d+$/.test(zone) && (!/^[1-9][0-9]*$/.test(zone) || Number(zone) > 0xffffffff))) return false;
   return true;
 }
-const streamingPolicy = (enabled: boolean): CameraPolicy => ({synchronized: true, streaming: enabled,
-  live_audio: false, snapshots: false, recording: false, recording_audio: false, talkback: false, controls: false});
+const streamingPolicy = (enabled: boolean, audio: AccessoryAudio | null, speaker: boolean): CameraPolicy => ({synchronized: true, streaming: enabled,
+  live_audio: enabled && audio?.microphone === true && !audio.microphone_muted && audio.microphone_volume > 0,
+  snapshots: false, recording: false, recording_audio: false,
+  talkback: enabled && speaker && audio?.speaker === true && !audio.speaker_muted && audio.speaker_volume > 0, controls: false});
 const profile = (value: H264Profile): VideoConfiguration["profile"] => {
   if (value === H264Profile.BASELINE) return "baseline";
   if (value === H264Profile.MAIN) return "main";
@@ -54,11 +57,16 @@ export class HapVideoDelegate implements CameraStreamingDelegate {
   constructor(private readonly native: CameraDelegate, private readonly options: VideoCameraOptions) { }
   get count(): number { return this.sessions.size; }
 
+  private policy(): CameraPolicy {
+    const capabilities = this.native.info.capabilities;
+    return streamingPolicy(this.options.active(), this.options.audio?.() ?? null, capabilities.talkback);
+  }
+
   async synchronizePolicy(): Promise<void> {
     while (!this.closed) {
-      const enabled = this.options.active();
-      await this.native.ensurePolicy(streamingPolicy(enabled));
-      if (enabled === this.options.active()) return;
+      const policy = this.policy();
+      await this.native.ensurePolicy(policy);
+      if (JSON.stringify(policy) === JSON.stringify(this.policy())) return;
     }
   }
   handleSnapshotRequest(_request: Parameters<CameraStreamingDelegate["handleSnapshotRequest"]>[0],
@@ -85,8 +93,17 @@ export class HapVideoDelegate implements CameraStreamingDelegate {
     const session: OwnedVideo = {hapId: request.sessionID, wireId: randomUUID(), retired: false,
       phase: "preparing", transport: null, config: null, timer: null, closing: null};
     this.sessions.set(session.hapId, session);
-    const prepared = {source_address: request.sourceAddress, target_address: request.targetAddress, address_version: request.addressVersion,
-      target_port: request.video.port, key: request.video.srtp_key.toString("base64"), salt: request.video.srtp_salt.toString("base64")};
+    const audio = this.options.audio?.();
+    const withAudio = audio?.microphone === true || audio?.speaker === true;
+    if (withAudio && (!request.audio || request.audio.srtpCryptoSuite !== SRTPCryptoSuites.AES_CM_128_HMAC_SHA1_80 ||
+      !Buffer.isBuffer(request.audio.srtp_key) || request.audio.srtp_key.length !== 16 ||
+      !Buffer.isBuffer(request.audio.srtp_salt) || request.audio.srtp_salt.length !== 14 ||
+      !Number.isSafeInteger(request.audio.port) || request.audio.port < 1 || request.audio.port > 65535)) {
+      this.sessions.delete(session.hapId); throw new ProtocolError("invalid-audio-prepare");
+    }
+    const prepared: VideoPrepare = {source_address: request.sourceAddress, target_address: request.targetAddress, address_version: request.addressVersion,
+      target_port: request.video.port, key: request.video.srtp_key.toString("base64"), salt: request.video.srtp_salt.toString("base64"),
+      audio: withAudio ? {target_port: request.audio.port, key: request.audio.srtp_key.toString("base64"), salt: request.audio.srtp_salt.toString("base64")} : null};
     session.timer = setTimeout(() => {
       void this.stop(session).then(() => this.options.forceStop(session.hapId)).catch(() => this.options.failure());
     }, PREPARED_VIDEO_TIMEOUT_MS);
@@ -97,7 +114,9 @@ export class HapVideoDelegate implements CameraStreamingDelegate {
       const endpoint = transport.endpoint;
       if (!literalUnicastAddress(endpoint.address, prepared.address_version)) throw new ProtocolError("invalid-video-endpoint");
       return {addressOverride: endpoint.address, video: {port: endpoint.port, ssrc: endpoint.ssrc,
-        srtp_key: Buffer.from(endpoint.key, "base64"), srtp_salt: Buffer.from(endpoint.salt, "base64")}};
+        srtp_key: Buffer.from(endpoint.key, "base64"), srtp_salt: Buffer.from(endpoint.salt, "base64")},
+        ...(endpoint.audio === null ? {} : {audio: {port: endpoint.audio.port, ssrc: endpoint.audio.ssrc,
+          srtp_key: Buffer.from(endpoint.audio.key, "base64"), srtp_salt: Buffer.from(endpoint.audio.salt, "base64")}})};
     } catch (error) { await this.stop(session); throw error; }
   }
   private configuration(video: VideoInfo): VideoConfiguration {
@@ -111,6 +130,15 @@ export class HapVideoDelegate implements CameraStreamingDelegate {
     return {...current, width: video.width, height: video.height, fps: video.fps,
       max_bit_rate: video.max_bit_rate, rtcp_interval: video.rtcp_interval};
   }
+  private audioConfiguration(audio: AudioInfo): AudioConfiguration {
+    if (audio.codec !== AudioStreamingCodecType.OPUS || audio.channel !== 1 ||
+      ![8,16,24].includes(audio.sample_rate) || ![20,30,40,60].includes(audio.packet_time) ||
+      ![AudioBitrate.CONSTANT, AudioBitrate.VARIABLE].includes(audio.bit_rate) || audio.comfortNoiseEnabled !== false ||
+      !Number.isSafeInteger(audio.comfort_pt) || audio.comfort_pt < 0 || audio.comfort_pt > 127) throw new ProtocolError("unsupported-audio-format");
+    return {sample_rate: audio.sample_rate * 1000 as AudioConfiguration["sample_rate"], packet_time: audio.packet_time as AudioConfiguration["packet_time"],
+      bitrate_mode: audio.bit_rate === AudioBitrate.CONSTANT ? "cbr" : "vbr", max_bit_rate: audio.max_bit_rate,
+      payload_type: audio.pt, rtcp_interval: audio.rtcp_interval, channels: 1, clock_mode: "classic_hap"};
+  }
   private async handle(request: StreamingRequest): Promise<void> {
     const session = this.sessions.get(request.sessionID);
     if (request.type === StreamRequestTypes.STOP) { if (session) await this.stop(session); return; }
@@ -121,9 +149,12 @@ export class HapVideoDelegate implements CameraStreamingDelegate {
     if (request.type === StreamRequestTypes.START) {
       if (session.phase !== "prepared" || request.video.ssrc !== transport.endpoint.ssrc) throw new ProtocolError("video-start-conflict");
       const config = this.configuration(request.video);
+      const audioEndpoint = transport.endpoint.audio;
+      if (audioEndpoint !== null && request.audio.ssrc !== audioEndpoint.ssrc) throw new ProtocolError("audio-start-conflict");
+      const audio = audioEndpoint === null ? null : this.audioConfiguration(request.audio);
       session.phase = "starting";
       try {
-        await transport.start(config); this.current(session); session.phase = "active"; session.config = config;
+        await transport.start(config, audio); this.current(session); session.phase = "active"; session.config = config;
         if (session.timer) clearTimeout(session.timer); session.timer = null;
       } catch (error) { await this.stop(session); throw error; }
     } else if (request.type === StreamRequestTypes.RECONFIGURE) {
@@ -144,22 +175,23 @@ export class HapVideoDelegate implements CameraStreamingDelegate {
   }
   private ended(session: OwnedVideo): void {
     if (this.sessions.get(session.hapId) !== session) return;
+    const notify = !session.retired;
     session.retired = true;
     if (session.timer) clearTimeout(session.timer); session.timer = null;
-    this.sessions.delete(session.hapId); this.options.forceStop(session.hapId);
+    this.sessions.delete(session.hapId); if (notify) this.options.forceStop(session.hapId);
+  }
+  /** Synchronous local retirement precedes persistence, cleanup, and policy awaits. */
+  fence(): Promise<void> {
+    const retiring = [...this.sessions.values()];
+    for (const session of retiring) { session.retired = true; this.options.forceStop(session.hapId); }
+    return Promise.all(retiring.map(session => this.stop(session))).then(() => {});
   }
   async activeChanged(): Promise<void> {
-    if (!this.options.active()) {
-      const retiring = [...this.sessions.values()];
-      for (const session of retiring) { session.retired = true; this.options.forceStop(session.hapId); }
-      await Promise.all(retiring.map(session => this.stop(session)));
-    }
+    if (!this.options.active()) await this.fence();
     if (!this.closed) await this.synchronizePolicy();
   }
   async close(): Promise<void> {
     this.closed = true;
-    const retiring = [...this.sessions.values()];
-    for (const session of retiring) { session.retired = true; this.options.forceStop(session.hapId); }
-    await Promise.all(retiring.map(session => this.stop(session)));
+    await this.fence();
   }
 }

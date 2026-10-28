@@ -320,11 +320,33 @@ def _username(value):
     )
 
 
+_audio_preferences = _object(
+    microphone_muted=_boolean,
+    speaker_muted=_boolean,
+    microphone_volume=_integer(0, 100),
+    speaker_volume=_integer(0, 100),
+)
+_audio_birth_fields = _object(
+    microphone=_boolean,
+    speaker=_boolean,
+    revision=_revision,
+    microphone_muted=_boolean,
+    speaker_muted=_boolean,
+    microphone_volume=_integer(0, 100),
+    speaker_volume=_integer(0, 100),
+)
+
+
+def _audio_birth(value):
+    return _audio_birth_fields(value) and (not value["speaker"] or value["microphone"])
+
+
 _accessory_entry = _object(
     camera_id=lambda value: _display_text(value, 128),
     accessory_id=_uuid,
     username=_username,
     doorbell=_boolean,
+    audio=_nullable(_audio_birth),
 )
 _accessory_fields = _object(
     scope=_nullable(_account),
@@ -397,12 +419,36 @@ _video_configuration = _object(
     ),
     mtu=_integer(256, 1378),
 )
+_audio_endpoint_request = _object(
+    target_port=_integer(1, 65535),
+    key=_key_bytes(16),
+    salt=_key_bytes(14),
+)
+_audio_endpoint = _object(
+    port=_integer(1, 65535),
+    ssrc=_integer(1, 2**32 - 1),
+    key=_key_bytes(16),
+    salt=_key_bytes(14),
+)
+_audio_configuration = _object(
+    sample_rate=lambda value: _integer(8000, 24000)(value) and value in {8000, 16000, 24000},
+    packet_time=lambda value: _integer(20, 60)(value) and value in {20, 30, 40, 60},
+    bitrate_mode=_enum("cbr", "vbr"),
+    max_bit_rate=_integer(6, 64),
+    payload_type=_integer(96, 127),
+    channels=lambda value: _integer(1, 1)(value),
+    rtcp_interval=lambda value: (
+        type(value) in {int, float} and math.isfinite(value) and 0.1 <= value <= 10
+    ),
+    clock_mode=_enum("classic_hap"),
+)
 _video_endpoint = _object(
     address=_address,
     port=_integer(1, 65535),
     ssrc=_integer(1, 2**32 - 1),
     key=_key_bytes(16),
     salt=_key_bytes(14),
+    audio=_nullable(_audio_endpoint),
 )
 _video_result_fields = _object(**_RESOURCE, status=_enum("accepted", "rejected"), code=_code)
 _video_prepared = _object(
@@ -431,6 +477,13 @@ def _video_result(value):
 
 
 PAYLOAD_VALIDATORS = {
+    "audio_settings_update": _object(
+        **dict(scope=_scope), expected_revision=_revision, settings=_audio_preferences
+    ),
+    "audio_settings_result": lambda value: (
+        _object(scope=_scope, accepted=_boolean, code=_code, revision=_revision)(value)
+        and (value["accepted"] == (value["code"] == "ok"))
+    ),
     "video_prepare": _object(
         **_RESOURCE,
         source_address=_address,
@@ -439,9 +492,12 @@ PAYLOAD_VALIDATORS = {
         target_port=_integer(1, 65535),
         key=_key_bytes(16),
         salt=_key_bytes(14),
+        audio=_nullable(_audio_endpoint_request),
     ),
     "video_prepare_result": _prepared_result,
-    "video_start": _object(**_RESOURCE, config=_video_configuration),
+    "video_start": _object(
+        **_RESOURCE, config=_video_configuration, audio_config=_nullable(_audio_configuration)
+    ),
     "video_start_result": _video_result,
     "video_reconfigure": _object(**_RESOURCE, config=_video_configuration),
     "video_reconfigure_result": _video_result,
@@ -552,6 +608,7 @@ PAYLOAD_VALIDATORS = {
 KINDS = frozenset(PAYLOAD_VALIDATORS)
 PYTHON_KINDS = frozenset(
     {
+        "audio_settings_result",
         "video_prepare_result",
         "video_start_result",
         "video_reconfigure_result",
@@ -578,6 +635,7 @@ PYTHON_KINDS = frozenset(
 )
 HAP_KINDS = frozenset(
     {
+        "audio_settings_update",
         "video_prepare",
         "video_start",
         "video_reconfigure",
@@ -643,6 +701,7 @@ def validate_direction(envelope: dict[str, Any], sender: str) -> dict[str, Any]:
 
 
 REPLY_KINDS = {
+    "audio_settings_update": "audio_settings_result",
     "video_prepare": "video_prepare_result",
     "video_start": "video_start_result",
     "video_reconfigure": "video_reconfigure_result",
@@ -680,6 +739,27 @@ def validate_reply(request: dict[str, Any], reply: dict[str, Any]) -> dict[str, 
     ):
         raise HomeKitProtocolError("invalid control reply correlation")
     sent, received = request["payload"], reply["payload"]
+    if (
+        request["kind"] == "audio_settings_update"
+        and received["accepted"]
+        and received["revision"]
+        not in (
+            sent["expected_revision"],
+            sent["expected_revision"] + 1,
+        )
+    ):
+        raise HomeKitProtocolError("invalid audio settings revision correlation")
+    if request["kind"] == "video_prepare" and received["status"] == "accepted":
+        endpoint = received["endpoint"]
+        if (
+            any(endpoint[key] != sent[key] for key in ("key", "salt"))
+            or ((sent["audio"] is None) != (endpoint["audio"] is None))
+            or (
+                sent["audio"] is not None
+                and any(endpoint["audio"][key] != sent["audio"][key] for key in ("key", "salt"))
+            )
+        ):
+            raise HomeKitProtocolError("invalid negotiated track key correlation")
     for key in ("scope", "session_id", "job_id", "operation_id", "transfer_id"):
         if key in sent and sent[key] != received.get(key):
             raise HomeKitProtocolError("invalid control reply ownership")

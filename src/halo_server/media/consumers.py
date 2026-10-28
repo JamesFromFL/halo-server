@@ -17,6 +17,8 @@ class BufferedMediaConsumer:
     renew_callback: Callable[[], bool]
     close_callback: Callable[[], None]
     validity_callback: Callable[[], bool] | None = None
+    original_audio_buffer: object | None = None
+    source_clock_callback: Callable[[], tuple] | None = None
 
     def __post_init__(self) -> None:
         self._lock = threading.Lock()

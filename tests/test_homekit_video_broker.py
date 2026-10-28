@@ -39,9 +39,10 @@ class VideoOwner:
             ssrc=42,
             key=parameters["key"],
             salt=parameters["salt"],
+            audio=None,
         )
 
-    async def start(self, *args):
+    async def start(self, *args, **kwargs):
         self.calls.append(("start", *args))
 
     async def reconfigure(self, *args):

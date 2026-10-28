@@ -56,6 +56,10 @@ class ServerPaths:
         return self.homekit_directory / "registry.json"
 
     @property
+    def homekit_audio_settings_file(self) -> Path:
+        return self.homekit_directory / "audio-settings.json"
+
+    @property
     def homekit_pairing_directory(self) -> Path:
         return self.homekit_directory / "pairings"
 

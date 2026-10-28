@@ -46,7 +46,7 @@ def letterbox(frame, width, height):
     scale = min(width / frame.width, height / frame.height)
     scaled_w = max(2, min(width, int(frame.width * scale) // 2 * 2))
     scaled_h = max(2, min(height, int(frame.height * scale) // 2 * 2))
-    scaled = frame.reformat(width=scaled_w, height=scaled_h, format="yuv420p")
+    scaled = frame.reformat(width=scaled_w, height=scaled_h, format="yuv420p", threads=1)
     if (scaled_w, scaled_h) == (width, height):
         return scaled
     output = av.VideoFrame(width, height, "yuv420p")

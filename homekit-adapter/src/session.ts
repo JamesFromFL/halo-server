@@ -4,6 +4,7 @@ import {
   BULK_LIMITS, MAX_INVENTORY_DEVICES, MAX_INVENTORY_PAGE, ProtocolError, REPLY_KINDS,
   validateDirection, validateReply, type AccountScope, type CameraPolicy, type Envelope,
   type JsonObject, type Kind, type MediaScope, type VideoConfiguration, type VideoPrepare, type VideoEndpoint,
+  type AudioConfiguration, type AudioSettings,
 } from "./protocol.js";
 
 export const MAX_SESSION_REQUESTS = 16;
@@ -289,6 +290,18 @@ export class AdapterSession {
     finally { if (this.policySynchronization.get(identity) === operation) this.policySynchronization.delete(identity); }
   }
 
+  async updateAudioSettings(cameraId: string, identity: string, expectedRevision: number, settings: AudioSettings): Promise<number> {
+    const entry = this.entry(cameraId, identity), scope = {...entry.camera.scope};
+    settings = structuredClone(settings);
+    validateDirection({v: 1, kind: "audio_settings_update", boot_id: this.bootId, request_id: randomUUID(),
+      payload: {scope, expected_revision: expectedRevision, settings}}, "hap");
+    entry.synchronized = false; entry.policy = null; this.retireCamera(scope);
+    const reply = await this.request("audio_settings_update", {scope, expected_revision: expectedRevision, settings});
+    await this.refresh(); this.entry(cameraId, identity);
+    if (reply.payload.accepted !== true || reply.payload.code !== "ok") throw new ProtocolError("audio-settings-rejected");
+    return reply.payload.revision as number;
+  }
+
   async prepareVideo(cameraId: string, identity: string, sessionId: string, options: VideoPrepare, ended: () => void): Promise<VideoDelegate> {
     const scope = {...this.entry(cameraId, identity, "streaming").camera.scope};
     if (this.videos.has(sessionId) || this.videos.size + this.live.size >= MAX_LIVE_SESSIONS ||
@@ -300,7 +313,9 @@ export class AdapterSession {
       this.video(sessionId);
       if (reply.payload.status !== "accepted" || reply.payload.code !== "ok") throw new ProtocolError("video-prepare-rejected");
       const endpoint = structuredClone(reply.payload.endpoint as VideoEndpoint);
-      if (endpoint.key !== options.key || endpoint.salt !== options.salt) throw new ProtocolError("video-endpoint-mismatch");
+      if (endpoint.key !== options.key || endpoint.salt !== options.salt ||
+        (options.audio === null) !== (endpoint.audio === null) || options.audio !== null &&
+        (endpoint.audio!.key !== options.audio.key || endpoint.audio!.salt !== options.audio.salt)) throw new ProtocolError("video-endpoint-mismatch");
       resource.endpoint = endpoint;
       return new VideoDelegate(this, sessionId, endpoint);
     } catch (error) {
@@ -315,9 +330,10 @@ export class AdapterSession {
     if (!sameScope(current.camera.scope, resource.scope)) throw new ProtocolError("video-retired");
     return resource;
   }
-  async startVideo(sessionId: string, config: VideoConfiguration, reconfigure = false): Promise<void> {
+  async startVideo(sessionId: string, config: VideoConfiguration, reconfigure = false, audio: AudioConfiguration | null = null): Promise<void> {
     const resource = this.video(sessionId);
-    const reply = await this.request(reconfigure ? "video_reconfigure" : "video_start", {scope: resource.scope, session_id: sessionId, config});
+    const reply = await this.request(reconfigure ? "video_reconfigure" : "video_start", {scope: resource.scope, session_id: sessionId, config,
+      ...(reconfigure ? {} : {audio_config: audio})});
     this.video(sessionId);
     if (reply.payload.status !== "accepted" || reply.payload.code !== "ok") throw new ProtocolError("video-configuration-rejected");
   }
@@ -510,6 +526,9 @@ export class CameraDelegate {
   get ready(): boolean { return this.session.cameraReady(this.cameraId, this.identity); }
   updatePolicy(policy: CameraPolicy): Promise<void> { return this.session.updatePolicy(this.cameraId, this.identity, policy); }
   ensurePolicy(policy: CameraPolicy): Promise<void> { return this.session.ensurePolicy(this.cameraId, this.identity, policy); }
+  updateAudioSettings(expectedRevision: number, settings: AudioSettings): Promise<number> {
+    return this.session.updateAudioSettings(this.cameraId, this.identity, expectedRevision, settings);
+  }
   prepareVideo(sessionId: string, options: VideoPrepare, ended: () => void): Promise<VideoDelegate> {
     return this.session.prepareVideo(this.cameraId, this.identity, sessionId, options, ended);
   }
@@ -529,7 +548,7 @@ export class VideoDelegate {
     this.preparedEndpoint = structuredClone(endpoint);
   }
   get endpoint(): VideoEndpoint { return structuredClone(this.preparedEndpoint); }
-  start(config: VideoConfiguration): Promise<void> { return this.session.startVideo(this.sessionId, config); }
+  start(config: VideoConfiguration, audio: AudioConfiguration | null = null): Promise<void> { return this.session.startVideo(this.sessionId, config, false, audio); }
   reconfigure(config: VideoConfiguration): Promise<void> { return this.session.startVideo(this.sessionId, config, true); }
   close(): Promise<void> { return this.session.stopVideo(this.sessionId); }
 }

@@ -75,7 +75,12 @@ async def supervise_receiver(
         attempt_kwargs = dict(base_kwargs)
         if on_attempt_end is not None:
             attempt_kwargs["on_terminating"] = partial(_end_attempt, on_attempt_end, state, attempt)
-        for callback_name in ("on_encoded_video", "on_encoded_audio", "on_encoded_incompatible"):
+        for callback_name in (
+            "on_encoded_video",
+            "on_encoded_audio",
+            "on_encoded_incompatible",
+            "on_source_clock",
+        ):
             if callback_name in attempt_kwargs:
                 attempt_kwargs[callback_name] = _track_media(
                     attempt_kwargs[callback_name],

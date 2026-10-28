@@ -103,7 +103,9 @@ class _ServiceIntercomStream(PluginIntercomStream):
             raise RuntimeError("intercom stream is closed")
         if not self._current():
             raise RuntimeError("intercom account authority was retired")
-        self._session.push_intercom_generation(self._intercom_generation, payload)
+        self._session.push_intercom_generation(
+            self._intercom_generation, payload, admission=self._current
+        )
 
     async def wait_ready(self, timeout: float) -> bool:
         if not self._current():

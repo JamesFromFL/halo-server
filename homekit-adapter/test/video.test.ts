@@ -43,7 +43,7 @@ class Peer {
       await reply("policy_ack", {scope: request.payload.scope, accepted: true, code: "ok"});
     } else if (request.kind === "video_prepare") await reply("video_prepare_result", {
       scope: request.payload.scope, session_id: request.payload.session_id, status: "accepted", code: "ok",
-      endpoint: {address: request.payload.source_address, port: 50000, ssrc: 1234, key: request.payload.key, salt: request.payload.salt},
+      endpoint: {address: request.payload.source_address, port: 50000, ssrc: 1234, key: request.payload.key, salt: request.payload.salt, audio: null},
     });
     else if (["video_start", "video_reconfigure", "video_stop"].includes(request.kind)) await reply(`${request.kind}_result` as Envelope["kind"], {
       scope: request.payload.scope, session_id: request.payload.session_id,

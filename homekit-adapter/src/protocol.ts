@@ -7,6 +7,7 @@ export const MAX_FRAMES_PER_CHUNK = 256;
 export const FEATURE = "classic-camera-control-v1";
 
 export const KINDS = [
+  "audio_settings_update", "audio_settings_result",
   "video_prepare", "video_prepare_result", "video_start", "video_start_result", "video_reconfigure", "video_reconfigure_result", "video_stop", "video_stop_result", "video_ended",
   "accessory_config", "accessory_config_ack", "event_sync", "event_sync_ack", "event_state", "camera_event",
   "hello", "hello_ack", "ping", "pong", "shutdown", "shutdown_ack", "status", "error",
@@ -79,14 +80,25 @@ export const RESULT_CODES = [
 export interface AccountScope { profile_id: string; account_generation: number }
 export interface MediaScope extends AccountScope { camera_id: string; device_generation: number; privacy_generation: number }
 export type CameraPolicy = Record<typeof POLICY_FIELDS[number], boolean>;
+export interface AudioSettings {
+  microphone_muted: boolean; speaker_muted: boolean; microphone_volume: number; speaker_volume: number;
+}
+export interface AccessoryAudio extends AudioSettings {microphone: boolean; speaker: boolean; revision: number}
+export interface AudioConfiguration {
+  sample_rate: 8000 | 16000 | 24000; packet_time: 20 | 30 | 40 | 60; bitrate_mode: "vbr" | "cbr";
+  max_bit_rate: number; payload_type: number; rtcp_interval: number; channels: 1; clock_mode: "classic_hap";
+}
+export interface AudioPrepare {target_port: number; key: string; salt: string}
+export interface AudioEndpoint {port: number; ssrc: number; key: string; salt: string}
 export interface VideoConfiguration {
   width: number; height: number; fps: number; profile: "baseline" | "main" | "high"; level: "3.1" | "3.2" | "4.0";
   max_bit_rate: number; payload_type: number; rtcp_interval: number; mtu: number;
 }
 export interface VideoPrepare {
   source_address: string; target_address: string; address_version: "ipv4" | "ipv6"; target_port: number; key: string; salt: string;
+  audio: AudioPrepare | null;
 }
-export interface VideoEndpoint {address: string; port: number; ssrc: number; key: string; salt: string}
+export interface VideoEndpoint {address: string; port: number; ssrc: number; key: string; salt: string; audio: AudioEndpoint | null}
 export interface BulkHeader { kind: BulkKind; transfer_id: string; sequence: number; length: number }
 
 type Check = (value: unknown) => boolean;
@@ -187,7 +199,11 @@ const transferOpen: Check = value => transferOpenFields(value) && record(value) 
   (value.chunk_bytes as number) * (value.window_chunks as number) <= MAX_BULK_WINDOW_BYTES;
 const epoch: Check = value => typeof value === "string" && value.length >= 1 && value.length <= 64 && !/[^A-Za-z0-9_-]/.test(value);
 const username: Check = value => typeof value === "string" && value.length === 17 && /^[0-9A-F][26AE](?::[0-9A-F]{2}){5}$/.test(value);
-const accessoryEntry = object({camera_id:display(128),accessory_id:uuid,username,doorbell:bool});
+const audioSettingsFields = {microphone_muted:bool,speaker_muted:bool,microphone_volume:integer(0,100),speaker_volume:integer(0,100)};
+const audioSettings = object(audioSettingsFields);
+const accessoryAudioFields = object({...audioSettingsFields,microphone:bool,speaker:bool,revision});
+const accessoryAudio: Check = value => accessoryAudioFields(value) && record(value) && (!value.speaker || value.microphone === true);
+const accessoryEntry = object({camera_id:display(128),accessory_id:uuid,username,doorbell:bool,audio:nullable(accessoryAudio)});
 const accessoryFields = object({scope:nullable(account),revision,generation:positive,page_index:integer(0,7),total_pages:integer(1,8),
   entries:value=>Array.isArray(value)&&value.length<=32&&value.every(accessoryEntry),media_ready:bool});
 const accessoryConfig: Check = value => accessoryFields(value) && record(value) &&
@@ -197,19 +213,27 @@ const accessoryConfig: Check = value => accessoryFields(value) && record(value) 
 const address: Check = value => typeof value === "string" && value.length >= 1 && value.length <= 128 && !/[^\x21-\x7e]/.test(value);
 const secret = (bytes: number): Check => value => typeof value === "string" &&
   Buffer.from(value, "base64").length === bytes && Buffer.from(value, "base64").toString("base64") === value;
-const endpoint = object({address,port:integer(1,65535),ssrc:integer(1,0xffffffff),key:secret(16),salt:secret(14)});
+const audioEndpoint = object({port:integer(1,65535),ssrc:integer(1,0xffffffff),key:secret(16),salt:secret(14)});
+const audioPrepare = object({target_port:integer(1,65535),key:secret(16),salt:secret(14)});
+const endpoint = object({address,port:integer(1,65535),ssrc:integer(1,0xffffffff),key:secret(16),salt:secret(14),audio:nullable(audioEndpoint)});
+const rtcpInterval: Check = value => typeof value === "number" && Number.isFinite(value) && value>=0.1 && value<=10;
+const audioConfiguration = object({sample_rate:value=>[8000,16000,24000].includes(value as number),
+  packet_time:value=>[20,30,40,60].includes(value as number),bitrate_mode:choice("vbr","cbr"),max_bit_rate:integer(6,64),
+  payload_type:integer(96,127),rtcp_interval:rtcpInterval,channels:integer(1,1),clock_mode:choice("classic_hap")});
 const videoConfiguration = object({width:integer(2,1920),height:integer(2,1080),fps:integer(1,30),
   profile:choice("baseline","main","high"),level:choice("3.1","3.2","4.0"),max_bit_rate:integer(1,8000),
-  payload_type:integer(96,127),rtcp_interval:value=>typeof value === "number" && Number.isFinite(value) && value>=0.1 && value<=10,mtu:integer(256,1378)});
+  payload_type:integer(96,127),rtcp_interval:rtcpInterval,mtu:integer(256,1378)});
 const videoResultFields = object({...resource,status:choice("accepted","rejected"),code});
 const videoResult: Check = value => videoResultFields(value) && record(value) && ((value.status === "accepted") === (value.code === "ok"));
 const videoPrepareResultFields = object({...resource,status:choice("accepted","rejected"),code,endpoint:nullable(endpoint)});
 const videoPrepareResult: Check = value => videoPrepareResultFields(value) && record(value) &&
   ((value.status === "accepted") === (value.code === "ok")) && ((value.status === "accepted") === (value.endpoint !== null));
 const payloadValidators: Record<Kind, Check> = {
-  video_prepare:object({...resource,source_address:address,target_address:address,address_version:choice("ipv4","ipv6"),target_port:integer(1,65535),key:secret(16),salt:secret(14)}),
+  audio_settings_update:object({scope,expected_revision:revision,settings:audioSettings}),
+  audio_settings_result:value=>object({scope,accepted:bool,code,revision})(value) && record(value) && ((value.accepted===true)===(value.code==="ok")),
+  video_prepare:object({...resource,source_address:address,target_address:address,address_version:choice("ipv4","ipv6"),target_port:integer(1,65535),key:secret(16),salt:secret(14),audio:nullable(audioPrepare)}),
   video_prepare_result:videoPrepareResult,
-  video_start:object({...resource,config:videoConfiguration}),video_start_result:videoResult,
+  video_start:object({...resource,config:videoConfiguration,audio_config:nullable(audioConfiguration)}),video_start_result:videoResult,
   video_reconfigure:object({...resource,config:videoConfiguration}),video_reconfigure_result:videoResult,
   video_stop:object(resource),video_stop_result:videoResult,
   video_ended:object({...resource,code}),
@@ -243,8 +267,8 @@ const payloadValidators: Record<Kind, Check> = {
   transfer_cancel: object({...transfer, code: choice("cancelled", "invalidated", "timeout", "protocol-error")}),
   transfer_result: object({...transfer, status: choice("complete", "cancelled", "rejected"), code}),
 };
-const pythonKinds: readonly Kind[] = ["video_prepare_result", "video_start_result", "video_reconfigure_result", "video_stop_result", "video_ended", "accessory_config", "event_sync_ack", "event_state", "camera_event", "hello", "ping", "shutdown", "inventory_reset", "inventory_page", "camera_status", "policy_ack", "lease_result", "lease_renew_result", "lease_stop_result", "snapshot_result", "talkback_result", "control_result"];
-const hapKinds: readonly Kind[] = ["video_prepare", "video_start", "video_reconfigure", "video_stop", "accessory_config_ack", "event_sync", "hello_ack", "pong", "shutdown_ack", "inventory_request", "policy_update", "lease_request", "lease_renew", "lease_stop", "snapshot_request", "snapshot_cancel", "talkback_request", "control_request"];
+const pythonKinds: readonly Kind[] = ["audio_settings_result", "video_prepare_result", "video_start_result", "video_reconfigure_result", "video_stop_result", "video_ended", "accessory_config", "event_sync_ack", "event_state", "camera_event", "hello", "ping", "shutdown", "inventory_reset", "inventory_page", "camera_status", "policy_ack", "lease_result", "lease_renew_result", "lease_stop_result", "snapshot_result", "talkback_result", "control_result"];
+const hapKinds: readonly Kind[] = ["audio_settings_update", "video_prepare", "video_start", "video_reconfigure", "video_stop", "accessory_config_ack", "event_sync", "hello_ack", "pong", "shutdown_ack", "inventory_request", "policy_update", "lease_request", "lease_renew", "lease_stop", "snapshot_request", "snapshot_cancel", "talkback_request", "control_request"];
 export function validateScope(value: unknown): MediaScope {
   if (!scope(value)) throw new ProtocolError("invalid-scope");
   return value as MediaScope;
@@ -271,6 +295,7 @@ export function validateDirection(value: unknown, sender: "python" | "hap"): Env
   return message;
 }
 export const REPLY_KINDS: Partial<Record<Kind, Kind>> = {
+  audio_settings_update:"audio_settings_result",
   video_prepare:"video_prepare_result",video_start:"video_start_result",video_reconfigure:"video_reconfigure_result",video_stop:"video_stop_result",
   accessory_config:"accessory_config_ack", event_sync:"event_sync_ack",
   hello: "hello_ack", ping: "pong", shutdown: "shutdown_ack", inventory_request: "inventory_page",
@@ -290,6 +315,8 @@ export function validateReply(requestValue: unknown, replyValue: unknown): Envel
       Object.keys(sent).length === Object.keys(received).length && Object.entries(sent).every(([name, value]) => received[name] === value) : sent === received;
     if (!equal) throw new ProtocolError("invalid-reply-ownership");
   }
+  if (request.kind === "audio_settings_update" && reply.payload.accepted === true &&
+      reply.payload.revision !== request.payload.expected_revision && reply.payload.revision !== (request.payload.expected_revision as number) + 1) throw new ProtocolError("invalid-audio-correlation");
   if (request.kind === "accessory_config" && ["revision","generation","page_index"].some(key=>request.payload[key]!==reply.payload[key])) throw new ProtocolError("invalid-config-correlation");
   if (request.kind === "inventory_request" && (request.payload.cursor !== reply.payload.cursor ||
       (request.payload.revision !== 0 && request.payload.revision !== reply.payload.revision))) {

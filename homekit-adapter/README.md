@@ -1,8 +1,8 @@
 # Halo private HAP adapter groundwork
 
-This package implements **S04 dependency checks, S05 contracts, S06 supervised channels and S07 stable accessory/events and S08 public live-video delegates**. It publishes explicitly selected development accessories only after Python qualifies native video output. Python owns Ring, UDP/SRTP and video bytes. Audio, snapshots, owner pairing management and HKSV are later slices. A `hello_ack` and the feature marker `classic-camera-control-v1` mean only that this initial private control protocol is understood.
+This package implements **S04 dependency checks, S05 contracts, S06 supervised channels and S07 stable accessory/events and S08 public live-video delegates and S09 negotiated audio/talkback**. It publishes explicitly selected development accessories only after Python qualifies native video output. Python owns Ring, UDP/SRTP and video bytes. Snapshots, owner pairing management and HKSV are later slices. A `hello_ack` and the feature marker `classic-camera-control-v1` mean only that this initial private control protocol is understood.
 
-The Python daemon remains the Ring/session owner. The intended future adapter uses the released HAP public API; it does not embed Scrypted, require Homebridge, or import HAP private paths. Stable selected camera/doorbell graphs, pairing-store preflight and state-plus-cursor event delivery are implemented. Publication stays gated on the qualified Python video catalogue. Snapshots, negotiated audio and HKSV remain later slices. No unpublished scratchpad dependency or HAP fork is used here.
+The Python daemon remains the Ring/session owner. The intended future adapter uses the released HAP public API; it does not embed Scrypted, require Homebridge, or import HAP private paths. Stable selected camera/doorbell graphs, pairing-store preflight and state-plus-cursor event delivery are implemented. Publication stays gated on the qualified Python video catalogue. Snapshots and HKSV remain later slices. No unpublished scratchpad dependency or HAP fork is used here.
 
 ## Pinned toolchain
 
@@ -77,3 +77,15 @@ Prepared requests expire, late success is compensated, and exact scoped terminal
 notices force-stop only the matching HAP session. Shutdown keeps only owned cleanup
 results flowing while new acquisition admission is closed. Tests use a fake
 publisher; actual Apple pairing and delivery remain S15 device qualification.
+
+## S09 audio and saved settings
+
+The same public stream delegate negotiates mono Opus with classic HAP sample-rate
+RTP clocks and explicit packet time, bitrate mode and bounded bitrate. Python owns
+the additional UDP/SRTP context, source conversion and authenticated talkback; the
+Node process transports no live media bytes. Saved microphone/speaker birth is
+independent of transient source capability observations. Public Mute/Volume async
+setters fence active output and wait for Python CAS/fsync acknowledgement before
+updating HAP state. Publication and fresh policy wait for pending setting writes.
+Unsafe/failed settings keep the graph closed until durable configuration recovers.
+There is no HAP private-path patch or implicit unmute on restart.

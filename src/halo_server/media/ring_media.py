@@ -44,6 +44,8 @@ _DECODER_QUEUE_ATTRIBUTE = "_RTCRtpReceiver__decoder_queue"
 _DECODER_THREAD_ATTRIBUTE = "_RTCRtpReceiver__decoder_thread"
 _ACTIVE_SSRC_ATTRIBUTE = "_RTCRtpReceiver__active_ssrc"
 _RTX_SSRC_ATTRIBUTE = "_RTCRtpReceiver__rtx_ssrc"
+_TIMESTAMP_MAPPER_ATTRIBUTE = "_RTCRtpReceiver__timestamp_mapper"
+_REMOTE_STREAMS_ATTRIBUTE = "_RTCRtpReceiver__remote_streams"
 _ENCODED_MIME_TYPES = {
     "video": "video/h264",
     "audio": "audio/opus",
@@ -113,6 +115,110 @@ class AudioSenderSnapshot:
     remote_fraction_lost: int | None = None
     remote_jitter: int | None = None
     round_trip_time: float | None = None
+
+
+@dataclass(frozen=True)
+class SourceClockObservation:
+    """An actual source SR mapped into the encoded callback timestamp domain."""
+
+    kind: str
+    ssrc: int
+    rtp_timestamp: int
+    sender_ntp: int
+    received_at: float
+    capture_epoch: int = 0
+
+
+def install_source_clock_observer(receiver, kind, callback, *, clock=time.monotonic):
+    """Wrap one pinned receiver, preserving its original RTCP processing.
+
+    Encoded frames use aiortc's TimestampMapper domain, which has a separate
+    origin for each receiver. Raw SR values must never be relabelled as that
+    domain. The returned hook maps only an actual, recent, known-source report.
+    """
+    import aiortc
+    from aiortc.rtcrtpreceiver import TimestampMapper
+    from aiortc.rtp import RtcpSrPacket
+
+    original = getattr(receiver, "_handle_rtcp_packet", None)
+    code = getattr(getattr(type(receiver), "_handle_rtcp_packet", None), "__code__", None)
+    mapper = getattr(receiver, _TIMESTAMP_MAPPER_ATTRIBUTE, None)
+    streams = getattr(receiver, _REMOTE_STREAMS_ATTRIBUTE, None)
+    active = getattr(receiver, _ACTIVE_SSRC_ATTRIBUTE, None)
+    rtx = getattr(receiver, _RTX_SSRC_ATTRIBUTE, None)
+    if (
+        str(getattr(aiortc, "__version__", "")) not in _ENCODED_FRAME_AIORTC_VERSIONS
+        or kind not in _ENCODED_MIME_TYPES
+        or not callable(original)
+        or not {"RtcpSrPacket", "sender_info", "ntp_timestamp"}.issubset(
+            set(getattr(code, "co_names", ()))
+        )
+        or type(mapper) is not TimestampMapper
+        or not hasattr(mapper, "_origin")
+        or not hasattr(mapper, "_last")
+        or not isinstance(streams, dict)
+        or not isinstance(active, dict)
+        or not isinstance(rtx, dict)
+        or "_handle_rtcp_packet" in receiver.__dict__
+    ):
+        raise EncodedFrameAdapterError("Source clock observer contract changed")
+    latest = None
+    published = False
+
+    async def handle(packet):
+        nonlocal latest
+        await original(packet)
+        if not isinstance(packet, RtcpSrPacket) or packet.ssrc not in streams:
+            return
+        info = packet.sender_info
+        if (
+            type(packet.ssrc) is int
+            and 0 < packet.ssrc < 2**32
+            and type(info.ntp_timestamp) is int
+            and 0 < info.ntp_timestamp < 2**64
+            and type(info.rtp_timestamp) is int
+            and 0 <= info.rtp_timestamp < 2**32
+        ):
+            latest = (packet.ssrc, info.rtp_timestamp, info.ntp_timestamp, clock())
+
+    receiver._handle_rtcp_packet = handle
+
+    def invalidate():
+        nonlocal published
+        if published:
+            published = False
+            callback(SourceClockObservation(kind, 0, 0, 0, clock()))
+
+    def observe(timestamp):
+        nonlocal published
+        if latest is None or type(timestamp) is not int:
+            return
+        ssrc, raw, ntp, received = latest
+        origin = mapper._origin
+        if len(active) > 16 or len(streams) > 16:
+            invalidate()
+            return
+        candidates = [
+            (observed, rtx.get(source, source))
+            for source, observed in active.items()
+            if source in streams and rtx.get(source, source) in streams
+        ]
+        if (
+            type(origin) is not int
+            or ssrc not in streams
+            or not candidates
+            or len({source for _observed, source in candidates}) != 1
+            or max(candidates)[1] != ssrc
+            or not 0 <= clock() - received <= 30
+        ):
+            invalidate()
+            return
+        mapped = (raw - origin) % 2**32
+        mapped += round((timestamp - mapped) / 2**32) * 2**32
+        callback(SourceClockObservation(kind, ssrc, mapped, ntp, received))
+        published = True
+
+    return observe
 
 
 def patch_ring_doorbell_webrtc_close() -> bool:
@@ -506,6 +612,15 @@ MIC_SAMPLE_RATE = 48000
 MIC_SAMPLES = 960  # 20 ms at 48 kHz — matches aiortc's AUDIO_PTIME
 MIC_FRAME_BYTES = MIC_SAMPLES * 2
 MIC_QUEUE_FRAMES = 10
+MIC_FRAME_MAX_AGE = 0.25
+
+
+@dataclass(frozen=True)
+class _QueuedMicrophoneFrame:
+    payload: bytes
+    queued_at: float
+    generation: int | None
+    admission: Callable[[], bool] | None
 
 
 def retain_aiortc_connect_tasks(peer_connection, retain) -> None:
@@ -572,10 +687,19 @@ def audio_frame_channels(frame, arr) -> int:
 class MicrophonePcmBuffer:
     """Thread-safe low-latency queue of fixed 20 ms microphone frames."""
 
-    def __init__(self, *, max_frames: int = MIC_QUEUE_FRAMES) -> None:
+    def __init__(
+        self,
+        *,
+        max_frames: int = MIC_QUEUE_FRAMES,
+        clock=time.monotonic,
+        max_age: float = MIC_FRAME_MAX_AGE,
+    ) -> None:
         if isinstance(max_frames, bool) or not isinstance(max_frames, int) or max_frames <= 0:
             raise ValueError("microphone queue size must be a positive integer")
-        self._frames: deque[bytes] = deque(maxlen=max_frames)
+        if isinstance(max_age, bool) or not math.isfinite(max_age) or max_age <= 0:
+            raise ValueError("microphone frame age must be finite and positive")
+        self._clock, self._max_age = clock, max_age
+        self._frames: deque[_QueuedMicrophoneFrame] = deque(maxlen=max_frames)
         self._lock = threading.Lock()
         self._condition = threading.Condition(self._lock)
         self._accepted_frames = 0
@@ -667,23 +791,46 @@ class MicrophonePcmBuffer:
         with self._lock:
             self._append_locked(frame)
 
-    def push_intercom(self, generation: int, payload: bytes) -> bool:
+    def push_intercom(self, generation: int, payload: bytes, *, admission=None) -> bool:
         """Push PCM only while the matching intercom generation is active."""
         frame = _microphone_frame(payload)
         with self._lock:
             if not self._intercom_active or generation != self._intercom_generation:
                 return False
-            self._append_locked(frame)
+            self._append_locked(frame, admission=admission)
             return True
 
     def pull(self) -> bytes | None:
-        with self._lock:
-            if self._intercom_active and not self._speaker_ready:
-                return None
-            if not self._frames:
-                return None
-            self._consumed_frames += 1
-            return self._frames.popleft()
+        for _ in range(self._frames.maxlen):
+            with self._lock:
+                if self._intercom_active and not self._speaker_ready:
+                    return None
+                if not self._frames:
+                    return None
+                frame = self._frames.popleft()
+            # Admission may take the session/controller locks. Never call it
+            # under the microphone lock (release takes them in the other order).
+            age = self._clock() - frame.queued_at
+            try:
+                admitted = 0 <= age <= self._max_age and (
+                    frame.admission is None or bool(frame.admission())
+                )
+            except Exception:
+                admitted = False
+            admitted = admitted and 0 <= self._clock() - frame.queued_at <= self._max_age
+            with self._lock:
+                if frame.generation is not None:
+                    admitted = admitted and (
+                        self._intercom_active
+                        and self._speaker_ready
+                        and frame.generation == self._intercom_generation
+                    )
+                if not admitted:
+                    self._dropped_frames += 1
+                    continue
+                self._consumed_frames += 1
+                return frame.payload
+        return None
 
     def clear(self, *, reset_statistics: bool = False) -> None:
         """Discard queued PCM and require speaker activation for the next transport."""
@@ -710,10 +857,17 @@ class MicrophonePcmBuffer:
                 speaker_failure=self._speaker_failure,
             )
 
-    def _append_locked(self, frame: bytes) -> None:
+    def _append_locked(self, frame: bytes, *, admission=None) -> None:
         if len(self._frames) == self._frames.maxlen:
             self._dropped_frames += 1
-        self._frames.append(frame)
+        self._frames.append(
+            _QueuedMicrophoneFrame(
+                frame,
+                self._clock(),
+                self._intercom_generation if self._intercom_active else None,
+                admission,
+            )
+        )
         self._accepted_frames += 1
 
 
@@ -1127,6 +1281,7 @@ class RingStreamReceiver:
         *,
         on_encoded_video: Callable[[bytes, int], None] | None = None,
         on_encoded_audio: Callable[[bytes, int], None] | None = None,
+        on_source_clock: Callable[[SourceClockObservation], None] | None = None,
         decode_video: bool = True,
         decode_audio: bool = True,
         on_encoded_incompatible: Callable[[str, str], None] | None = None,
@@ -1140,6 +1295,7 @@ class RingStreamReceiver:
         self._on_audio = on_audio
         self._on_encoded_video = on_encoded_video
         self._on_encoded_audio = on_encoded_audio
+        self._on_source_clock = on_source_clock
         self._decode_video = decode_video
         self._decode_audio = decode_audio
         self._on_encoded_incompatible = on_encoded_incompatible
@@ -1336,11 +1492,23 @@ class RingStreamReceiver:
                 video_transceiver = pc.addTransceiver("video", direction="recvonly")
                 mic_track = MicrophoneTrack(self._microphone_source)
                 audio_transceiver = pc.addTransceiver(mic_track, direction="sendrecv")
+
+                def source_callback(receiver, kind, callback):
+                    if self._on_source_clock is None:
+                        return callback
+                    observe = install_source_clock_observer(receiver, kind, self._on_source_clock)
+
+                    def deliver(payload, timestamp):
+                        observe(timestamp)
+                        return callback(payload, timestamp)
+
+                    return deliver
+
                 if self._on_encoded_video is not None:
                     install_encoded_frame_adapter(
                         video_transceiver.receiver,
                         "video",
-                        encoded_video,
+                        source_callback(video_transceiver.receiver, "video", encoded_video),
                         forward_to_decoder=self._decode_video,
                         on_incompatible=on_encoded_incompatible,
                     )
@@ -1348,7 +1516,9 @@ class RingStreamReceiver:
                     install_encoded_frame_adapter(
                         audio_transceiver.receiver,
                         "audio",
-                        self._on_encoded_audio,
+                        source_callback(
+                            audio_transceiver.receiver, "audio", self._on_encoded_audio
+                        ),
                         forward_to_decoder=self._decode_audio,
                         on_incompatible=on_encoded_incompatible,
                     )

@@ -50,10 +50,12 @@ class HomeKitBroker:
         selection: Callable = lambda: (),
         changed: Callable[[], None] = lambda: None,
         live_manager=None,
+        audio_settings: Callable | None = None,
     ) -> None:
         self.controller, self.backend = controller, backend
         self._selection, self._changed = selection, changed
         self.live_manager = live_manager
+        self._audio_settings = audio_settings
         self.runtime = None
         self.boot_id: str | None = None
         self._account = None
@@ -205,9 +207,9 @@ class HomeKitBroker:
                 return {**envelope, "kind": "error", "payload": {"code": _code(exc), "message": ""}}
         if kind == "policy_update":
             try:
-                await self.controller.update_policy(
-                    boot, _scope(data), CameraPolicy(**data["policy"])
-                )
+                scope, policy = _scope(data), CameraPolicy(**data["policy"])
+                self._authorize_audio_policy(scope, policy)
+                await self.controller.update_policy(boot, scope, policy)
             except HomeKitOperationError as exc:
                 return {"scope": data["scope"], "accepted": False, "code": _code(exc)}
             self._pages.clear()
@@ -243,6 +245,30 @@ class HomeKitBroker:
             return result | {"status": "accepted", "code": "ok"}
         raise HomeKitProtocolError("unsupported child request")
 
+    def _authorize_audio_policy(self, scope, policy):
+        # Production injects durable Python-owned settings. A child cannot
+        # unmute a camera by sending a permissive policy before a saved update.
+        if self._audio_settings is None:
+            return
+        row = self._audio_settings(scope)
+        if (
+            policy.live_audio
+            and (
+                row is None
+                or not row.microphone
+                or row.preferences.microphone_muted
+                or row.preferences.microphone_volume == 0
+            )
+            or policy.talkback
+            and (
+                row is None
+                or not row.speaker
+                or row.preferences.speaker_muted
+                or row.preferences.speaker_volume == 0
+            )
+        ):
+            raise HomeKitOperationError("policy_denied")
+
     async def _video_request(self, boot: str, kind: str, data: dict) -> dict:
         from halo_server.media.h264 import H264Error, VideoConfiguration
 
@@ -254,6 +280,13 @@ class HomeKitBroker:
         scope, session_id = _scope(data), data["session_id"]
         try:
             if kind == "video_prepare":
+                from halo_server.media.homekit_audio import AudioEndpointRequest
+
+                audio = data["audio"]
+                if audio is not None and self._audio_settings is not None:
+                    row = self._audio_settings(scope)
+                    if row is None or not (row.microphone or row.speaker):
+                        raise HomeKitOperationError("policy_denied")
                 prepared = await self.live_manager.prepare(
                     boot,
                     scope,
@@ -264,6 +297,15 @@ class HomeKitBroker:
                     target_port=int(data["target_port"]),
                     key=base64.b64decode(data["key"], validate=True),
                     salt=base64.b64decode(data["salt"], validate=True),
+                    audio=(
+                        AudioEndpointRequest(
+                            target_port=int(audio["target_port"]),
+                            key=base64.b64decode(audio["key"], validate=True),
+                            salt=base64.b64decode(audio["salt"], validate=True),
+                        )
+                        if audio is not None
+                        else None
+                    ),
                 )
                 result["endpoint"] = {
                     "address": prepared.address,
@@ -271,15 +313,41 @@ class HomeKitBroker:
                     "ssrc": prepared.ssrc,
                     "key": base64.b64encode(prepared.key).decode("ascii"),
                     "salt": base64.b64encode(prepared.salt).decode("ascii"),
+                    "audio": (
+                        {
+                            "port": prepared.audio.port,
+                            "ssrc": prepared.audio.ssrc,
+                            "key": base64.b64encode(prepared.audio.key).decode("ascii"),
+                            "salt": base64.b64encode(prepared.audio.salt).decode("ascii"),
+                        }
+                        if prepared.audio is not None
+                        else None
+                    ),
                 }
             elif kind in {"video_start", "video_reconfigure"}:
                 config = VideoConfiguration(**data["config"])
-                operation = (
-                    self.live_manager.start
-                    if kind == "video_start"
-                    else self.live_manager.reconfigure
-                )
-                await operation(boot, scope, session_id, config)
+                if kind == "video_start":
+                    from halo_server.media.opus import AudioConfiguration
+
+                    audio = data["audio_config"]
+                    row = self._audio_settings(scope) if self._audio_settings else None
+                    if (
+                        audio is not None
+                        and self._audio_settings is not None
+                        and (row is None or not (row.microphone or row.speaker))
+                    ):
+                        raise HomeKitOperationError("policy_denied")
+                    await self.live_manager.start(
+                        boot,
+                        scope,
+                        session_id,
+                        config,
+                        audio_config=AudioConfiguration(**audio) if audio is not None else None,
+                        microphone_volume=row.preferences.microphone_volume if row else 100,
+                        speaker_volume=row.preferences.speaker_volume if row else 100,
+                    )
+                else:
+                    await self.live_manager.reconfigure(boot, scope, session_id, config)
             else:
                 await self.live_manager.stop(boot, scope, session_id)
         except HomeKitOperationError as exc:

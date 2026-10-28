@@ -180,7 +180,10 @@ export class AccessoryManager {
           failure: () => { this.failed = true; this.invalidate(); this.options.onFailure?.(new ProtocolError("video-cleanup-failed")); },
         }), published: false, stateTimer: null};
         this.managed.set(identity.camera_id, managed);
-      } else managed.camera.update(camera);
+      } else {
+        managed.camera.update(camera);
+        await managed.camera.updateAudio(identity.audio ?? null);
+      }
       await managed.camera.synchronizePolicy();
       if (this.closed || config !== this.configuration || config.generation !== this.generation) return;
       const refreshed = this.options.session.cameras().find(value => value.scope.camera_id === identity.camera_id);

@@ -4,14 +4,15 @@ Engineering record, 2026-10-28. Foundation committed locally as
 `798b7173ad9e8fbcbe655eb692a709b17cafcc87`; S05 is committed locally as
 `16c5aeda589d8d59886450b74018104b49ee616d`. S06 is committed locally as
 `7b735aaf13638decb1ad839bc3c5099658e72748`. S07 is committed locally as
-`d89ad9436a0e3cd354cb8b9870e867ff81071559`. S08 builds on those commits.
+`d89ad9436a0e3cd354cb8b9870e867ff81071559`. S08 is committed locally as
+`90c8832f8ef317117e9dc633f51f194b1df7ae76`. S09 builds on those commits.
 
 The approved architecture keeps Python as the sole Ring account, push-event,
 shared capture and speaker owner. A supervised Node adapter uses released public
 HAP APIs for HomeKit. Native media will be delivered directly from Python rather
 than through RTSP. The existing plugin/RTSP integration remains functional during
-development. Direct video is implemented as a development path. Full audio,
-snapshots, owner pairing management, HKSV and real Apple qualification remain gated.
+development. Direct video, negotiated Opus audio and shared talkback are implemented as development paths.
+Snapshots, owner pairing management, HKSV and real Apple qualification remain gated.
 
 ## Implemented foundation
 
@@ -70,7 +71,7 @@ owner-only regular files, no-follow directory traversal, atomic replacement,
 file/directory fsync and visible corruption/conflict/uncertain-durability errors.
 The future settings interface will use this store; no TUI editor is added here.
 `homekit` and `dual` report `control_ready` with
-`audio_and_snapshots_not_implemented` once the control child and native video
+`snapshots_not_implemented` once the control child and native video
 qualification are ready; missing compiled
 resources remain visibly degraded. Selected accessories can publish only after native output qualification. The
 complete owner pairing/settings interface is still S13.
@@ -258,14 +259,58 @@ not migrate the user's actual account file. A future installer must check state
 compatibility before rollback. It must not restore an old secret-state snapshot
 that could revive revoked pairings/controllers.
 
+## S09 audio and talkback
+
+Original validated Ring Opus has a separate bounded two-second packet lane. It
+preserves the source encoded payload independently of the legacy normalized Opus
+lane. Compatible mono packets copy or repacketize; other supported combinations
+use a killable native PyAV/libopus worker. The selected output is 8/16/24 kHz
+capture bandwidth, 20/30/40/60 ms packet time and CBR/VBR, with the classic HAP RTP
+clock equal to the selected sample rate. Internal source/decoder timing stays
+48 kHz. Thirty-millisecond output uses valid repacketized 10 ms frames. No system
+FFmpeg executable or manual arguments are needed.
+
+Each common live session owns separate video/audio UDP sockets, keys, SSRCs and
+SRTP/SRTCP contexts with one shared capture lease and STOP lifecycle. Source RTP
+sender reports are observed per pinned aiortc receiver and mapped into its encoded
+callback timestamp domain. Missing/invalid source reports use an explicit receipt
+time estimate; synchronized source clocks are not claimed in that case. Live
+microphone output checks permission and capture epoch before reading, after native
+conversion, after pacing and before every datagram.
+
+Authenticated, selected-payload Opus must decode successfully before a lazy Ring
+speaker claim starts. The shared speaker owner excludes competing native/plugin
+talkers. Jitter, input/output queues, readiness, frame age, inactivity, native
+workers and total speaker lifetime are bounded. Pending starts retain ownership
+through cancellation and compensate late success. The final Ring PCM consumer
+checks frame age and privacy admission, preventing an already queued frame from
+playing after a settings fence.
+
+`homekit/audio-settings.json` stores immutable microphone/speaker graph birth and
+four mute/volume preferences, keyed by profile, camera and durable accessory UUID.
+It uses the existing private CAS, no-follow, atomic-replace and fsync store. A
+durable companion enrollment marker makes loss of an initialized settings file a
+visible failure instead of silently recreating unmuted defaults. Birth
+and saved mutes survive outages and capability drift. Public HAP characteristic
+writes wait for durable acknowledgement; Python fences only the affected camera
+before the disk await. A failed/uncertain write reloads durable truth and keeps the
+old scope fenced. Setting changes conservatively stop that camera's active streams;
+a new Home view uses the saved settings and new privacy scope.
+
+Graph support and observed source audio are separate facts. A cold source may
+have no measured audio format yet; validated source packets establish what can be
+delivered. No Ring model name invents a measured format. Native fixtures cover
+independent SRTP decrypt/decode, the negotiated clock matrix, waveform boundaries,
+source-clock mapping, queue expiry, persistence races and late cleanup. Actual
+Apple playback, source-device audio and talkback remain S15 hardware qualification.
+
 ## Remaining implementation
 
-S04 still needs the final distribution/runtime capability gates. S05–S08 implement service/configuration/contracts, operational private IPC,
-identity/accessory/events and direct H264 live video. Build identity remains correlation, not independent provenance; immutable
+S04 still needs the final distribution/runtime capability gates. S05–S09 implement service/configuration/contracts, operational private IPC,
+identity/accessory/events, direct H264 live video, negotiated Opus and shared talkback. Build identity remains correlation, not independent provenance; immutable
 bundled-resource manifests and release packaging belong in S14.
 
-S09–S15 remain: negotiated audio and
-shared talkback; bounded JPEG decode/resize/cache; timed recording samples and an
+S10–S15 remain: bounded JPEG decode/resize/cache; timed recording samples and an
 isolated fMP4 worker; HDS delivery; CLI/TUI management; packaged installation and
 rollback; authorized Ring/Apple Home acceptance and measured performance.
 

@@ -222,6 +222,20 @@ class HomeKitController:
             if not self._entry(boot_id, scope).policy.permits(permission):
                 raise HomeKitOperationError("policy_denied")
 
+    def validate_selected_scope(self, boot_id: str, scope: MediaScope) -> None:
+        with self._lock:
+            self._entry(boot_id, scope)
+
+    def fence_camera(self, boot_id: str, scope: MediaScope) -> None:
+        """Revoke one camera before awaiting a durable settings operation."""
+        with self._lock:
+            entry = self._entry(boot_id, scope)
+            entry.scope = replace(scope, privacy_generation=self._next_privacy())
+            entry.policy = CameraPolicy()
+            for claim in self._claims.values():
+                if claim.scope.source_key == scope.source_key:
+                    claim.retired = True
+
     def _valid(self, claim: _Claim) -> bool:
         with self._lock:
             try:
@@ -541,6 +555,8 @@ class NativeLiveHandle:
         self._cursor = None
         self._capture_epoch = None
         self._reading = asyncio.Lock()
+        self._audio_cursor = self._audio_epoch = None
+        self._audio_reading = asyncio.Lock()
 
     @property
     def capture_epoch(self):
@@ -558,6 +574,48 @@ class NativeLiveHandle:
     def is_current(self):
         resource = self._claim.resource
         return self._controller._valid(self._claim) and bool(resource.is_current())
+
+    @property
+    def source_clocks(self):
+        if not self.is_current():
+            raise HomeKitOperationError("authority_changed")
+        callback = getattr(self._claim.resource, "source_clock_callback", None)
+        clocks = callback() if callback is not None else ()
+        if not self.is_current():
+            raise HomeKitOperationError("authority_changed")
+        return tuple(item for item in clocks if item.capture_epoch == self.capture_epoch)
+
+    async def read_audio(self, *, timeout: float = 0.25) -> BufferRead:
+        if type(timeout) not in {int, float} or not 0 <= timeout <= MAX_READ_SECONDS:
+            raise HomeKitOperationError("invalid_timeout")
+        if self._audio_reading.locked():
+            raise HomeKitOperationError("busy")
+        task = self._controller._begin_work(self._claim)
+        try:
+            async with self._audio_reading:
+                self._controller.authorize(self._claim.boot_id, self.scope, "live_audio")
+                if not self.is_current():
+                    raise HomeKitOperationError("authority_changed")
+                buffer = getattr(self._claim.resource, "original_audio_buffer", None)
+                if buffer is None:
+                    raise HomeKitOperationError("audio_unavailable")
+                batch = await owned_thread(
+                    buffer.read, after_sequence=self._audio_cursor, timeout=timeout
+                )
+                self._controller.authorize(self._claim.boot_id, self.scope, "live_audio")
+                if not self.is_current():
+                    raise HomeKitOperationError("authority_changed")
+                epoch = self.capture_epoch
+                if batch.capture_epoch != epoch:
+                    self._audio_cursor, self._audio_epoch = None, epoch
+                    return BufferRead((), True, epoch)
+                changed = self._audio_epoch is not None and self._audio_epoch != epoch
+                self._audio_epoch = epoch
+                if batch.packets:
+                    self._audio_cursor = batch.packets[-1].sequence
+                return BufferRead(batch.packets, batch.resynchronized or changed, epoch)
+        finally:
+            self._controller._finish_work(self._claim, task)
 
     async def read(self, *, timeout: float = 0.25) -> BufferRead:
         if type(timeout) not in {int, float} or not 0 <= timeout <= MAX_READ_SECONDS:

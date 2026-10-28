@@ -224,6 +224,8 @@ class ServiceHomeKitBackend:
             raise HomeKitOperationError("camera_unavailable") from exc
         return BufferedMediaConsumer(
             buffer=session.buffer,
+            original_audio_buffer=getattr(session, "original_audio_buffer", None),
+            source_clock_callback=getattr(session, "source_clock_snapshot", None),
             renew_callback=lambda: service._run_gateway_call(
                 service._renew_camera_consumer(
                     scope.camera_id,

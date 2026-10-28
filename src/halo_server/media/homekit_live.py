@@ -10,11 +10,12 @@ import socket
 import time
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from uuid import UUID
 
 from halo_server.homekit.models import HomeKitOperationError, MediaScope
 from halo_server.media.buffer import MediaStreamKind
+from halo_server.media.homekit_audio import AudioEndpointRequest, AudioTrack, PreparedAudio
 from halo_server.media.manager import settle_owned
 from halo_server.media.rtp import (
     MAX_ACCESS_UNIT_BYTES,
@@ -52,6 +53,7 @@ class PreparedVideo:
     address: str
     key: bytes = field(repr=False)
     salt: bytes = field(repr=False)
+    audio: PreparedAudio | None = None
 
 
 @dataclass(eq=False)
@@ -73,6 +75,9 @@ class _Session:
     handle: object | None = None
     adapter: object | None = None
     config: object | None = None
+    audio: AudioTrack | None = None
+    audio_config: object | None = None
+    speaker_volume: int = 100
     start_task: asyncio.Task | None = None
     sender: asyncio.Task | None = None
     receiver: asyncio.Task | None = None
@@ -99,6 +104,8 @@ class _Session:
     last_nack_window: float = 0
     nack_count: int = 0
     last_pli: float = 0
+    clock_anchor: tuple | None = None
+    timing_mode: str = "receiver_estimated"
 
 
 def _uuid(value):
@@ -154,11 +161,15 @@ class HomeKitLiveManager:
         *,
         on_ended: Callable[..., Awaitable[None]] = _noop,
         adapter_factory=None,
+        audio_adapter_factory=None,
+        audio_decoder_factory=None,
         clock: Callable[[], float] = time.monotonic,
     ):
         self.controller = controller
         self._on_ended = on_ended
         self._adapter_factory = adapter_factory
+        self._audio_adapter_factory = audio_adapter_factory
+        self._audio_decoder_factory = audio_decoder_factory
         self._clock = clock
         self._sessions: dict[str, _Session] = {}
         self._stopped: OrderedDict[tuple[str, str], float] = OrderedDict()
@@ -167,6 +178,8 @@ class HomeKitLiveManager:
         self._closed = False
         self.ready = False
         self.capabilities = None
+        self.audio_ready = False
+        self.audio_capabilities = None
 
     @property
     def pending_resources(self):
@@ -174,13 +187,26 @@ class HomeKitLiveManager:
 
     @property
     def cleanup_failures(self):
-        return sum(session.failure is not None for session in self._sessions.values())
+        return sum(
+            session.failure is not None
+            or session.audio is not None
+            and session.audio.cleanup_failed
+            for session in self._sessions.values()
+        )
 
     async def qualify(self):
         from halo_server.media.transcode import video_capabilities
 
         self.capabilities = await video_capabilities()
         self.ready = self.capabilities.ready
+        try:
+            from halo_server.media.homekit_audio_codec import audio_capabilities
+
+            self.audio_capabilities = await audio_capabilities()
+            self.audio_ready = self.audio_capabilities.ready
+        except Exception:
+            self.audio_capabilities = None
+            self.audio_ready = False
         return self.capabilities
 
     def _authorized(self, boot, scope):
@@ -197,6 +223,11 @@ class HomeKitLiveManager:
         self._authorized(session.boot, session.scope)
         if session.handle is not None and not session.handle.is_current():
             raise HomeKitOperationError("authority_changed")
+
+    def _audio_current(self, session, permission):
+        self._current(session)
+        if permission is not None:
+            self.controller.authorize(session.boot, session.scope, permission)
 
     def _lookup(self, boot, scope, session_id):
         _uuid(boot)
@@ -218,9 +249,12 @@ class HomeKitLiveManager:
         target_port,
         key,
         salt,
+        audio: AudioEndpointRequest | None = None,
     ) -> PreparedVideo:
         self._authorized(boot, scope)
         _uuid(session_id)
+        if audio is not None and not isinstance(audio, AudioEndpointRequest):
+            raise HomeKitOperationError("invalid_request")
         self._prune_stopped()
         if (boot, session_id) in self._stopped:
             raise HomeKitOperationError("session_conflict")
@@ -257,6 +291,7 @@ class HomeKitLiveManager:
                 and existing.endpoint == endpoint
                 and existing.prepared.key == key
                 and existing.prepared.salt == salt
+                and (existing.audio.request if existing.audio is not None else None) == audio
             ):
                 return existing.prepared
             raise HomeKitOperationError("session_conflict")
@@ -273,6 +308,7 @@ class HomeKitLiveManager:
             socket.AF_INET6 if address_version == "ipv6" else socket.AF_INET, socket.SOCK_DGRAM
         )
         secure = None
+        audio_track = None
         try:
             sock.setblocking(False)
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 128 * 1024)
@@ -302,6 +338,38 @@ class HomeKitLiveManager:
                 H264Packetizer(ssrc),
                 self._clock(),
             )
+            if audio is not None:
+                audio_endpoint = list(endpoint)
+                audio_endpoint[1] = audio.target_port
+                audio_track = AudioTrack(
+                    audio,
+                    bind=bind,
+                    endpoint=tuple(audio_endpoint),
+                    family=sock.family,
+                    excluded_ssrc=ssrc,
+                    check=lambda permission: self._audio_current(session, permission),
+                    epoch=lambda: (
+                        session.handle.capture_epoch if session.handle is not None else None
+                    ),
+                    controller=self.controller,
+                    boot=boot,
+                    scope=scope,
+                    failure=lambda code: self._end(session, code),
+                    presentation=lambda kind, timestamp, received_at: self._presentation_time(
+                        session, kind, timestamp, received_at
+                    ),
+                    touch_feedback=lambda received_at: setattr(
+                        session, "last_feedback", received_at
+                    ),
+                    last_feedback=lambda: session.last_feedback,
+                    clock=self._clock,
+                    adapter_factory=self._audio_adapter_factory,
+                    decoder_factory=self._audio_decoder_factory,
+                )
+                session.audio = audio_track
+                prepared = replace(prepared, audio=audio_track.prepared)
+                session.prepared = prepared
+            self._authorized(boot, scope)
             self._sessions[session_id] = session
             if self._reaper is None:
                 self._reaper = asyncio.create_task(self._expire(), name="homekit-video-expiry")
@@ -309,29 +377,64 @@ class HomeKitLiveManager:
             return prepared
         except BaseException:
             sock.close()
+            if audio_track is not None:
+                audio_track.fence()
+                audio_track.secure.close()
             if secure is not None:
                 secure.close()
             raise
 
-    async def start(self, boot, scope, session_id, config):
+    async def start(
+        self,
+        boot,
+        scope,
+        session_id,
+        config,
+        *,
+        audio_config=None,
+        microphone_volume=100,
+        speaker_volume=100,
+    ):
         session = self._lookup(boot, scope, session_id)
         self._current(session)
         from halo_server.media.h264 import VideoConfiguration
 
         if not isinstance(config, VideoConfiguration):
             raise HomeKitOperationError("invalid_request")
+        if any(
+            type(gain) is not int or not 0 <= gain <= 100
+            for gain in (microphone_volume, speaker_volume)
+        ):
+            raise HomeKitOperationError("invalid_request")
+        if (session.audio is None) != (audio_config is None):
+            raise HomeKitOperationError("invalid_request")
+        if audio_config is not None:
+            from halo_server.media.opus import AudioConfiguration
+
+            if not isinstance(audio_config, AudioConfiguration):
+                raise HomeKitOperationError("invalid_request")
+            audio_config = replace(audio_config, gain=microphone_volume)
         if session.state == "active":
-            if session.config == config:
+            if (session.config, session.audio_config, session.speaker_volume) == (
+                config,
+                audio_config,
+                speaker_volume,
+            ):
                 return
             raise HomeKitOperationError("session_conflict")
         if session.start_task is None:
             session.config = config
+            session.audio_config, session.speaker_volume = audio_config, speaker_volume
             session.state = "starting"
             session.start_task = asyncio.create_task(
                 self._start(session), name="homekit-video-start"
             )
             session.start_task.add_done_callback(_observed)
-        elif session.config != config:
+        elif (session.config, session.audio_config, session.speaker_volume) != (
+            config,
+            audio_config,
+            speaker_volume,
+        ):
             raise HomeKitOperationError("session_conflict")
         try:
             await asyncio.shield(session.start_task)
@@ -349,6 +452,10 @@ class HomeKitLiveManager:
             self._current(session)
             factory = self._adapter_factory or AccessUnitAdapter
             session.adapter = factory(session.config)
+            if session.audio is not None:
+                session.audio.start(
+                    session.handle, session.audio_config, speaker_volume=session.speaker_volume
+                )
             session.last_source = session.last_feedback = session.last_renewal = self._clock()
             session.state = "active"
             session.sender = asyncio.create_task(
@@ -419,6 +526,43 @@ class HomeKitLiveManager:
         session.retransmit.clear()
         session.retransmit_bytes = 0
 
+    def _presentation_time(self, session, kind, timestamp, received_at):
+        """Use one source SR anchor for both tracks, with an honest fallback.
+
+        The observer's RTP domain is the same extended domain as the encoded
+        hook. An incoming SR never changes the output RTP sequence or origin.
+        """
+        epoch = session.handle.capture_epoch
+        now = self._clock()
+        observations = tuple(getattr(session.handle, "source_clocks", ()))
+        valid = [
+            item
+            for item in observations
+            if (
+                item.capture_epoch == epoch
+                and item.kind in {"audio", "video"}
+                and type(item.sender_ntp) is int
+                and 0 < item.sender_ntp < 2**64
+                and 0 <= now - item.received_at <= 60
+            )
+        ]
+        observation = next((item for item in valid if item.kind == kind), None)
+        if observation is not None:
+            rate = 48000 if kind == "audio" else 90000
+            delta = (timestamp - observation.rtp_timestamp) / rate
+            if abs(delta) <= 60:
+                if session.clock_anchor is None or session.clock_anchor[0] != epoch:
+                    first = min(valid, key=lambda item: item.received_at)
+                    session.clock_anchor = epoch, first.sender_ntp, first.received_at
+                _, anchor_ntp, anchor_time = session.clock_anchor
+                ntp_delta = (observation.sender_ntp - anchor_ntp) / 2**32
+                presentation = anchor_time + ntp_delta + delta
+                if abs(presentation - received_at) <= 5:
+                    session.timing_mode = "source_sender_report"
+                    return presentation
+        session.timing_mode = "receiver_estimated"
+        return received_at
+
     async def _send_video(self, session):
         try:
             while not session.retired:
@@ -462,7 +606,10 @@ class HomeKitLiveManager:
                                     continue
                             try:
                                 sent = await self._access_unit(
-                                    session, output, packet.capture_epoch
+                                    session,
+                                    output,
+                                    packet.capture_epoch,
+                                    received_at=packet.received_at,
                                 )
                                 if not sent and output.mode == "copy":
                                     session.adapter.force_adaptation()
@@ -474,7 +621,10 @@ class HomeKitLiveManager:
                                         )
                                         for unit in adapted:
                                             if not await self._access_unit(
-                                                session, unit, packet.capture_epoch
+                                                session,
+                                                unit,
+                                                packet.capture_epoch,
+                                                received_at=packet.received_at,
                                             ):
                                                 raise HomeKitOperationError("media_saturated")
                                 elif not sent:
@@ -486,7 +636,7 @@ class HomeKitLiveManager:
         except Exception:
             self._end(session, "media_failed")
 
-    async def _access_unit(self, session, output, epoch):
+    async def _access_unit(self, session, output, epoch, *, received_at=None):
         if len(output.payload) > MAX_ACCESS_UNIT_BYTES:
             raise HomeKitOperationError("media_saturated")
         config = session.config
@@ -506,6 +656,12 @@ class HomeKitLiveManager:
         datagrams = session.packetizer.packetize(
             output.payload, timestamp, payload_type=config.payload_type, mtu=config.mtu
         )
+        presentation = self._presentation_time(
+            session,
+            "video",
+            output.timestamp,
+            self._clock() if received_at is None else received_at,
+        )
         for item in datagrams:
             self._current(session)
             protected = session.secure.protect(item.packet)
@@ -513,7 +669,7 @@ class HomeKitLiveManager:
                 session, protected, epoch=epoch, deadline=started + MAX_ACCESS_UNIT_SECONDS
             )
             session.last_timestamp = item.timestamp
-            session.last_packet_at = self._clock()
+            session.last_packet_at = presentation
             session.packets += 1
             session.octets += item.payload_bytes
             previous = session.retransmit.pop(item.sequence, None)
@@ -638,6 +794,8 @@ class HomeKitLiveManager:
         task.add_done_callback(_observed)
 
     def _close_socket(self, session):
+        if session.audio is not None:
+            session.audio.fence()
         descriptor = session.socket.fileno()
         if descriptor >= 0:
             loop = asyncio.get_running_loop()
@@ -737,6 +895,8 @@ class HomeKitLiveManager:
                 _, pending = await asyncio.wait(tasks, timeout=CLEANUP_SECONDS)
                 if pending:
                     raise HomeKitOperationError("cleanup_pending")
+            if session.audio is not None:
+                await session.audio.close()
             if session.adapter is not None:
                 async with session.adapter_lock:
                     await session.adapter.close()

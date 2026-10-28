@@ -17,7 +17,10 @@
     "inventory_reset is a Python-only discovery/invalidation notice: nullable account scope plus revision. It never grants media or policy authority. Every notice retires local stale admissions before fetching bounded inventory pages; policy ACK echoes input scope, then a fresh inventory supplies Python assigned privacy generation.",
     "Video keys/salts use canonical base64 with exact 16/14 decoded bytes; never persist/log them.",
     "Video prepare accepted iff code=ok and endpoint exists; rejected iff non-ok and null endpoint. Other video results accepted iff code=ok.",
-    "Network endpoint literals/family/interface and coupled codec/level/catalog constraints are checked by the live owner, beyond structural JSON shape."
+    "Network endpoint literals/family/interface and coupled codec/level/catalog constraints are checked by the live owner, beyond structural JSON shape.",
+    "Audio speaker graph requires microphone graph; durable mute/volume gates policy and output before every await/delivery.",
+    "Classic HAP Opus uses selected sample_rate destination timestamps; source Opus and decoded durations remain48000Hz. This differs from RFC7587 and does not claim Apple qualification.",
+    "Accepted audio settings reply revision equals expected or expected+1; full scope echoes submitted epoch. Accepted prepare must echo both tracks negotiated key/salt and optional audio presence."
   ],
   "x-binary-transfer": {
     "implemented": true,
@@ -1894,7 +1897,8 @@
               "camera_id",
               "accessory_id",
               "username",
-              "doorbell"
+              "doorbell",
+              "audio"
             ],
             "properties": {
               "camera_id": {
@@ -1917,6 +1921,16 @@
               },
               "doorbell": {
                 "type": "boolean"
+              },
+              "audio": {
+                "anyOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/$defs/audio_birth"
+                  }
+                ]
               }
             },
             "additionalProperties": false
@@ -2242,7 +2256,8 @@
         "port",
         "ssrc",
         "key",
-        "salt"
+        "salt",
+        "audio"
       ],
       "properties": {
         "address": {
@@ -2284,6 +2299,16 @@
           },
           "x-decoded-bytes": 14,
           "x-runtime-canonical-base64": true
+        },
+        "audio": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/audio_endpoint"
+            }
+          ]
         }
       },
       "additionalProperties": false
@@ -2298,7 +2323,8 @@
         "address_version",
         "target_port",
         "key",
-        "salt"
+        "salt",
+        "audio"
       ],
       "properties": {
         "scope": {
@@ -2355,6 +2381,16 @@
           },
           "x-decoded-bytes": 14,
           "x-runtime-canonical-base64": true
+        },
+        "audio": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/audio_endpoint_request"
+            }
+          ]
         }
       },
       "additionalProperties": false
@@ -2402,7 +2438,8 @@
       "required": [
         "scope",
         "session_id",
-        "config"
+        "config",
+        "audio_config"
       ],
       "properties": {
         "scope": {
@@ -2413,6 +2450,16 @@
         },
         "config": {
           "$ref": "#/$defs/video_configuration"
+        },
+        "audio_config": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/audio_configuration"
+            }
+          ]
         }
       },
       "additionalProperties": false
@@ -2550,6 +2597,265 @@
         },
         "code": {
           "$ref": "#/$defs/code"
+        }
+      },
+      "additionalProperties": false
+    },
+    "audio_preferences": {
+      "type": "object",
+      "required": [
+        "microphone_muted",
+        "speaker_muted",
+        "microphone_volume",
+        "speaker_volume"
+      ],
+      "properties": {
+        "microphone_muted": {
+          "type": "boolean"
+        },
+        "speaker_muted": {
+          "type": "boolean"
+        },
+        "microphone_volume": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "speaker_volume": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        }
+      },
+      "additionalProperties": false
+    },
+    "audio_birth": {
+      "type": "object",
+      "required": [
+        "microphone",
+        "speaker",
+        "microphone_muted",
+        "speaker_muted",
+        "microphone_volume",
+        "speaker_volume",
+        "revision"
+      ],
+      "properties": {
+        "microphone": {
+          "type": "boolean"
+        },
+        "speaker": {
+          "type": "boolean"
+        },
+        "microphone_muted": {
+          "type": "boolean"
+        },
+        "speaker_muted": {
+          "type": "boolean"
+        },
+        "microphone_volume": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "speaker_volume": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "additionalProperties": false
+    },
+    "audio_endpoint": {
+      "type": "object",
+      "required": [
+        "port",
+        "ssrc",
+        "key",
+        "salt"
+      ],
+      "properties": {
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "ssrc": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4294967295
+        },
+        "key": {
+          "type": "string",
+          "minLength": 24,
+          "maxLength": 24,
+          "pattern": "^[A-Za-z0-9+/]+={0,2}$",
+          "not": {
+            "pattern": "[^A-Za-z0-9+/=]"
+          },
+          "x-decoded-bytes": 16,
+          "x-runtime-canonical-base64": true
+        },
+        "salt": {
+          "type": "string",
+          "minLength": 20,
+          "maxLength": 20,
+          "pattern": "^[A-Za-z0-9+/]+={0,2}$",
+          "not": {
+            "pattern": "[^A-Za-z0-9+/=]"
+          },
+          "x-decoded-bytes": 14,
+          "x-runtime-canonical-base64": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "audio_endpoint_request": {
+      "type": "object",
+      "required": [
+        "target_port",
+        "key",
+        "salt"
+      ],
+      "properties": {
+        "target_port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "key": {
+          "type": "string",
+          "minLength": 24,
+          "maxLength": 24,
+          "pattern": "^[A-Za-z0-9+/]+={0,2}$",
+          "not": {
+            "pattern": "[^A-Za-z0-9+/=]"
+          },
+          "x-decoded-bytes": 16,
+          "x-runtime-canonical-base64": true
+        },
+        "salt": {
+          "type": "string",
+          "minLength": 20,
+          "maxLength": 20,
+          "pattern": "^[A-Za-z0-9+/]+={0,2}$",
+          "not": {
+            "pattern": "[^A-Za-z0-9+/=]"
+          },
+          "x-decoded-bytes": 14,
+          "x-runtime-canonical-base64": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "audio_configuration": {
+      "type": "object",
+      "required": [
+        "sample_rate",
+        "packet_time",
+        "bitrate_mode",
+        "max_bit_rate",
+        "payload_type",
+        "rtcp_interval",
+        "channels",
+        "clock_mode"
+      ],
+      "properties": {
+        "sample_rate": {
+          "enum": [
+            8000,
+            16000,
+            24000
+          ]
+        },
+        "packet_time": {
+          "enum": [
+            20,
+            30,
+            40,
+            60
+          ]
+        },
+        "bitrate_mode": {
+          "enum": [
+            "cbr",
+            "vbr"
+          ]
+        },
+        "max_bit_rate": {
+          "type": "integer",
+          "minimum": 6,
+          "maximum": 64
+        },
+        "payload_type": {
+          "type": "integer",
+          "minimum": 96,
+          "maximum": 127
+        },
+        "rtcp_interval": {
+          "type": "number",
+          "minimum": 0.1,
+          "maximum": 10
+        },
+        "channels": {
+          "const": 1,
+          "type": "integer"
+        },
+        "clock_mode": {
+          "const": "classic_hap"
+        }
+      },
+      "additionalProperties": false
+    },
+    "audio_settings_update_payload": {
+      "type": "object",
+      "required": [
+        "scope",
+        "expected_revision",
+        "settings"
+      ],
+      "properties": {
+        "scope": {
+          "$ref": "#/$defs/media_scope"
+        },
+        "expected_revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "settings": {
+          "$ref": "#/$defs/audio_preferences"
+        }
+      },
+      "additionalProperties": false
+    },
+    "audio_settings_result_payload": {
+      "type": "object",
+      "required": [
+        "scope",
+        "accepted",
+        "code",
+        "revision"
+      ],
+      "properties": {
+        "scope": {
+          "$ref": "#/$defs/media_scope"
+        },
+        "accepted": {
+          "type": "boolean"
+        },
+        "code": {
+          "$ref": "#/$defs/code"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
         }
       },
       "additionalProperties": false
@@ -4007,6 +4313,68 @@
         },
         "payload": {
           "$ref": "#/$defs/video_ended_payload"
+        }
+      },
+      "additionalProperties": false,
+      "x-sender": "python",
+      "x-reply-kind": null
+    },
+    {
+      "type": "object",
+      "required": [
+        "v",
+        "kind",
+        "boot_id",
+        "request_id",
+        "payload"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "integer"
+        },
+        "kind": {
+          "const": "audio_settings_update"
+        },
+        "boot_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "request_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "payload": {
+          "$ref": "#/$defs/audio_settings_update_payload"
+        }
+      },
+      "additionalProperties": false,
+      "x-sender": "hap",
+      "x-reply-kind": "audio_settings_result"
+    },
+    {
+      "type": "object",
+      "required": [
+        "v",
+        "kind",
+        "boot_id",
+        "request_id",
+        "payload"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "integer"
+        },
+        "kind": {
+          "const": "audio_settings_result"
+        },
+        "boot_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "request_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "payload": {
+          "$ref": "#/$defs/audio_settings_result_payload"
         }
       },
       "additionalProperties": false,

@@ -120,7 +120,7 @@ class Capture:
     def intercom_generation(self, lease_id):
         return lease_id if lease_id in self.leases else None
 
-    def push_intercom_generation(self, generation, payload):
+    def push_intercom_generation(self, generation, payload, *, admission=None):
         assert generation in self.leases
         self.frames.append(payload)
 

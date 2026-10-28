@@ -1799,7 +1799,8 @@
             "camera_id": "42",
             "accessory_id": "00000000-0000-0000-0000-000000000004",
             "username": "02:01:02:03:04:05",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           }
         ],
         "media_ready": false
@@ -1914,193 +1915,225 @@
             "camera_id": "0",
             "accessory_id": "00000000-0000-0000-0000-000000000010",
             "username": "02:00:00:00:00:00",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           },
           {
             "camera_id": "1",
             "accessory_id": "00000000-0000-0000-0000-000000000011",
             "username": "02:00:00:00:00:01",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           },
           {
             "camera_id": "2",
             "accessory_id": "00000000-0000-0000-0000-000000000012",
             "username": "02:00:00:00:00:02",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           },
           {
             "camera_id": "3",
             "accessory_id": "00000000-0000-0000-0000-000000000013",
             "username": "02:00:00:00:00:03",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           },
           {
             "camera_id": "4",
             "accessory_id": "00000000-0000-0000-0000-000000000014",
             "username": "02:00:00:00:00:04",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           },
           {
             "camera_id": "5",
             "accessory_id": "00000000-0000-0000-0000-000000000015",
             "username": "02:00:00:00:00:05",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           },
           {
             "camera_id": "6",
             "accessory_id": "00000000-0000-0000-0000-000000000016",
             "username": "02:00:00:00:00:06",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           },
           {
             "camera_id": "7",
             "accessory_id": "00000000-0000-0000-0000-000000000017",
             "username": "02:00:00:00:00:07",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           },
           {
             "camera_id": "8",
             "accessory_id": "00000000-0000-0000-0000-000000000018",
             "username": "02:00:00:00:00:08",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           },
           {
             "camera_id": "9",
             "accessory_id": "00000000-0000-0000-0000-000000000019",
             "username": "02:00:00:00:00:09",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           },
           {
             "camera_id": "10",
             "accessory_id": "00000000-0000-0000-0000-00000000001a",
             "username": "02:00:00:00:00:0A",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           },
           {
             "camera_id": "11",
             "accessory_id": "00000000-0000-0000-0000-00000000001b",
             "username": "02:00:00:00:00:0B",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           },
           {
             "camera_id": "12",
             "accessory_id": "00000000-0000-0000-0000-00000000001c",
             "username": "02:00:00:00:00:0C",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           },
           {
             "camera_id": "13",
             "accessory_id": "00000000-0000-0000-0000-00000000001d",
             "username": "02:00:00:00:00:0D",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           },
           {
             "camera_id": "14",
             "accessory_id": "00000000-0000-0000-0000-00000000001e",
             "username": "02:00:00:00:00:0E",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           },
           {
             "camera_id": "15",
             "accessory_id": "00000000-0000-0000-0000-00000000001f",
             "username": "02:00:00:00:00:0F",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           },
           {
             "camera_id": "16",
             "accessory_id": "00000000-0000-0000-0000-000000000020",
             "username": "02:00:00:00:00:10",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           },
           {
             "camera_id": "17",
             "accessory_id": "00000000-0000-0000-0000-000000000021",
             "username": "02:00:00:00:00:11",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           },
           {
             "camera_id": "18",
             "accessory_id": "00000000-0000-0000-0000-000000000022",
             "username": "02:00:00:00:00:12",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           },
           {
             "camera_id": "19",
             "accessory_id": "00000000-0000-0000-0000-000000000023",
             "username": "02:00:00:00:00:13",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           },
           {
             "camera_id": "20",
             "accessory_id": "00000000-0000-0000-0000-000000000024",
             "username": "02:00:00:00:00:14",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           },
           {
             "camera_id": "21",
             "accessory_id": "00000000-0000-0000-0000-000000000025",
             "username": "02:00:00:00:00:15",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           },
           {
             "camera_id": "22",
             "accessory_id": "00000000-0000-0000-0000-000000000026",
             "username": "02:00:00:00:00:16",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           },
           {
             "camera_id": "23",
             "accessory_id": "00000000-0000-0000-0000-000000000027",
             "username": "02:00:00:00:00:17",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           },
           {
             "camera_id": "24",
             "accessory_id": "00000000-0000-0000-0000-000000000028",
             "username": "02:00:00:00:00:18",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           },
           {
             "camera_id": "25",
             "accessory_id": "00000000-0000-0000-0000-000000000029",
             "username": "02:00:00:00:00:19",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           },
           {
             "camera_id": "26",
             "accessory_id": "00000000-0000-0000-0000-00000000002a",
             "username": "02:00:00:00:00:1A",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           },
           {
             "camera_id": "27",
             "accessory_id": "00000000-0000-0000-0000-00000000002b",
             "username": "02:00:00:00:00:1B",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           },
           {
             "camera_id": "28",
             "accessory_id": "00000000-0000-0000-0000-00000000002c",
             "username": "02:00:00:00:00:1C",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           },
           {
             "camera_id": "29",
             "accessory_id": "00000000-0000-0000-0000-00000000002d",
             "username": "02:00:00:00:00:1D",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           },
           {
             "camera_id": "30",
             "accessory_id": "00000000-0000-0000-0000-00000000002e",
             "username": "02:00:00:00:00:1E",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           },
           {
             "camera_id": "31",
             "accessory_id": "00000000-0000-0000-0000-00000000002f",
             "username": "02:00:00:00:00:1F",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           }
         ],
         "media_ready": false
@@ -2140,7 +2173,8 @@
             "camera_id": "42",
             "accessory_id": "00000000-0000-0000-0000-000000000004",
             "username": "02:01:02:03:04:05",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           }
         ],
         "media_ready": false
@@ -2165,7 +2199,8 @@
             "camera_id": "42",
             "accessory_id": "00000000-0000-0000-0000-000000000004",
             "username": "FE:01:02:03:04:05",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           }
         ],
         "media_ready": false
@@ -2431,7 +2466,8 @@
         "address_version": "ipv4",
         "target_port": 5555,
         "key": "AAECAwQFBgcICQoLDA0ODw==",
-        "salt": "AAECAwQFBgcICQoLDA0="
+        "salt": "AAECAwQFBgcICQoLDA0=",
+        "audio": null
       }
     },
     {
@@ -2455,7 +2491,8 @@
           "port": 5556,
           "ssrc": 123,
           "key": "AAECAwQFBgcICQoLDA0ODw==",
-          "salt": "AAECAwQFBgcICQoLDA0="
+          "salt": "AAECAwQFBgcICQoLDA0=",
+          "audio": null
         }
       }
     },
@@ -2483,7 +2520,8 @@
           "payload_type": 99,
           "rtcp_interval": 0.5,
           "mtu": 1200
-        }
+        },
+        "audio_config": null
       }
     },
     {
@@ -2598,6 +2636,175 @@
         },
         "session_id": "00000000-0000-0000-0000-000000000004",
         "code": "source-failed"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "audio_settings_update",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "expected_revision": 0,
+        "settings": {
+          "microphone_muted": false,
+          "speaker_muted": false,
+          "microphone_volume": 100,
+          "speaker_volume": 100
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "audio_settings_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "accepted": true,
+        "code": "ok",
+        "revision": 1
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_prepare",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "source_address": "127.0.0.1",
+        "target_address": "127.0.0.1",
+        "address_version": "ipv4",
+        "target_port": 5555,
+        "key": "AAECAwQFBgcICQoLDA0ODw==",
+        "salt": "AAECAwQFBgcICQoLDA0=",
+        "audio": {
+          "target_port": 5565,
+          "key": "FBUWFxgZGhscHR4fICEiIw==",
+          "salt": "KCkqKywtLi8wMTIzNDU="
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_prepare_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "status": "accepted",
+        "code": "ok",
+        "endpoint": {
+          "address": "127.0.0.1",
+          "port": 5556,
+          "ssrc": 123,
+          "key": "AAECAwQFBgcICQoLDA0ODw==",
+          "salt": "AAECAwQFBgcICQoLDA0=",
+          "audio": {
+            "port": 5566,
+            "ssrc": 456,
+            "key": "FBUWFxgZGhscHR4fICEiIw==",
+            "salt": "KCkqKywtLi8wMTIzNDU="
+          }
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "video_start",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "config": {
+          "width": 320,
+          "height": 240,
+          "fps": 15,
+          "profile": "baseline",
+          "level": "3.1",
+          "max_bit_rate": 300,
+          "payload_type": 99,
+          "rtcp_interval": 0.5,
+          "mtu": 1200
+        },
+        "audio_config": {
+          "sample_rate": 24000,
+          "packet_time": 20,
+          "bitrate_mode": "vbr",
+          "max_bit_rate": 24,
+          "payload_type": 110,
+          "rtcp_interval": 0.5,
+          "channels": 1,
+          "clock_mode": "classic_hap"
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1,
+        "generation": 1,
+        "page_index": 0,
+        "total_pages": 1,
+        "entries": [
+          {
+            "camera_id": "42",
+            "accessory_id": "00000000-0000-0000-0000-000000000004",
+            "username": "02:01:02:03:04:05",
+            "doorbell": true,
+            "audio": {
+              "microphone": true,
+              "speaker": true,
+              "microphone_muted": false,
+              "speaker_muted": false,
+              "microphone_volume": 100,
+              "speaker_volume": 100,
+              "revision": 1
+            }
+          }
+        ],
+        "media_ready": false
       }
     }
   ],
@@ -10673,7 +10880,8 @@
             "camera_id": "42",
             "accessory_id": "00000000-0000-0000-0000-000000000004",
             "username": "02:01:02:03:04:05",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           }
         ],
         "media_ready": false
@@ -10697,7 +10905,8 @@
             "camera_id": "42",
             "accessory_id": "00000000-0000-0000-0000-000000000004",
             "username": "02:01:02:03:04:05",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           }
         ],
         "media_ready": false
@@ -10721,7 +10930,8 @@
             "camera_id": "42",
             "accessory_id": "00000000-0000-0000-0000-000000000004",
             "username": "02:01:02:03:04:05",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           }
         ],
         "media_ready": false
@@ -10745,7 +10955,8 @@
             "camera_id": "42",
             "accessory_id": "00000000-0000-0000-0000-000000000004",
             "username": "02:01:02:03:04:05",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           }
         ],
         "media_ready": false
@@ -10769,7 +10980,8 @@
             "camera_id": "42",
             "accessory_id": "00000000-0000-0000-0000-000000000004",
             "username": "02:01:02:03:04:05",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           }
         ],
         "media_ready": false
@@ -10811,7 +11023,8 @@
             "camera_id": "42",
             "accessory_id": "00000000-0000-0000-0000-000000000004",
             "username": "02:01:02:03:04:05",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           }
         ]
       }
@@ -10835,7 +11048,8 @@
             "camera_id": "42",
             "accessory_id": "00000000-0000-0000-0000-000000000004",
             "username": "02:01:02:03:04:05",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           }
         ],
         "media_ready": false
@@ -10860,7 +11074,8 @@
             "camera_id": "42",
             "accessory_id": "00000000-0000-0000-0000-000000000004",
             "username": "02:01:02:03:04:05",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           }
         ],
         "media_ready": false
@@ -10885,7 +11100,8 @@
             "camera_id": "42",
             "accessory_id": "00000000-0000-0000-0000-000000000004",
             "username": "02:01:02:03:04:05",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           }
         ],
         "media_ready": false
@@ -10910,7 +11126,8 @@
             "camera_id": "42",
             "accessory_id": "00000000-0000-0000-0000-000000000004",
             "username": "02:01:02:03:04:05",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           }
         ],
         "media_ready": false
@@ -10935,7 +11152,8 @@
             "camera_id": "42",
             "accessory_id": "00000000-0000-0000-0000-000000000004",
             "username": "02:01:02:03:04:05",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           }
         ],
         "media_ready": false
@@ -10960,7 +11178,8 @@
             "camera_id": "42",
             "accessory_id": "00000000-0000-0000-0000-000000000004",
             "username": "02:01:02:03:04:05",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           }
         ],
         "media_ready": false
@@ -10985,7 +11204,8 @@
             "camera_id": "42",
             "accessory_id": "00000000-0000-0000-0000-000000000004",
             "username": "02:01:02:03:04:05",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           }
         ],
         "media_ready": false
@@ -11011,7 +11231,8 @@
             "camera_id": "42",
             "accessory_id": "00000000-0000-0000-0000-000000000004",
             "username": "02:01:02:03:04:05",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           }
         ],
         "media_ready": false
@@ -12309,7 +12530,8 @@
             "camera_id": "42",
             "accessory_id": "00000000-0000-0000-0000-000000000004",
             "username": "02:01:02:03:04:05",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           }
         ],
         "media_ready": false
@@ -12334,7 +12556,8 @@
             "camera_id": "42",
             "accessory_id": "00000000-0000-0000-0000-000000000004",
             "username": "02:01:02:03:04:05",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           }
         ],
         "media_ready": false
@@ -12359,7 +12582,8 @@
             "camera_id": "42",
             "accessory_id": "00000000-0000-0000-0000-000000000004",
             "username": "02:01:02:03:04:05",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           }
         ],
         "media_ready": false
@@ -12384,7 +12608,8 @@
             "camera_id": "42",
             "accessory_id": "00000000-0000-0000-0000-000000000004",
             "username": "02:01:02:03:04:05",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           }
         ],
         "media_ready": false
@@ -12409,7 +12634,8 @@
             "camera_id": "42",
             "accessory_id": "00000000-0000-0000-0000-000000000004",
             "username": "02:01:02:03:04:05",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           }
         ],
         "media_ready": false
@@ -12434,7 +12660,8 @@
             "camera_id": "42",
             "accessory_id": "00000000-0000-0000-0000-000000000004",
             "username": "02:01:02:03:04:05",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           }
         ],
         "media_ready": false
@@ -12561,7 +12788,8 @@
             "camera_id": "42",
             "accessory_id": "00000000-0000-0000-0000-000000000004",
             "username": "02:01:02:03:04:05",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           }
         ],
         "media_ready": false
@@ -12586,7 +12814,8 @@
             "camera_id": "42",
             "accessory_id": "00000000-0000-0000-0000-000000000004",
             "username": "02:01:02:03:04:05",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           }
         ],
         "media_ready": false
@@ -12611,7 +12840,8 @@
             "camera_id": "42",
             "accessory_id": "00000000-0000-0000-0000-000000000004",
             "username": "02:01:02:03:04:05",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           }
         ],
         "media_ready": false
@@ -12690,7 +12920,8 @@
             "camera_id": "42",
             "accessory_id": "00000000-0000-0000-0000-000000000004",
             "username": "02:01:02:03:04:05",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           }
         ],
         "media_ready": 1
@@ -12715,7 +12946,8 @@
             "camera_id": "42",
             "accessory_id": "00000000-0000-0000-0000-000000000004",
             "username": "02:01:02:03:04:05",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           }
         ],
         "media_ready": "false"
@@ -12740,7 +12972,8 @@
             "camera_id": "",
             "accessory_id": "00000000-0000-0000-0000-000000000004",
             "username": "02:01:02:03:04:05",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           }
         ],
         "media_ready": false
@@ -12765,7 +12998,8 @@
             "camera_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "accessory_id": "00000000-0000-0000-0000-000000000004",
             "username": "02:01:02:03:04:05",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           }
         ],
         "media_ready": false
@@ -12790,7 +13024,8 @@
             "camera_id": "front\u202edoor",
             "accessory_id": "00000000-0000-0000-0000-000000000004",
             "username": "02:01:02:03:04:05",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           }
         ],
         "media_ready": false
@@ -12815,7 +13050,8 @@
             "camera_id": "front\n",
             "accessory_id": "00000000-0000-0000-0000-000000000004",
             "username": "02:01:02:03:04:05",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           }
         ],
         "media_ready": false
@@ -12840,7 +13076,8 @@
             "camera_id": 1,
             "accessory_id": "00000000-0000-0000-0000-000000000004",
             "username": "02:01:02:03:04:05",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           }
         ],
         "media_ready": false
@@ -12865,7 +13102,8 @@
             "camera_id": "42",
             "accessory_id": "------------------------------------",
             "username": "02:01:02:03:04:05",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           }
         ],
         "media_ready": false
@@ -12890,7 +13128,8 @@
             "camera_id": "42",
             "accessory_id": "00000000-0000-0000-0000-00000000000A",
             "username": "02:01:02:03:04:05",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           }
         ],
         "media_ready": false
@@ -12915,7 +13154,8 @@
             "camera_id": "42",
             "accessory_id": "not-a-uuid",
             "username": "02:01:02:03:04:05",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           }
         ],
         "media_ready": false
@@ -12940,7 +13180,8 @@
             "camera_id": "42",
             "accessory_id": "00000000-0000-0000-0000-000000000004",
             "username": "00:01:02:03:04:05",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           }
         ],
         "media_ready": false
@@ -12965,7 +13206,8 @@
             "camera_id": "42",
             "accessory_id": "00000000-0000-0000-0000-000000000004",
             "username": "01:01:02:03:04:05",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           }
         ],
         "media_ready": false
@@ -12990,7 +13232,8 @@
             "camera_id": "42",
             "accessory_id": "00000000-0000-0000-0000-000000000004",
             "username": "03:01:02:03:04:05",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           }
         ],
         "media_ready": false
@@ -13015,7 +13258,8 @@
             "camera_id": "42",
             "accessory_id": "00000000-0000-0000-0000-000000000004",
             "username": "04:01:02:03:04:05",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           }
         ],
         "media_ready": false
@@ -13040,7 +13284,8 @@
             "camera_id": "42",
             "accessory_id": "00000000-0000-0000-0000-000000000004",
             "username": "FF:FF:FF:FF:FF:FF",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           }
         ],
         "media_ready": false
@@ -13065,7 +13310,8 @@
             "camera_id": "42",
             "accessory_id": "00000000-0000-0000-0000-000000000004",
             "username": "0a:01:02:03:04:05",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           }
         ],
         "media_ready": false
@@ -13090,7 +13336,8 @@
             "camera_id": "42",
             "accessory_id": "00000000-0000-0000-0000-000000000004",
             "username": "02:01:02:03:04:0a",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           }
         ],
         "media_ready": false
@@ -13115,7 +13362,8 @@
             "camera_id": "42",
             "accessory_id": "00000000-0000-0000-0000-000000000004",
             "username": "02-01-02-03-04-05",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           }
         ],
         "media_ready": false
@@ -13140,7 +13388,8 @@
             "camera_id": "42",
             "accessory_id": "00000000-0000-0000-0000-000000000004",
             "username": "02:01:02:03:04:05\n",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           }
         ],
         "media_ready": false
@@ -13165,7 +13414,8 @@
             "camera_id": "42",
             "accessory_id": "00000000-0000-0000-0000-000000000004",
             "username": "02:01:02:03:04:05\u2028",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           }
         ],
         "media_ready": false
@@ -13190,7 +13440,8 @@
             "camera_id": "42",
             "accessory_id": "00000000-0000-0000-0000-000000000004",
             "username": "02:01:02:03:04:05",
-            "doorbell": "true"
+            "doorbell": "true",
+            "audio": null
           }
         ],
         "media_ready": false
@@ -13215,7 +13466,8 @@
             "camera_id": "42",
             "accessory_id": "00000000-0000-0000-0000-000000000004",
             "username": "02:01:02:03:04:05",
-            "doorbell": null
+            "doorbell": null,
+            "audio": null
           }
         ],
         "media_ready": false
@@ -13240,199 +13492,232 @@
             "camera_id": "0",
             "accessory_id": "00000000-0000-0000-0000-000000000010",
             "username": "02:00:00:00:00:00",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           },
           {
             "camera_id": "1",
             "accessory_id": "00000000-0000-0000-0000-000000000011",
             "username": "02:00:00:00:00:01",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           },
           {
             "camera_id": "2",
             "accessory_id": "00000000-0000-0000-0000-000000000012",
             "username": "02:00:00:00:00:02",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           },
           {
             "camera_id": "3",
             "accessory_id": "00000000-0000-0000-0000-000000000013",
             "username": "02:00:00:00:00:03",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           },
           {
             "camera_id": "4",
             "accessory_id": "00000000-0000-0000-0000-000000000014",
             "username": "02:00:00:00:00:04",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           },
           {
             "camera_id": "5",
             "accessory_id": "00000000-0000-0000-0000-000000000015",
             "username": "02:00:00:00:00:05",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           },
           {
             "camera_id": "6",
             "accessory_id": "00000000-0000-0000-0000-000000000016",
             "username": "02:00:00:00:00:06",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           },
           {
             "camera_id": "7",
             "accessory_id": "00000000-0000-0000-0000-000000000017",
             "username": "02:00:00:00:00:07",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           },
           {
             "camera_id": "8",
             "accessory_id": "00000000-0000-0000-0000-000000000018",
             "username": "02:00:00:00:00:08",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           },
           {
             "camera_id": "9",
             "accessory_id": "00000000-0000-0000-0000-000000000019",
             "username": "02:00:00:00:00:09",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           },
           {
             "camera_id": "10",
             "accessory_id": "00000000-0000-0000-0000-00000000001a",
             "username": "02:00:00:00:00:0A",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           },
           {
             "camera_id": "11",
             "accessory_id": "00000000-0000-0000-0000-00000000001b",
             "username": "02:00:00:00:00:0B",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           },
           {
             "camera_id": "12",
             "accessory_id": "00000000-0000-0000-0000-00000000001c",
             "username": "02:00:00:00:00:0C",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           },
           {
             "camera_id": "13",
             "accessory_id": "00000000-0000-0000-0000-00000000001d",
             "username": "02:00:00:00:00:0D",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           },
           {
             "camera_id": "14",
             "accessory_id": "00000000-0000-0000-0000-00000000001e",
             "username": "02:00:00:00:00:0E",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           },
           {
             "camera_id": "15",
             "accessory_id": "00000000-0000-0000-0000-00000000001f",
             "username": "02:00:00:00:00:0F",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           },
           {
             "camera_id": "16",
             "accessory_id": "00000000-0000-0000-0000-000000000020",
             "username": "02:00:00:00:00:10",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           },
           {
             "camera_id": "17",
             "accessory_id": "00000000-0000-0000-0000-000000000021",
             "username": "02:00:00:00:00:11",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           },
           {
             "camera_id": "18",
             "accessory_id": "00000000-0000-0000-0000-000000000022",
             "username": "02:00:00:00:00:12",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           },
           {
             "camera_id": "19",
             "accessory_id": "00000000-0000-0000-0000-000000000023",
             "username": "02:00:00:00:00:13",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           },
           {
             "camera_id": "20",
             "accessory_id": "00000000-0000-0000-0000-000000000024",
             "username": "02:00:00:00:00:14",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           },
           {
             "camera_id": "21",
             "accessory_id": "00000000-0000-0000-0000-000000000025",
             "username": "02:00:00:00:00:15",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           },
           {
             "camera_id": "22",
             "accessory_id": "00000000-0000-0000-0000-000000000026",
             "username": "02:00:00:00:00:16",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           },
           {
             "camera_id": "23",
             "accessory_id": "00000000-0000-0000-0000-000000000027",
             "username": "02:00:00:00:00:17",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           },
           {
             "camera_id": "24",
             "accessory_id": "00000000-0000-0000-0000-000000000028",
             "username": "02:00:00:00:00:18",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           },
           {
             "camera_id": "25",
             "accessory_id": "00000000-0000-0000-0000-000000000029",
             "username": "02:00:00:00:00:19",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           },
           {
             "camera_id": "26",
             "accessory_id": "00000000-0000-0000-0000-00000000002a",
             "username": "02:00:00:00:00:1A",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           },
           {
             "camera_id": "27",
             "accessory_id": "00000000-0000-0000-0000-00000000002b",
             "username": "02:00:00:00:00:1B",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           },
           {
             "camera_id": "28",
             "accessory_id": "00000000-0000-0000-0000-00000000002c",
             "username": "02:00:00:00:00:1C",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           },
           {
             "camera_id": "29",
             "accessory_id": "00000000-0000-0000-0000-00000000002d",
             "username": "02:00:00:00:00:1D",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           },
           {
             "camera_id": "30",
             "accessory_id": "00000000-0000-0000-0000-00000000002e",
             "username": "02:00:00:00:00:1E",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           },
           {
             "camera_id": "31",
             "accessory_id": "00000000-0000-0000-0000-00000000002f",
             "username": "02:00:00:00:00:1F",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           },
           {
             "camera_id": "32",
             "accessory_id": "00000000-0000-0000-0000-000000000030",
             "username": "02:00:00:00:00:20",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           }
         ],
         "media_ready": false
@@ -14978,7 +15263,8 @@
         "address_version": "ipv4",
         "target_port": 5555,
         "key": "AAECAwQFBgcICQoLDA0ODw==",
-        "salt": "AAECAwQFBgcICQoLDA0="
+        "salt": "AAECAwQFBgcICQoLDA0=",
+        "audio": null
       }
     },
     {
@@ -14999,7 +15285,8 @@
         "address_version": "ipv4",
         "target_port": 5555,
         "key": "AAECAwQFBgcICQoLDA0ODw==",
-        "salt": "AAECAwQFBgcICQoLDA0="
+        "salt": "AAECAwQFBgcICQoLDA0=",
+        "audio": null
       }
     },
     {
@@ -15020,7 +15307,8 @@
         "address_version": "ipv4",
         "target_port": 5555,
         "key": "AAECAwQFBgcICQoLDA0ODw==",
-        "salt": "AAECAwQFBgcICQoLDA0="
+        "salt": "AAECAwQFBgcICQoLDA0=",
+        "audio": null
       }
     },
     {
@@ -15041,7 +15329,8 @@
         "address_version": "ipv4",
         "target_port": 5555,
         "key": "AAECAwQFBgcICQoLDA0ODw==",
-        "salt": "AAECAwQFBgcICQoLDA0="
+        "salt": "AAECAwQFBgcICQoLDA0=",
+        "audio": null
       }
     },
     {
@@ -15062,7 +15351,8 @@
         "target_address": "127.0.0.1",
         "target_port": 5555,
         "key": "AAECAwQFBgcICQoLDA0ODw==",
-        "salt": "AAECAwQFBgcICQoLDA0="
+        "salt": "AAECAwQFBgcICQoLDA0=",
+        "audio": null
       }
     },
     {
@@ -15083,7 +15373,8 @@
         "target_address": "127.0.0.1",
         "address_version": "ipv4",
         "key": "AAECAwQFBgcICQoLDA0ODw==",
-        "salt": "AAECAwQFBgcICQoLDA0="
+        "salt": "AAECAwQFBgcICQoLDA0=",
+        "audio": null
       }
     },
     {
@@ -15104,7 +15395,8 @@
         "target_address": "127.0.0.1",
         "address_version": "ipv4",
         "target_port": 5555,
-        "salt": "AAECAwQFBgcICQoLDA0="
+        "salt": "AAECAwQFBgcICQoLDA0=",
+        "audio": null
       }
     },
     {
@@ -15125,7 +15417,8 @@
         "target_address": "127.0.0.1",
         "address_version": "ipv4",
         "target_port": 5555,
-        "key": "AAECAwQFBgcICQoLDA0ODw=="
+        "key": "AAECAwQFBgcICQoLDA0ODw==",
+        "audio": null
       }
     },
     {
@@ -15142,7 +15435,8 @@
           "port": 5556,
           "ssrc": 123,
           "key": "AAECAwQFBgcICQoLDA0ODw==",
-          "salt": "AAECAwQFBgcICQoLDA0="
+          "salt": "AAECAwQFBgcICQoLDA0=",
+          "audio": null
         }
       }
     },
@@ -15166,7 +15460,8 @@
           "port": 5556,
           "ssrc": 123,
           "key": "AAECAwQFBgcICQoLDA0ODw==",
-          "salt": "AAECAwQFBgcICQoLDA0="
+          "salt": "AAECAwQFBgcICQoLDA0=",
+          "audio": null
         }
       }
     },
@@ -15190,7 +15485,8 @@
           "port": 5556,
           "ssrc": 123,
           "key": "AAECAwQFBgcICQoLDA0ODw==",
-          "salt": "AAECAwQFBgcICQoLDA0="
+          "salt": "AAECAwQFBgcICQoLDA0=",
+          "audio": null
         }
       }
     },
@@ -15214,7 +15510,8 @@
           "port": 5556,
           "ssrc": 123,
           "key": "AAECAwQFBgcICQoLDA0ODw==",
-          "salt": "AAECAwQFBgcICQoLDA0="
+          "salt": "AAECAwQFBgcICQoLDA0=",
+          "audio": null
         }
       }
     },
@@ -15253,7 +15550,8 @@
           "payload_type": 99,
           "rtcp_interval": 0.5,
           "mtu": 1200
-        }
+        },
+        "audio_config": null
       }
     },
     {
@@ -15279,7 +15577,8 @@
           "payload_type": 99,
           "rtcp_interval": 0.5,
           "mtu": 1200
-        }
+        },
+        "audio_config": null
       }
     },
     {
@@ -15295,7 +15594,8 @@
           "device_generation": 1,
           "privacy_generation": 1
         },
-        "session_id": "00000000-0000-0000-0000-000000000004"
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "audio_config": null
       }
     },
     {
@@ -15631,7 +15931,8 @@
         "address_version": "ipv4",
         "target_port": 5555,
         "key": "",
-        "salt": "AAECAwQFBgcICQoLDA0="
+        "salt": "AAECAwQFBgcICQoLDA0=",
+        "audio": null
       }
     },
     {
@@ -15653,7 +15954,8 @@
         "address_version": "ipv4",
         "target_port": 5555,
         "key": "bad\n",
-        "salt": "AAECAwQFBgcICQoLDA0="
+        "salt": "AAECAwQFBgcICQoLDA0=",
+        "audio": null
       }
     },
     {
@@ -15675,7 +15977,8 @@
         "address_version": "ipv4",
         "target_port": 5555,
         "key": true,
-        "salt": "AAECAwQFBgcICQoLDA0="
+        "salt": "AAECAwQFBgcICQoLDA0=",
+        "audio": null
       }
     },
     {
@@ -15697,7 +16000,8 @@
         "address_version": "ipv4",
         "target_port": 5555,
         "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
-        "salt": "AAECAwQFBgcICQoLDA0="
+        "salt": "AAECAwQFBgcICQoLDA0=",
+        "audio": null
       }
     },
     {
@@ -15719,7 +16023,8 @@
         "address_version": "ipv4",
         "target_port": 5555,
         "key": "AAECAwQFBgcICQoLDA0ODw==",
-        "salt": ""
+        "salt": "",
+        "audio": null
       }
     },
     {
@@ -15741,7 +16046,8 @@
         "address_version": "ipv4",
         "target_port": 5555,
         "key": "AAECAwQFBgcICQoLDA0ODw==",
-        "salt": "bad\n"
+        "salt": "bad\n",
+        "audio": null
       }
     },
     {
@@ -15763,7 +16069,8 @@
         "address_version": "ipv4",
         "target_port": 5555,
         "key": "AAECAwQFBgcICQoLDA0ODw==",
-        "salt": true
+        "salt": true,
+        "audio": null
       }
     },
     {
@@ -15785,7 +16092,8 @@
         "address_version": "ipv4",
         "target_port": 5555,
         "key": "AAECAwQFBgcICQoLDA0ODw==",
-        "salt": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        "salt": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "audio": null
       }
     },
     {
@@ -15801,7 +16109,8 @@
         "address_version": "ipv4",
         "target_port": 5555,
         "key": "AAECAwQFBgcICQoLDA0ODw==",
-        "salt": "AAECAwQFBgcICQoLDA0="
+        "salt": "AAECAwQFBgcICQoLDA0=",
+        "audio": null
       }
     },
     {
@@ -15817,7 +16126,8 @@
         "address_version": "ipv4",
         "target_port": 5555,
         "key": "AAECAwQFBgcICQoLDA0ODw==",
-        "salt": "AAECAwQFBgcICQoLDA0="
+        "salt": "AAECAwQFBgcICQoLDA0=",
+        "audio": null
       }
     },
     {
@@ -15833,7 +16143,8 @@
         "address_version": "ipv4",
         "target_port": 5555,
         "key": "AAECAwQFBgcICQoLDA0ODw==",
-        "salt": "AAECAwQFBgcICQoLDA0="
+        "salt": "AAECAwQFBgcICQoLDA0=",
+        "audio": null
       }
     },
     {
@@ -15849,7 +16160,8 @@
         "address_version": "ipv4",
         "target_port": 5555,
         "key": "AAECAwQFBgcICQoLDA0ODw==",
-        "salt": "AAECAwQFBgcICQoLDA0="
+        "salt": "AAECAwQFBgcICQoLDA0=",
+        "audio": null
       }
     },
     {
@@ -15871,7 +16183,8 @@
         "address_version": "ipv4",
         "target_port": 5555,
         "key": "AAECAwQFBgcICQoLDA0ODw==",
-        "salt": "AAECAwQFBgcICQoLDA0="
+        "salt": "AAECAwQFBgcICQoLDA0=",
+        "audio": null
       }
     },
     {
@@ -15893,7 +16206,8 @@
         "address_version": "ipv4",
         "target_port": 5555,
         "key": "AAECAwQFBgcICQoLDA0ODw==",
-        "salt": "AAECAwQFBgcICQoLDA0="
+        "salt": "AAECAwQFBgcICQoLDA0=",
+        "audio": null
       }
     },
     {
@@ -15915,7 +16229,8 @@
         "address_version": "ipv4",
         "target_port": 5555,
         "key": "AAECAwQFBgcICQoLDA0ODw==",
-        "salt": "AAECAwQFBgcICQoLDA0="
+        "salt": "AAECAwQFBgcICQoLDA0=",
+        "audio": null
       }
     },
     {
@@ -15937,7 +16252,8 @@
         "address_version": "ipv4",
         "target_port": 5555,
         "key": "AAECAwQFBgcICQoLDA0ODw==",
-        "salt": "AAECAwQFBgcICQoLDA0="
+        "salt": "AAECAwQFBgcICQoLDA0=",
+        "audio": null
       }
     },
     {
@@ -15955,7 +16271,8 @@
           "port": 5556,
           "ssrc": 123,
           "key": "AAECAwQFBgcICQoLDA0ODw==",
-          "salt": "AAECAwQFBgcICQoLDA0="
+          "salt": "AAECAwQFBgcICQoLDA0=",
+          "audio": null
         }
       }
     },
@@ -15974,7 +16291,8 @@
           "port": 5556,
           "ssrc": 123,
           "key": "AAECAwQFBgcICQoLDA0ODw==",
-          "salt": "AAECAwQFBgcICQoLDA0="
+          "salt": "AAECAwQFBgcICQoLDA0=",
+          "audio": null
         }
       }
     },
@@ -15993,7 +16311,8 @@
           "port": 5556,
           "ssrc": 123,
           "key": "AAECAwQFBgcICQoLDA0ODw==",
-          "salt": "AAECAwQFBgcICQoLDA0="
+          "salt": "AAECAwQFBgcICQoLDA0=",
+          "audio": null
         }
       }
     },
@@ -16012,7 +16331,8 @@
           "port": 5556,
           "ssrc": 123,
           "key": "AAECAwQFBgcICQoLDA0ODw==",
-          "salt": "AAECAwQFBgcICQoLDA0="
+          "salt": "AAECAwQFBgcICQoLDA0=",
+          "audio": null
         }
       }
     },
@@ -16037,7 +16357,8 @@
           "port": 5556,
           "ssrc": 123,
           "key": "AAECAwQFBgcICQoLDA0ODw==",
-          "salt": "AAECAwQFBgcICQoLDA0="
+          "salt": "AAECAwQFBgcICQoLDA0=",
+          "audio": null
         }
       }
     },
@@ -16062,7 +16383,8 @@
           "port": 5556,
           "ssrc": 123,
           "key": "AAECAwQFBgcICQoLDA0ODw==",
-          "salt": "AAECAwQFBgcICQoLDA0="
+          "salt": "AAECAwQFBgcICQoLDA0=",
+          "audio": null
         }
       }
     },
@@ -16087,7 +16409,8 @@
           "port": 5556,
           "ssrc": 123,
           "key": "AAECAwQFBgcICQoLDA0ODw==",
-          "salt": "AAECAwQFBgcICQoLDA0="
+          "salt": "AAECAwQFBgcICQoLDA0=",
+          "audio": null
         }
       }
     },
@@ -16112,7 +16435,8 @@
           "port": 5556,
           "ssrc": 123,
           "key": "AAECAwQFBgcICQoLDA0ODw==",
-          "salt": "AAECAwQFBgcICQoLDA0="
+          "salt": "AAECAwQFBgcICQoLDA0=",
+          "audio": null
         }
       }
     },
@@ -16134,7 +16458,8 @@
           "payload_type": 99,
           "rtcp_interval": 0.5,
           "mtu": 1200
-        }
+        },
+        "audio_config": null
       }
     },
     {
@@ -16155,7 +16480,8 @@
           "payload_type": 99,
           "rtcp_interval": 0.5,
           "mtu": 1200
-        }
+        },
+        "audio_config": null
       }
     },
     {
@@ -16176,7 +16502,8 @@
           "payload_type": 99,
           "rtcp_interval": 0.5,
           "mtu": 1200
-        }
+        },
+        "audio_config": null
       }
     },
     {
@@ -16197,7 +16524,8 @@
           "payload_type": 99,
           "rtcp_interval": 0.5,
           "mtu": 1200
-        }
+        },
+        "audio_config": null
       }
     },
     {
@@ -16224,7 +16552,8 @@
           "payload_type": 99,
           "rtcp_interval": 0.5,
           "mtu": 1200
-        }
+        },
+        "audio_config": null
       }
     },
     {
@@ -16251,7 +16580,8 @@
           "payload_type": 99,
           "rtcp_interval": 0.5,
           "mtu": 1200
-        }
+        },
+        "audio_config": null
       }
     },
     {
@@ -16278,7 +16608,8 @@
           "payload_type": 99,
           "rtcp_interval": 0.5,
           "mtu": 1200
-        }
+        },
+        "audio_config": null
       }
     },
     {
@@ -16305,7 +16636,8 @@
           "payload_type": 99,
           "rtcp_interval": 0.5,
           "mtu": 1200
-        }
+        },
+        "audio_config": null
       }
     },
     {
@@ -16740,7 +17072,8 @@
           "payload_type": 99,
           "rtcp_interval": 0.5,
           "mtu": 1200
-        }
+        },
+        "audio_config": null
       }
     },
     {
@@ -16767,7 +17100,8 @@
           "payload_type": 99,
           "rtcp_interval": 0.5,
           "mtu": 1200
-        }
+        },
+        "audio_config": null
       }
     },
     {
@@ -16794,7 +17128,8 @@
           "payload_type": 99,
           "rtcp_interval": 0.5,
           "mtu": 1200
-        }
+        },
+        "audio_config": null
       }
     },
     {
@@ -16821,7 +17156,8 @@
           "payload_type": 99,
           "rtcp_interval": 0.5,
           "mtu": 1200
-        }
+        },
+        "audio_config": null
       }
     },
     {
@@ -16848,7 +17184,8 @@
           "payload_type": 99,
           "rtcp_interval": 0.5,
           "mtu": 1200
-        }
+        },
+        "audio_config": null
       }
     },
     {
@@ -16875,7 +17212,8 @@
           "payload_type": 99,
           "rtcp_interval": 0.5,
           "mtu": 1200
-        }
+        },
+        "audio_config": null
       }
     },
     {
@@ -16902,7 +17240,8 @@
           "payload_type": 99,
           "rtcp_interval": 0.5,
           "mtu": 1200
-        }
+        },
+        "audio_config": null
       }
     },
     {
@@ -16929,7 +17268,8 @@
           "payload_type": 99,
           "rtcp_interval": 0.5,
           "mtu": 1200
-        }
+        },
+        "audio_config": null
       }
     },
     {
@@ -16956,7 +17296,8 @@
           "payload_type": 99,
           "rtcp_interval": 0.5,
           "mtu": 1200
-        }
+        },
+        "audio_config": null
       }
     },
     {
@@ -16983,7 +17324,8 @@
           "payload_type": 99,
           "rtcp_interval": 0.5,
           "mtu": 1200
-        }
+        },
+        "audio_config": null
       }
     },
     {
@@ -17010,7 +17352,8 @@
           "payload_type": 99,
           "rtcp_interval": 0.5,
           "mtu": 1200
-        }
+        },
+        "audio_config": null
       }
     },
     {
@@ -17037,7 +17380,8 @@
           "payload_type": 99,
           "rtcp_interval": 0.5,
           "mtu": 1200
-        }
+        },
+        "audio_config": null
       }
     },
     {
@@ -17064,7 +17408,8 @@
           "payload_type": 99,
           "rtcp_interval": 0.5,
           "mtu": 1200
-        }
+        },
+        "audio_config": null
       }
     },
     {
@@ -17091,7 +17436,8 @@
           "payload_type": 99,
           "rtcp_interval": 0.5,
           "mtu": 1200
-        }
+        },
+        "audio_config": null
       }
     },
     {
@@ -17118,7 +17464,8 @@
           "payload_type": 99,
           "rtcp_interval": 0.5,
           "mtu": 1200
-        }
+        },
+        "audio_config": null
       }
     },
     {
@@ -17145,7 +17492,8 @@
           "payload_type": 99,
           "rtcp_interval": 0.5,
           "mtu": 1200
-        }
+        },
+        "audio_config": null
       }
     },
     {
@@ -17172,7 +17520,8 @@
           "payload_type": 99,
           "rtcp_interval": 0.5,
           "mtu": 1200
-        }
+        },
+        "audio_config": null
       }
     },
     {
@@ -17199,7 +17548,8 @@
           "payload_type": 99,
           "rtcp_interval": 0.5,
           "mtu": 1200
-        }
+        },
+        "audio_config": null
       }
     },
     {
@@ -17226,7 +17576,8 @@
           "payload_type": 99,
           "rtcp_interval": 0.5,
           "mtu": 1200
-        }
+        },
+        "audio_config": null
       }
     },
     {
@@ -17253,7 +17604,8 @@
           "payload_type": 99,
           "rtcp_interval": 0.5,
           "mtu": 1200
-        }
+        },
+        "audio_config": null
       }
     },
     {
@@ -17280,7 +17632,8 @@
           "payload_type": null,
           "rtcp_interval": 0.5,
           "mtu": 1200
-        }
+        },
+        "audio_config": null
       }
     },
     {
@@ -17307,7 +17660,8 @@
           "payload_type": true,
           "rtcp_interval": 0.5,
           "mtu": 1200
-        }
+        },
+        "audio_config": null
       }
     },
     {
@@ -17334,7 +17688,8 @@
           "payload_type": -1,
           "rtcp_interval": 0.5,
           "mtu": 1200
-        }
+        },
+        "audio_config": null
       }
     },
     {
@@ -17361,7 +17716,8 @@
           "payload_type": 1e+30,
           "rtcp_interval": 0.5,
           "mtu": 1200
-        }
+        },
+        "audio_config": null
       }
     },
     {
@@ -17388,7 +17744,8 @@
           "payload_type": "1",
           "rtcp_interval": 0.5,
           "mtu": 1200
-        }
+        },
+        "audio_config": null
       }
     },
     {
@@ -17415,7 +17772,8 @@
           "payload_type": 99,
           "rtcp_interval": null,
           "mtu": 1200
-        }
+        },
+        "audio_config": null
       }
     },
     {
@@ -17442,7 +17800,8 @@
           "payload_type": 99,
           "rtcp_interval": true,
           "mtu": 1200
-        }
+        },
+        "audio_config": null
       }
     },
     {
@@ -17469,7 +17828,8 @@
           "payload_type": 99,
           "rtcp_interval": -1,
           "mtu": 1200
-        }
+        },
+        "audio_config": null
       }
     },
     {
@@ -17496,7 +17856,8 @@
           "payload_type": 99,
           "rtcp_interval": 1e+30,
           "mtu": 1200
-        }
+        },
+        "audio_config": null
       }
     },
     {
@@ -17523,7 +17884,8 @@
           "payload_type": 99,
           "rtcp_interval": "1",
           "mtu": 1200
-        }
+        },
+        "audio_config": null
       }
     },
     {
@@ -17550,7 +17912,8 @@
           "payload_type": 99,
           "rtcp_interval": 0.5,
           "mtu": null
-        }
+        },
+        "audio_config": null
       }
     },
     {
@@ -17577,7 +17940,8 @@
           "payload_type": 99,
           "rtcp_interval": 0.5,
           "mtu": true
-        }
+        },
+        "audio_config": null
       }
     },
     {
@@ -17604,7 +17968,8 @@
           "payload_type": 99,
           "rtcp_interval": 0.5,
           "mtu": -1
-        }
+        },
+        "audio_config": null
       }
     },
     {
@@ -17631,7 +17996,8 @@
           "payload_type": 99,
           "rtcp_interval": 0.5,
           "mtu": 1e+30
-        }
+        },
+        "audio_config": null
       }
     },
     {
@@ -17658,7 +18024,8 @@
           "payload_type": 99,
           "rtcp_interval": 0.5,
           "mtu": "1"
-        }
+        },
+        "audio_config": null
       }
     },
     {
@@ -17680,7 +18047,8 @@
         "address_version": "ipv4",
         "target_port": 5555,
         "key": "AAECAwQFBgcICQoLDA0ODw==",
-        "salt": "AAECAwQFBgcICQoLDA0="
+        "salt": "AAECAwQFBgcICQoLDA0=",
+        "audio": null
       }
     },
     {
@@ -17702,7 +18070,8 @@
         "address_version": "ipv4",
         "target_port": 5555,
         "key": "AAECAwQFBgcICQoLDA0ODw==",
-        "salt": "AAECAwQFBgcICQoLDA0="
+        "salt": "AAECAwQFBgcICQoLDA0=",
+        "audio": null
       }
     },
     {
@@ -17724,7 +18093,8 @@
         "address_version": "ipv4",
         "target_port": 5555,
         "key": "AAECAwQFBgcICQoLDA0ODw==",
-        "salt": "AAECAwQFBgcICQoLDA0="
+        "salt": "AAECAwQFBgcICQoLDA0=",
+        "audio": null
       }
     },
     {
@@ -17746,7 +18116,8 @@
         "address_version": "ipv4",
         "target_port": 5555,
         "key": "AAECAwQFBgcICQoLDA0ODw==",
-        "salt": "AAECAwQFBgcICQoLDA0="
+        "salt": "AAECAwQFBgcICQoLDA0=",
+        "audio": null
       }
     },
     {
@@ -17768,7 +18139,8 @@
         "address_version": "ipv4",
         "target_port": 5555,
         "key": "AAECAwQFBgcICQoLDA0ODw==",
-        "salt": "AAECAwQFBgcICQoLDA0="
+        "salt": "AAECAwQFBgcICQoLDA0=",
+        "audio": null
       }
     },
     {
@@ -17790,7 +18162,8 @@
         "address_version": "ipv4",
         "target_port": 5555,
         "key": "AAECAwQFBgcICQoLDA0ODw==",
-        "salt": "AAECAwQFBgcICQoLDA0="
+        "salt": "AAECAwQFBgcICQoLDA0=",
+        "audio": null
       }
     },
     {
@@ -17812,7 +18185,8 @@
         "address_version": "ipv4",
         "target_port": 5555,
         "key": "AAECAwQFBgcICQoLDA0ODw==",
-        "salt": "AAECAwQFBgcICQoLDA0="
+        "salt": "AAECAwQFBgcICQoLDA0=",
+        "audio": null
       }
     },
     {
@@ -17834,7 +18208,8 @@
         "address_version": "ipv4",
         "target_port": 5555,
         "key": "AAECAwQFBgcICQoLDA0ODw==",
-        "salt": "AAECAwQFBgcICQoLDA0="
+        "salt": "AAECAwQFBgcICQoLDA0=",
+        "audio": null
       }
     },
     {
@@ -17856,7 +18231,8 @@
         "address_version": "ipv4",
         "target_port": 5555,
         "key": "AAECAwQFBgcICQoLDA0ODw==",
-        "salt": "AAECAwQFBgcICQoLDA0="
+        "salt": "AAECAwQFBgcICQoLDA0=",
+        "audio": null
       }
     },
     {
@@ -17878,7 +18254,122 @@
         "address_version": "ipv4",
         "target_port": 5555,
         "key": "AAECAwQFBgcICQoLDA0ODw==",
-        "salt": "AAECAwQFBgcICQoLDA0="
+        "salt": "AAECAwQFBgcICQoLDA0=",
+        "audio": null
+      }
+    },
+    {
+      "v": 1,
+      "kind": "audio_settings_update",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "expected_revision": 0,
+        "settings": {
+          "microphone_muted": false,
+          "speaker_muted": false,
+          "microphone_volume": 100,
+          "speaker_volume": 100
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "audio_settings_update",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "settings": {
+          "microphone_muted": false,
+          "speaker_muted": false,
+          "microphone_volume": 100,
+          "speaker_volume": 100
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "audio_settings_update",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "expected_revision": 0
+      }
+    },
+    {
+      "v": 1,
+      "kind": "audio_settings_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "accepted": true,
+        "code": "ok",
+        "revision": 1
+      }
+    },
+    {
+      "v": 1,
+      "kind": "audio_settings_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "code": "ok",
+        "revision": 1
+      }
+    },
+    {
+      "v": 1,
+      "kind": "audio_settings_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "accepted": true,
+        "revision": 1
+      }
+    },
+    {
+      "v": 1,
+      "kind": "audio_settings_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "accepted": true,
+        "code": "ok"
       }
     }
   ],
@@ -18263,13 +18754,15 @@
             "camera_id": "0",
             "accessory_id": "00000000-0000-0000-0000-000000000010",
             "username": "02:00:00:00:00:00",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           },
           {
             "camera_id": "0",
             "accessory_id": "00000000-0000-0000-0000-000000000011",
             "username": "02:00:00:00:00:01",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           }
         ],
         "media_ready": false
@@ -18294,13 +18787,15 @@
             "camera_id": "0",
             "accessory_id": "00000000-0000-0000-0000-000000000010",
             "username": "02:00:00:00:00:00",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           },
           {
             "camera_id": "1",
             "accessory_id": "00000000-0000-0000-0000-000000000010",
             "username": "02:00:00:00:00:01",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           }
         ],
         "media_ready": false
@@ -18325,13 +18820,15 @@
             "camera_id": "0",
             "accessory_id": "00000000-0000-0000-0000-000000000010",
             "username": "02:00:00:00:00:00",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           },
           {
             "camera_id": "1",
             "accessory_id": "00000000-0000-0000-0000-000000000011",
             "username": "02:00:00:00:00:00",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           }
         ],
         "media_ready": false
@@ -18353,7 +18850,8 @@
             "camera_id": "42",
             "accessory_id": "00000000-0000-0000-0000-000000000004",
             "username": "02:01:02:03:04:05",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           }
         ],
         "media_ready": false
@@ -18378,7 +18876,8 @@
             "camera_id": "42",
             "accessory_id": "00000000-0000-0000-0000-000000000004",
             "username": "02:01:02:03:04:05",
-            "doorbell": true
+            "doorbell": true,
+            "audio": null
           }
         ],
         "media_ready": false
@@ -18435,7 +18934,8 @@
           "port": 5556,
           "ssrc": 123,
           "key": "AAECAwQFBgcICQoLDA0ODw==",
-          "salt": "AAECAwQFBgcICQoLDA0="
+          "salt": "AAECAwQFBgcICQoLDA0=",
+          "audio": null
         }
       }
     },
@@ -18512,7 +19012,8 @@
         "address_version": "ipv4",
         "target_port": 5555,
         "key": "AAECAwQFBgcICQoLDA0ODx==",
-        "salt": "AAECAwQFBgcICQoLDA0="
+        "salt": "AAECAwQFBgcICQoLDA0=",
+        "audio": null
       }
     },
     {
@@ -18534,7 +19035,8 @@
         "address_version": "ipv4",
         "target_port": 5555,
         "key": "AAECAwQFBgcICQoLDA0ODw==",
-        "salt": "AAECAwQFBgcICQoLDA1="
+        "salt": "AAECAwQFBgcICQoLDA1=",
+        "audio": null
       }
     },
     {
@@ -18558,7 +19060,8 @@
           "port": 5556,
           "ssrc": 123,
           "key": "AAECAwQFBgcICQoLDA0ODw==",
-          "salt": "AAECAwQFBgcICQoLDA0="
+          "salt": "AAECAwQFBgcICQoLDA0=",
+          "audio": null
         }
       }
     },
@@ -18598,6 +19101,58 @@
         "status": "rejected",
         "code": "ok",
         "endpoint": null
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_config",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1,
+        "generation": 1,
+        "page_index": 0,
+        "total_pages": 1,
+        "entries": [
+          {
+            "camera_id": "42",
+            "accessory_id": "00000000-0000-0000-0000-000000000004",
+            "username": "02:01:02:03:04:05",
+            "doorbell": true,
+            "audio": {
+              "microphone": false,
+              "speaker": true,
+              "microphone_muted": false,
+              "speaker_muted": false,
+              "microphone_volume": 100,
+              "speaker_volume": 100,
+              "revision": 1
+            }
+          }
+        ],
+        "media_ready": false
+      }
+    },
+    {
+      "v": 1,
+      "kind": "audio_settings_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "accepted": true,
+        "code": "conflict",
+        "revision": 1
       }
     }
   ],

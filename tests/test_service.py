@@ -166,7 +166,7 @@ class FakeMediaSession:
     def intercom_generation(self, lease_id):
         return lease_id if lease_id in self.leases else None
 
-    def push_intercom_generation(self, generation, payload):
+    def push_intercom_generation(self, generation, payload, *, admission=None):
         if generation not in self.leases:
             raise RuntimeError("intercom lease is not active")
         self.intercom_frames.append((generation, payload))
