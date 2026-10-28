@@ -102,19 +102,19 @@ async def test_native_warm_recording_through_real_HAP_HDS_and_private_channels(t
             prefs = RecordingPreferences(
                 data["active"], data["audio_active"], configuration_from_wire(data["configuration"])
             )
-            saved = store.set_preferences(
+            saved = store.set_hap_preferences(
                 scope.profile_id,
                 "42",
                 accessory,
                 prefs,
-                expected_revision=data["expected_revision"],
+                expected_preferences_revision=data["expected_revision"],
             )
             await owner.refresh(broker.boot_id)
             return {
                 "scope": data["scope"],
                 "accepted": True,
                 "code": "ok",
-                "revision": saved.revision,
+                "revision": saved.camera(scope.profile_id, "42").preferences_revision,
             }
         payload = await broker.request(message)
         trace.append(

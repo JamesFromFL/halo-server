@@ -104,7 +104,7 @@ async function exercise() {
       synchronized: true, streaming: false, live_audio: false, snapshots: false, recording: false, recording_audio: false, talkback: false, controls: false
     };
     delegate = new HapRecordingDelegate(native, {
-      revision: 1, enabled: true, active: false, audio_active: false, configuration: null
+      revision: 0, enabled: true, active: false, audio_active: false, configuration: null
     }, {
       active: () => true,
       policy: () => ({ ...base, ...delegate.permissions }), closeTransport: async () => { await connection?.abortAndWait(); }, failure: () => { void failed(new Error('delegate-failed')); }

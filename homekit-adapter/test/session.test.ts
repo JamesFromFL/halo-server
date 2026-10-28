@@ -367,3 +367,23 @@ test('snapshot RPC expiry preserves only correlated late READY cleanup admission
   await peer.session.receive({v:1,kind:'transfer_open',boot_id:boot,request_id:randomUUID(),payload:{scope:request.payload.scope,operation_id:request.payload.job_id,transfer_id:transferId,kind:'snapshot',total_bytes:4,chunk_bytes:4,window_chunks:1}});
   await tick();assert.equal(authorized,1);assert.equal(cancelled,1);assert.equal(peer.session.pendingRequests,0);assert.equal(peer.session.isClosed,false);peer.session.close();
 });
+
+test("control state keeps nullable observations and validates the full request scope",async()=>{
+  const peer=new Peer(),delegate=await peer.ready();
+  const state=delegate.controlState(),request=await peer.request("control_state_request");
+  await peer.reply(request,"control_state_result",{scope:request.payload.scope,operation_id:request.payload.operation_id,status:"accepted",code:"ok",light:null,siren:null});
+  assert.deepEqual(await state,{light:null,siren:null});
+  const pending=delegate.controlState(),rejected=assert.rejects(pending),other=await peer.request("control_state_request");
+  await assert.rejects(peer.reply(other,"control_state_result",{scope:{...other.payload.scope as MediaScope,privacy_generation:100},operation_id:other.payload.operation_id,
+    status:"accepted",code:"ok",light:false,siren:null}));await rejected;peer.session.close();
+});
+test("reset quiescence closes admission synchronously while owned stop correlation remains live",async()=>{
+  const peer=new Peer(),delegate=await peer.ready();
+  const pending=delegate.acquireLive(),request=await peer.request("lease_request");
+  await peer.reply(request,"lease_result",{scope:request.payload.scope,session_id:request.payload.session_id,status:"accepted",code:"ok",ttl_ms:10000});
+  await pending;peer.session.quiesce();
+  assert.throws(()=>peer.session.camera("front"),/camera-not-ready/);
+  await assert.rejects(delegate.controlState(),/stale-camera/);await assert.rejects(delegate.setControl("light",true),/stale-camera/);
+  const stop=await peer.request("lease_stop");await peer.reply(stop,"lease_stop_result",{scope:stop.payload.scope,session_id:stop.payload.session_id,status:"stopped",code:"ok"});
+  assert.equal(peer.session.isClosed,false);peer.session.close();
+});

@@ -47,8 +47,9 @@ class ServiceHomeKitBackend:
     generations, even if Ring recycles an API ID.
     """
 
-    def __init__(self, service: HaloService) -> None:
+    def __init__(self, service: HaloService, *, owner_controls: bool = False) -> None:
         self._service = service
+        self._owner_controls = owner_controls
         self._lock = threading.RLock()
         self._account: tuple[str, int] | None = None
         self._present: dict[str, tuple[object, int]] = {}
@@ -64,7 +65,7 @@ class ServiceHomeKitBackend:
         service = self._service
         context = getattr(service._sessions, "active_context", None)
         if (
-            not service.configuration.homekit_enabled
+            (not self._owner_controls and not service.configuration.homekit_enabled)
             or service._stop_requested.is_set()
             or context is None
         ):
@@ -171,7 +172,7 @@ class ServiceHomeKitBackend:
                 or present is None
                 or context is None
                 or service._stop_requested.is_set()
-                or not service.configuration.homekit_enabled
+                or (not self._owner_controls and not service.configuration.homekit_enabled)
                 or not service._account_integrations_ready
             ):
                 return False
@@ -297,6 +298,17 @@ class ServiceHomeKitBackend:
             return await self._service._open_camera_speaker(scope.camera_id, admission=guard)
         except PluginIntercomOpenError as exc:
             raise HomeKitOperationError(exc.code) from exc
+
+    def control_state(self, scope: MediaScope, *, admission: Callable[[], bool]):
+        guard = self._guard(scope, admission)
+        with self._lock:
+            present = self._present.get(scope.camera_id)
+            if present is None or present[1] != scope.device_generation:
+                raise HomeKitOperationError("stale_scope")
+            light, siren = self._service._observed_camera_controls(scope.camera_id, present[0])
+        if not guard():
+            raise HomeKitOperationError("stale_scope")
+        return light, siren
 
     async def set_control(
         self, scope: MediaScope, control: str, on: bool, *, admission: Callable[[], bool]

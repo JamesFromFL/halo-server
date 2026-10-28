@@ -25,7 +25,8 @@
         "features": [
           "classic-camera-control-v1",
           "bulk-cancel-v1",
-          "hksv-recording-v1"
+          "hksv-recording-v1",
+          "owner-admin-v1"
         ],
         "pid": 123
       }
@@ -3267,6 +3268,272 @@
           }
         ],
         "media_ready": false
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_status_request",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_status_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "accepted": true,
+        "code": "ok",
+        "published": true,
+        "paired": false,
+        "paired_clients": 0,
+        "pairing_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14",
+        "pairing_manifest": {
+          "accessory_info": null,
+          "identifier_cache": null,
+          "controller_storage": null
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_reveal_request",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "pairing_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_reveal_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "pairing_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14",
+        "accepted": true,
+        "code": "ok",
+        "pincode": "031-45-154",
+        "setup_uri": "X-HM://0023ISYWYABCD",
+        "ttl_ms": 60000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_reset_prepare",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "pairing_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_reset_prepare_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "pairing_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14",
+        "accepted": true,
+        "code": "ok",
+        "quiesced": true,
+        "quiesced_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14",
+        "pairing_manifest": {
+          "accessory_info": null,
+          "identifier_cache": null,
+          "controller_storage": null
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "control_state_request",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "operation_id": "00000000-0000-0000-0000-000000000004"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "control_state_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "operation_id": "00000000-0000-0000-0000-000000000004",
+        "status": "accepted",
+        "code": "ok",
+        "light": null,
+        "siren": true
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_status_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "accepted": false,
+        "code": "conflict",
+        "published": false,
+        "paired": null,
+        "paired_clients": null,
+        "pairing_revision": null,
+        "pairing_manifest": null
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_reveal_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "pairing_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14",
+        "accepted": false,
+        "code": "conflict",
+        "pincode": null,
+        "setup_uri": null,
+        "ttl_ms": 0
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_reset_prepare_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "pairing_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14",
+        "accepted": false,
+        "code": "conflict",
+        "quiesced": false,
+        "quiesced_revision": null,
+        "pairing_manifest": null
+      }
+    },
+    {
+      "v": 1,
+      "kind": "control_state_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "operation_id": "00000000-0000-0000-0000-000000000004",
+        "status": "rejected",
+        "code": "conflict",
+        "light": null,
+        "siren": null
       }
     }
   ],
@@ -21943,6 +22210,2543 @@
         "total_bytes": 0,
         "duration_ms": 0
       }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_status_request",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_status_request",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_status_request",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "username": "02:00:00:00:00:04"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_status_request",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_status_request",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "secret": "forbidden"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_status_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "accepted": true,
+        "code": "ok",
+        "published": true,
+        "paired": false,
+        "paired_clients": 0,
+        "pairing_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14",
+        "pairing_manifest": {
+          "accessory_info": null,
+          "identifier_cache": null,
+          "controller_storage": null
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_status_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "accepted": true,
+        "code": "ok",
+        "published": true,
+        "paired": false,
+        "paired_clients": 0,
+        "pairing_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14",
+        "pairing_manifest": {
+          "accessory_info": null,
+          "identifier_cache": null,
+          "controller_storage": null
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_status_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "username": "02:00:00:00:00:04",
+        "accepted": true,
+        "code": "ok",
+        "published": true,
+        "paired": false,
+        "paired_clients": 0,
+        "pairing_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14",
+        "pairing_manifest": {
+          "accessory_info": null,
+          "identifier_cache": null,
+          "controller_storage": null
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_status_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "accepted": true,
+        "code": "ok",
+        "published": true,
+        "paired": false,
+        "paired_clients": 0,
+        "pairing_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14",
+        "pairing_manifest": {
+          "accessory_info": null,
+          "identifier_cache": null,
+          "controller_storage": null
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_status_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "code": "ok",
+        "published": true,
+        "paired": false,
+        "paired_clients": 0,
+        "pairing_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14",
+        "pairing_manifest": {
+          "accessory_info": null,
+          "identifier_cache": null,
+          "controller_storage": null
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_status_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "accepted": true,
+        "published": true,
+        "paired": false,
+        "paired_clients": 0,
+        "pairing_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14",
+        "pairing_manifest": {
+          "accessory_info": null,
+          "identifier_cache": null,
+          "controller_storage": null
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_status_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "accepted": true,
+        "code": "ok",
+        "paired": false,
+        "paired_clients": 0,
+        "pairing_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14",
+        "pairing_manifest": {
+          "accessory_info": null,
+          "identifier_cache": null,
+          "controller_storage": null
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_status_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "accepted": true,
+        "code": "ok",
+        "published": true,
+        "paired_clients": 0,
+        "pairing_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14",
+        "pairing_manifest": {
+          "accessory_info": null,
+          "identifier_cache": null,
+          "controller_storage": null
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_status_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "accepted": true,
+        "code": "ok",
+        "published": true,
+        "paired": false,
+        "pairing_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14",
+        "pairing_manifest": {
+          "accessory_info": null,
+          "identifier_cache": null,
+          "controller_storage": null
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_status_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "accepted": true,
+        "code": "ok",
+        "published": true,
+        "paired": false,
+        "paired_clients": 0,
+        "pairing_manifest": {
+          "accessory_info": null,
+          "identifier_cache": null,
+          "controller_storage": null
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_status_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "accepted": true,
+        "code": "ok",
+        "published": true,
+        "paired": false,
+        "paired_clients": 0,
+        "pairing_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_status_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "accepted": true,
+        "code": "ok",
+        "published": true,
+        "paired": false,
+        "paired_clients": 0,
+        "pairing_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14",
+        "pairing_manifest": {
+          "accessory_info": null,
+          "identifier_cache": null,
+          "controller_storage": null
+        },
+        "secret": "forbidden"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_reveal_request",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "pairing_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_reveal_request",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "pairing_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_reveal_request",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "username": "02:00:00:00:00:04",
+        "pairing_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_reveal_request",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "pairing_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_reveal_request",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_reveal_request",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "pairing_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14",
+        "secret": "forbidden"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_reveal_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "pairing_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14",
+        "accepted": true,
+        "code": "ok",
+        "pincode": "031-45-154",
+        "setup_uri": "X-HM://0023ISYWYABCD",
+        "ttl_ms": 60000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_reveal_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "pairing_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14",
+        "accepted": true,
+        "code": "ok",
+        "pincode": "031-45-154",
+        "setup_uri": "X-HM://0023ISYWYABCD",
+        "ttl_ms": 60000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_reveal_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "username": "02:00:00:00:00:04",
+        "pairing_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14",
+        "accepted": true,
+        "code": "ok",
+        "pincode": "031-45-154",
+        "setup_uri": "X-HM://0023ISYWYABCD",
+        "ttl_ms": 60000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_reveal_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "pairing_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14",
+        "accepted": true,
+        "code": "ok",
+        "pincode": "031-45-154",
+        "setup_uri": "X-HM://0023ISYWYABCD",
+        "ttl_ms": 60000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_reveal_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "accepted": true,
+        "code": "ok",
+        "pincode": "031-45-154",
+        "setup_uri": "X-HM://0023ISYWYABCD",
+        "ttl_ms": 60000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_reveal_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "pairing_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14",
+        "code": "ok",
+        "pincode": "031-45-154",
+        "setup_uri": "X-HM://0023ISYWYABCD",
+        "ttl_ms": 60000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_reveal_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "pairing_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14",
+        "accepted": true,
+        "pincode": "031-45-154",
+        "setup_uri": "X-HM://0023ISYWYABCD",
+        "ttl_ms": 60000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_reveal_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "pairing_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14",
+        "accepted": true,
+        "code": "ok",
+        "setup_uri": "X-HM://0023ISYWYABCD",
+        "ttl_ms": 60000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_reveal_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "pairing_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14",
+        "accepted": true,
+        "code": "ok",
+        "pincode": "031-45-154",
+        "ttl_ms": 60000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_reveal_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "pairing_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14",
+        "accepted": true,
+        "code": "ok",
+        "pincode": "031-45-154",
+        "setup_uri": "X-HM://0023ISYWYABCD"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_reveal_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "pairing_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14",
+        "accepted": true,
+        "code": "ok",
+        "pincode": "031-45-154",
+        "setup_uri": "X-HM://0023ISYWYABCD",
+        "ttl_ms": 60000,
+        "secret": "forbidden"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_reset_prepare",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "pairing_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_reset_prepare",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "pairing_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_reset_prepare",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "username": "02:00:00:00:00:04",
+        "pairing_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_reset_prepare",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "pairing_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_reset_prepare",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_reset_prepare",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "pairing_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14",
+        "secret": "forbidden"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_reset_prepare_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "pairing_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14",
+        "accepted": true,
+        "code": "ok",
+        "quiesced": true,
+        "quiesced_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14",
+        "pairing_manifest": {
+          "accessory_info": null,
+          "identifier_cache": null,
+          "controller_storage": null
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_reset_prepare_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "pairing_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14",
+        "accepted": true,
+        "code": "ok",
+        "quiesced": true,
+        "quiesced_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14",
+        "pairing_manifest": {
+          "accessory_info": null,
+          "identifier_cache": null,
+          "controller_storage": null
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_reset_prepare_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "username": "02:00:00:00:00:04",
+        "pairing_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14",
+        "accepted": true,
+        "code": "ok",
+        "quiesced": true,
+        "quiesced_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14",
+        "pairing_manifest": {
+          "accessory_info": null,
+          "identifier_cache": null,
+          "controller_storage": null
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_reset_prepare_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "pairing_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14",
+        "accepted": true,
+        "code": "ok",
+        "quiesced": true,
+        "quiesced_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14",
+        "pairing_manifest": {
+          "accessory_info": null,
+          "identifier_cache": null,
+          "controller_storage": null
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_reset_prepare_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "accepted": true,
+        "code": "ok",
+        "quiesced": true,
+        "quiesced_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14",
+        "pairing_manifest": {
+          "accessory_info": null,
+          "identifier_cache": null,
+          "controller_storage": null
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_reset_prepare_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "pairing_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14",
+        "code": "ok",
+        "quiesced": true,
+        "quiesced_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14",
+        "pairing_manifest": {
+          "accessory_info": null,
+          "identifier_cache": null,
+          "controller_storage": null
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_reset_prepare_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "pairing_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14",
+        "accepted": true,
+        "quiesced": true,
+        "quiesced_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14",
+        "pairing_manifest": {
+          "accessory_info": null,
+          "identifier_cache": null,
+          "controller_storage": null
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_reset_prepare_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "pairing_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14",
+        "accepted": true,
+        "code": "ok",
+        "quiesced_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14",
+        "pairing_manifest": {
+          "accessory_info": null,
+          "identifier_cache": null,
+          "controller_storage": null
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_reset_prepare_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "pairing_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14",
+        "accepted": true,
+        "code": "ok",
+        "quiesced": true,
+        "pairing_manifest": {
+          "accessory_info": null,
+          "identifier_cache": null,
+          "controller_storage": null
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_reset_prepare_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "pairing_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14",
+        "accepted": true,
+        "code": "ok",
+        "quiesced": true,
+        "quiesced_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_reset_prepare_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "pairing_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14",
+        "accepted": true,
+        "code": "ok",
+        "quiesced": true,
+        "quiesced_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14",
+        "pairing_manifest": {
+          "accessory_info": null,
+          "identifier_cache": null,
+          "controller_storage": null
+        },
+        "secret": "forbidden"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "control_state_request",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "operation_id": "00000000-0000-0000-0000-000000000004"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "control_state_request",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "control_state_request",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "operation_id": "00000000-0000-0000-0000-000000000004",
+        "secret": "forbidden"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "control_state_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "operation_id": "00000000-0000-0000-0000-000000000004",
+        "status": "accepted",
+        "code": "ok",
+        "light": null,
+        "siren": true
+      }
+    },
+    {
+      "v": 1,
+      "kind": "control_state_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "status": "accepted",
+        "code": "ok",
+        "light": null,
+        "siren": true
+      }
+    },
+    {
+      "v": 1,
+      "kind": "control_state_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "operation_id": "00000000-0000-0000-0000-000000000004",
+        "code": "ok",
+        "light": null,
+        "siren": true
+      }
+    },
+    {
+      "v": 1,
+      "kind": "control_state_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "operation_id": "00000000-0000-0000-0000-000000000004",
+        "status": "accepted",
+        "light": null,
+        "siren": true
+      }
+    },
+    {
+      "v": 1,
+      "kind": "control_state_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "operation_id": "00000000-0000-0000-0000-000000000004",
+        "status": "accepted",
+        "code": "ok",
+        "siren": true
+      }
+    },
+    {
+      "v": 1,
+      "kind": "control_state_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "operation_id": "00000000-0000-0000-0000-000000000004",
+        "status": "accepted",
+        "code": "ok",
+        "light": null
+      }
+    },
+    {
+      "v": 1,
+      "kind": "control_state_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "operation_id": "00000000-0000-0000-0000-000000000004",
+        "status": "accepted",
+        "code": "ok",
+        "light": null,
+        "siren": true,
+        "secret": "forbidden"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_status_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "accepted": false,
+        "code": "conflict",
+        "published": false,
+        "paired": null,
+        "paired_clients": null,
+        "pairing_revision": null,
+        "pairing_manifest": null
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_status_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "accepted": false,
+        "code": "conflict",
+        "published": false,
+        "paired": null,
+        "paired_clients": null,
+        "pairing_revision": null,
+        "pairing_manifest": null
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_status_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "username": "02:00:00:00:00:04",
+        "accepted": false,
+        "code": "conflict",
+        "published": false,
+        "paired": null,
+        "paired_clients": null,
+        "pairing_revision": null,
+        "pairing_manifest": null
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_status_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "accepted": false,
+        "code": "conflict",
+        "published": false,
+        "paired": null,
+        "paired_clients": null,
+        "pairing_revision": null,
+        "pairing_manifest": null
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_status_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "code": "conflict",
+        "published": false,
+        "paired": null,
+        "paired_clients": null,
+        "pairing_revision": null,
+        "pairing_manifest": null
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_status_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "accepted": false,
+        "published": false,
+        "paired": null,
+        "paired_clients": null,
+        "pairing_revision": null,
+        "pairing_manifest": null
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_status_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "accepted": false,
+        "code": "conflict",
+        "paired": null,
+        "paired_clients": null,
+        "pairing_revision": null,
+        "pairing_manifest": null
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_status_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "accepted": false,
+        "code": "conflict",
+        "published": false,
+        "paired_clients": null,
+        "pairing_revision": null,
+        "pairing_manifest": null
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_status_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "accepted": false,
+        "code": "conflict",
+        "published": false,
+        "paired": null,
+        "pairing_revision": null,
+        "pairing_manifest": null
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_status_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "accepted": false,
+        "code": "conflict",
+        "published": false,
+        "paired": null,
+        "paired_clients": null,
+        "pairing_manifest": null
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_status_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "accepted": false,
+        "code": "conflict",
+        "published": false,
+        "paired": null,
+        "paired_clients": null,
+        "pairing_revision": null
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_status_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "accepted": false,
+        "code": "conflict",
+        "published": false,
+        "paired": null,
+        "paired_clients": null,
+        "pairing_revision": null,
+        "pairing_manifest": null,
+        "secret": "forbidden"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_reveal_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "pairing_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14",
+        "accepted": false,
+        "code": "conflict",
+        "pincode": null,
+        "setup_uri": null,
+        "ttl_ms": 0
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_reveal_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "pairing_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14",
+        "accepted": false,
+        "code": "conflict",
+        "pincode": null,
+        "setup_uri": null,
+        "ttl_ms": 0
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_reveal_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "username": "02:00:00:00:00:04",
+        "pairing_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14",
+        "accepted": false,
+        "code": "conflict",
+        "pincode": null,
+        "setup_uri": null,
+        "ttl_ms": 0
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_reveal_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "pairing_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14",
+        "accepted": false,
+        "code": "conflict",
+        "pincode": null,
+        "setup_uri": null,
+        "ttl_ms": 0
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_reveal_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "accepted": false,
+        "code": "conflict",
+        "pincode": null,
+        "setup_uri": null,
+        "ttl_ms": 0
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_reveal_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "pairing_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14",
+        "code": "conflict",
+        "pincode": null,
+        "setup_uri": null,
+        "ttl_ms": 0
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_reveal_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "pairing_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14",
+        "accepted": false,
+        "pincode": null,
+        "setup_uri": null,
+        "ttl_ms": 0
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_reveal_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "pairing_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14",
+        "accepted": false,
+        "code": "conflict",
+        "setup_uri": null,
+        "ttl_ms": 0
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_reveal_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "pairing_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14",
+        "accepted": false,
+        "code": "conflict",
+        "pincode": null,
+        "ttl_ms": 0
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_reveal_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "pairing_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14",
+        "accepted": false,
+        "code": "conflict",
+        "pincode": null,
+        "setup_uri": null
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_reveal_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "pairing_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14",
+        "accepted": false,
+        "code": "conflict",
+        "pincode": null,
+        "setup_uri": null,
+        "ttl_ms": 0,
+        "secret": "forbidden"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_reset_prepare_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "pairing_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14",
+        "accepted": false,
+        "code": "conflict",
+        "quiesced": false,
+        "quiesced_revision": null,
+        "pairing_manifest": null
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_reset_prepare_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "pairing_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14",
+        "accepted": false,
+        "code": "conflict",
+        "quiesced": false,
+        "quiesced_revision": null,
+        "pairing_manifest": null
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_reset_prepare_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "username": "02:00:00:00:00:04",
+        "pairing_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14",
+        "accepted": false,
+        "code": "conflict",
+        "quiesced": false,
+        "quiesced_revision": null,
+        "pairing_manifest": null
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_reset_prepare_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "pairing_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14",
+        "accepted": false,
+        "code": "conflict",
+        "quiesced": false,
+        "quiesced_revision": null,
+        "pairing_manifest": null
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_reset_prepare_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "accepted": false,
+        "code": "conflict",
+        "quiesced": false,
+        "quiesced_revision": null,
+        "pairing_manifest": null
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_reset_prepare_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "pairing_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14",
+        "code": "conflict",
+        "quiesced": false,
+        "quiesced_revision": null,
+        "pairing_manifest": null
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_reset_prepare_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "pairing_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14",
+        "accepted": false,
+        "quiesced": false,
+        "quiesced_revision": null,
+        "pairing_manifest": null
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_reset_prepare_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "pairing_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14",
+        "accepted": false,
+        "code": "conflict",
+        "quiesced_revision": null,
+        "pairing_manifest": null
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_reset_prepare_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "pairing_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14",
+        "accepted": false,
+        "code": "conflict",
+        "quiesced": false,
+        "pairing_manifest": null
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_reset_prepare_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "pairing_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14",
+        "accepted": false,
+        "code": "conflict",
+        "quiesced": false,
+        "quiesced_revision": null
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_reset_prepare_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "pairing_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14",
+        "accepted": false,
+        "code": "conflict",
+        "quiesced": false,
+        "quiesced_revision": null,
+        "pairing_manifest": null,
+        "secret": "forbidden"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "control_state_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "operation_id": "00000000-0000-0000-0000-000000000004",
+        "status": "rejected",
+        "code": "conflict",
+        "light": null,
+        "siren": null
+      }
+    },
+    {
+      "v": 1,
+      "kind": "control_state_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "status": "rejected",
+        "code": "conflict",
+        "light": null,
+        "siren": null
+      }
+    },
+    {
+      "v": 1,
+      "kind": "control_state_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "operation_id": "00000000-0000-0000-0000-000000000004",
+        "code": "conflict",
+        "light": null,
+        "siren": null
+      }
+    },
+    {
+      "v": 1,
+      "kind": "control_state_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "operation_id": "00000000-0000-0000-0000-000000000004",
+        "status": "rejected",
+        "light": null,
+        "siren": null
+      }
+    },
+    {
+      "v": 1,
+      "kind": "control_state_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "operation_id": "00000000-0000-0000-0000-000000000004",
+        "status": "rejected",
+        "code": "conflict",
+        "siren": null
+      }
+    },
+    {
+      "v": 1,
+      "kind": "control_state_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "operation_id": "00000000-0000-0000-0000-000000000004",
+        "status": "rejected",
+        "code": "conflict",
+        "light": null
+      }
+    },
+    {
+      "v": 1,
+      "kind": "control_state_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "operation_id": "00000000-0000-0000-0000-000000000004",
+        "status": "rejected",
+        "code": "conflict",
+        "light": null,
+        "siren": null,
+        "secret": "forbidden"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_status_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "accepted": true,
+        "code": "ok",
+        "published": true,
+        "paired": false,
+        "paired_clients": 1,
+        "pairing_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14",
+        "pairing_manifest": {
+          "accessory_info": null,
+          "identifier_cache": null,
+          "controller_storage": null
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_status_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "accepted": true,
+        "code": "ok",
+        "published": true,
+        "paired": false,
+        "paired_clients": 0,
+        "pairing_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14",
+        "pairing_manifest": null
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_reveal_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "pairing_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14",
+        "accepted": true,
+        "code": "ok",
+        "pincode": null,
+        "setup_uri": "X-HM://0023ISYWYABCD",
+        "ttl_ms": 60000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_reveal_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "pairing_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14",
+        "accepted": true,
+        "code": "ok",
+        "pincode": "031-45-154",
+        "setup_uri": "X-HM://0023ISYWYABCD",
+        "ttl_ms": 0
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_reveal_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "pairing_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14",
+        "accepted": true,
+        "code": "ok",
+        "pincode": "031-45-154",
+        "setup_uri": "https://example.test",
+        "ttl_ms": 60000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_reset_prepare_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "pairing_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14",
+        "accepted": true,
+        "code": "ok",
+        "quiesced": false,
+        "quiesced_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14",
+        "pairing_manifest": {
+          "accessory_info": null,
+          "identifier_cache": null,
+          "controller_storage": null
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_reveal_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "pairing_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14",
+        "accepted": false,
+        "code": "conflict",
+        "pincode": "031-45-154",
+        "setup_uri": null,
+        "ttl_ms": 0
+      }
+    },
+    {
+      "v": 1,
+      "kind": "control_state_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "operation_id": "00000000-0000-0000-0000-000000000004",
+        "status": "rejected",
+        "code": "conflict",
+        "light": true,
+        "siren": null
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_status_request",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "00:00:00:00:00:04"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_reveal_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "pairing_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14",
+        "accepted": true,
+        "code": "ok",
+        "pincode": "031-45-154\n",
+        "setup_uri": "X-HM://0023ISYWYABCD",
+        "ttl_ms": 60000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_reveal_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "pairing_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14",
+        "accepted": true,
+        "code": "ok",
+        "pincode": "031-45-154",
+        "setup_uri": "X-HM://0023ISYWYABCD\n",
+        "ttl_ms": 60000
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_reveal_request",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "pairing_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14\n"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_status_request",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04\n"
+      }
     }
   ],
   "semantic_invalid": [
@@ -22725,6 +25529,91 @@
         "accepted": true,
         "code": "conflict",
         "revision": 1
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_status_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "accepted": true,
+        "code": "ok",
+        "published": true,
+        "paired": false,
+        "paired_clients": 0,
+        "pairing_revision": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "pairing_manifest": {
+          "accessory_info": null,
+          "identifier_cache": null,
+          "controller_storage": null
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_reset_prepare_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "pairing_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14",
+        "accepted": true,
+        "code": "ok",
+        "quiesced": true,
+        "quiesced_revision": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "pairing_manifest": {
+          "accessory_info": null,
+          "identifier_cache": null,
+          "controller_storage": null
+        }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "pairing_reset_prepare_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "camera_id": "42",
+          "account_generation": 1,
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "registry_revision": 1,
+        "accessory_id": "00000000-0000-0000-0000-000000000004",
+        "username": "02:00:00:00:00:04",
+        "pairing_revision": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "accepted": true,
+        "code": "ok",
+        "quiesced": true,
+        "quiesced_revision": "a067c70bf021ffbdb66181f077d7f63ef7bde09db38d31dc56cd1c77f4482b14",
+        "pairing_manifest": {
+          "accessory_info": null,
+          "identifier_cache": null,
+          "controller_storage": null
+        }
       }
     }
   ],

@@ -102,6 +102,7 @@ class CameraRecordingSettings:
     accessory_id: str
     owner_warm: bool = False
     preferences: RecordingPreferences = RecordingPreferences()
+    preferences_revision: int = 0
 
     def __post_init__(self):
         try:
@@ -117,6 +118,8 @@ class CameraRecordingSettings:
             or not valid_id
             or type(self.owner_warm) is not bool
             or not isinstance(self.preferences, RecordingPreferences)
+            or type(self.preferences_revision) is not int
+            or not 0 <= self.preferences_revision <= MAX_REVISION
         ):
             raise RecordingSettingsError("Recording camera identity is invalid")
 
@@ -124,8 +127,12 @@ class CameraRecordingSettings:
     def key(self):
         return self.profile_id, self.camera_id
 
-    def wire(self, revision, *, enabled):
-        return {"revision": revision, "enabled": enabled, **self.preferences.wire()}
+    def wire(self, *, enabled):
+        return {
+            "revision": self.preferences_revision,
+            "enabled": enabled,
+            **self.preferences.wire(),
+        }
 
     def as_dict(self):
         return {
@@ -134,19 +141,20 @@ class CameraRecordingSettings:
             "accessory_id": self.accessory_id,
             "owner_warm": self.owner_warm,
             "preferences": self.preferences.wire(),
+            "preferences_revision": self.preferences_revision,
         }
 
 
 @dataclass(frozen=True)
 class RecordingSettings:
-    version: int = 1
+    version: int = 2
     revision: int = 0
     entries: tuple[CameraRecordingSettings, ...] = ()
 
     def __post_init__(self):
         if (
             type(self.version) is not int
-            or self.version != 1
+            or self.version not in {1, 2}
             or type(self.revision) is not int
             or not 0 <= self.revision <= MAX_REVISION
             or not isinstance(self.entries, tuple)
@@ -174,13 +182,19 @@ def _decode(value):
         or set(value) != {"version", "revision", "entries"}
         or not isinstance(value["entries"], list)
         or len(value["entries"]) > 256
+        or type(value["version"]) is not int
+        or value["version"] not in {1, 2}
     ):
         raise RecordingSettingsError("Recording settings have an invalid format")
     entries = []
     for row in value["entries"]:
         if (
             not isinstance(row, dict)
-            or set(row) != {"profile_id", "camera_id", "accessory_id", "owner_warm", "preferences"}
+            or set(row)
+            != (
+                {"profile_id", "camera_id", "accessory_id", "owner_warm", "preferences"}
+                | ({"preferences_revision"} if value["version"] == 2 else set())
+            )
             or not isinstance(row["preferences"], dict)
             or set(row["preferences"]) != {"active", "audio_active", "configuration"}
         ):
@@ -188,7 +202,13 @@ def _decode(value):
         preferences = dict(row["preferences"])
         preferences["configuration"] = configuration_from_wire(preferences["configuration"])
         entries.append(
-            CameraRecordingSettings(**(row | {"preferences": RecordingPreferences(**preferences)}))
+            CameraRecordingSettings(
+                **(
+                    row
+                    | {"preferences": RecordingPreferences(**preferences)}
+                    | ({"preferences_revision": value["revision"]} if value["version"] == 1 else {})
+                )
+            )
         )
     return RecordingSettings(**(value | {"entries": tuple(entries)}))
 
@@ -264,6 +284,11 @@ class RecordingSettingsStore(PrivateJsonStore[RecordingSettings]):
             raise RecordingSettingsError(
                 "Enrolled recording settings are missing; restore durable state"
             )
+        if snapshot.version == 1:
+            # Known S12 format: preserve every identity and preference. Its
+            # global token becomes the initial camera token, then both move
+            # independently only through future validated transactions.
+            snapshot = self._save_locked(directory, snapshot, replace(snapshot, version=2))
         return snapshot
 
     def _save_locked(self, directory, current, snapshot):
@@ -274,6 +299,16 @@ class RecordingSettingsStore(PrivateJsonStore[RecordingSettings]):
                 raise RecordingSettingsError(
                     "Recording identities cannot be removed or replaced implicitly"
                 )
+            expected = old.preferences_revision + int(new.preferences != old.preferences)
+            if expected > MAX_REVISION or new.preferences_revision != expected:
+                raise RecordingSettingsError(
+                    "Recording preferences revision must advance exactly once"
+                )
+        if any(
+            row.key not in {old.key for old in current.entries} and row.preferences_revision != 0
+            for row in snapshot.entries
+        ):
+            raise RecordingSettingsError("New recording preferences must start at revision zero")
         return super()._save_locked(directory, current, snapshot)
 
     def reconcile(self, registry: CameraRegistry, inventory: NativeInventory):
@@ -323,8 +358,41 @@ class RecordingSettingsStore(PrivateJsonStore[RecordingSettings]):
             camera_id,
             accessory_id,
             expected_revision,
-            lambda row: replace(row, preferences=preferences),
+            lambda row: self._preferences(row, preferences),
         )
+
+    @staticmethod
+    def _preferences(row, preferences):
+        if row.preferences == preferences:
+            return row
+        if row.preferences_revision == MAX_REVISION:
+            raise RecordingSettingsError("Recording preferences revision limit reached")
+        return replace(
+            row, preferences=preferences, preferences_revision=row.preferences_revision + 1
+        )
+
+    def set_hap_preferences(
+        self, profile_id, camera_id, accessory_id, preferences, *, expected_preferences_revision
+    ):
+        """CAS only the target camera while preserving concurrent other rows."""
+        if not isinstance(preferences, RecordingPreferences):
+            raise RecordingSettingsError("Recording preferences are invalid")
+        self._expected(expected_preferences_revision)
+
+        def change(current):
+            row = current.camera(profile_id, camera_id)
+            if row is None or row.accessory_id != accessory_id:
+                raise RecordingSettingsError("Recording settings do not belong to this accessory")
+            if row.preferences_revision != expected_preferences_revision:
+                raise RecordingSettingsConflict(
+                    "Recording camera preferences changed; reload before saving"
+                )
+            updated = self._preferences(row, preferences)
+            return replace(
+                current, entries=tuple(updated if item is row else item for item in current.entries)
+            )
+
+        return self.update(change)
 
     def set_owner_warm(self, profile_id, camera_id, accessory_id, enabled, *, expected_revision):
         if type(enabled) is not bool:

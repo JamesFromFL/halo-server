@@ -83,7 +83,7 @@ control.on('message',message=>{void(async()=>{
  sendControl:send});bulk.start();
   await control.send({...message,kind:'hello_ack',payload:{role:'hap',
  build_id:message.payload.build_id,
-   protocol:1,features:['classic-camera-control-v1','bulk-cancel-v1','hksv-recording-v1'],pid:process.pid}});return;
+   protocol:1,features:['classic-camera-control-v1','bulk-cancel-v1','hksv-recording-v1','owner-admin-v1'],pid:process.pid}});return;
  }
  if(message.kind==='ping'){await control.send({...message,kind:'pong',payload:{}});return;}
  if(message.kind==='shutdown'){

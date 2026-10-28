@@ -1,6 +1,8 @@
 import { Categories } from "@homebridge/hap-nodejs";
 import { CameraAccessory, type AccessoryIdentity, type MotionState } from "./camera.js";
-import { ProtocolError, type AccountScope, type JsonObject, type MediaScope } from "./protocol.js";
+import { ProtocolError, type AccountScope, type JsonObject, type MediaScope, type PairingIdentity, type PairingStatus, type PairingReveal, type PairingReset } from "./protocol.js";
+import { pairingSnapshot } from "./pairing.js";
+import { pairingRevision } from "./storage.js";
 import type { AdapterSession } from "./session.js";
 import type { PairingStore } from "./storage.js";
 
@@ -35,7 +37,7 @@ interface ReceivedEventState extends EventState { expiresAt: number }
 interface CameraEvent { scope: MediaScope; epoch: string; sequence: number; event_id: string; type: "doorbell"; ttl_ms: number; expires_at_ms: number }
 interface EventSync { scope: AccountScope | null; epoch: string; sequence: number; accepted: boolean; code: string }
 export interface AccessoryManagerOptions {
-  session: Pick<AdapterSession, "cameras" | "inventoryComplete" | "accountScope"> & Partial<Pick<AdapterSession, "camera">>;
+  session: Pick<AdapterSession, "cameras" | "inventoryComplete" | "accountScope"> & Partial<Pick<AdapterSession, "camera" | "quiesce">>;
   store?: PairingStore;
   publisher?: AccessoryPublisher;
   syncEvents: (scope: AccountScope | null, epoch: string | null, sequence: number) => Promise<JsonObject>;
@@ -79,6 +81,60 @@ export class AccessoryManager {
   get publishedCount(): number { return [...this.managed.values()].filter(value => value.published).length; }
   get isFailed(): boolean { return this.failed; }
   accessories(): CameraAccessory[] { return [...this.managed.values()].map(value => value.camera); }
+
+  private pairingTarget(identity: PairingIdentity): Managed {
+    const config = this.configuration, managed = this.managed.get(identity.scope.camera_id);
+    if (this.closed || this.failed || this.pending || !config || config.generation !== this.generation ||
+        config.revision !== identity.registry_revision || !this.options.session.inventoryComplete ||
+        !sameAccount(config.scope, identity.scope) || !sameAccount(config.scope, this.options.session.accountScope) ||
+        !managed || managed.camera.isRetired || key(managed.camera.scope) !== key(identity.scope) ||
+        managed.camera.identity.accessory_id !== identity.accessory_id || managed.camera.identity.username !== identity.username ||
+        !this.options.store) throw new ProtocolError("pairing-not-ready");
+    return managed;
+  }
+  pairingStatus(identity: PairingIdentity): PairingStatus {
+    const result: PairingStatus = {...identity, accepted: false, code: "not-ready", published: false,
+      paired: null, paired_clients: null, pairing_revision: null, pairing_manifest: null};
+    try {
+      const managed = this.pairingTarget(identity), snapshot = pairingSnapshot(this.options.store!, identity.username);
+      return {...result, accepted: true, code: "ok", published: managed.published, paired: snapshot.paired,
+        paired_clients: snapshot.paired_clients, pairing_revision: snapshot.pairing_revision, pairing_manifest: snapshot.pairing_manifest};
+    } catch {return result;}
+  }
+  pairingReveal(identity: PairingIdentity & {pairing_revision: string}): PairingReveal {
+    const result: PairingReveal = {...identity, accepted: false, code: "not-ready", pincode: null, setup_uri: null, ttl_ms: 0};
+    try {
+      const managed = this.pairingTarget(identity);
+      if (!managed.published) return result;
+      const snapshot = pairingSnapshot(this.options.store!, identity.username);
+      if (snapshot.pairing_revision !== identity.pairing_revision) return {...result, code: "conflict"};
+      if (snapshot.paired || snapshot.pincode === null) return {...result, code: "policy-denied"};
+      const uri = managed.camera.accessory.setupURI();
+      if (uri.length !== 20 || !/^X-HM:\/\/[0-9A-Z]{13}$/.test(uri) || pairingRevision(this.options.store!.manifest(identity.username)) !== identity.pairing_revision) {
+        return {...result, code: "conflict"};
+      }
+      return {...result, accepted: true, code: "ok", pincode: snapshot.pincode, setup_uri: uri, ttl_ms: 60000};
+    } catch {return result;}
+  }
+  async preparePairingReset(identity: PairingIdentity & {pairing_revision: string}): Promise<PairingReset> {
+    const result: PairingReset = {...identity, accepted: false, code: "not-ready", quiesced: false, quiesced_revision: null, pairing_manifest: null};
+    let store: PairingStore;
+    try {
+      this.pairingTarget(identity); store = this.options.store!;
+      if (pairingRevision(store.manifest(identity.username)) !== identity.pairing_revision) return {...result, code: "conflict"};
+    } catch {return result;}
+    // All new acquisition closes before any native or transport cleanup await.
+    this.options.session.quiesce?.();
+    this.closed = true; this.invalidate();
+    for (const managed of this.managed.values()) managed.camera.retire();
+    try {
+      await this.close(true);
+      const manifest = store.manifest(identity.username), revision = pairingRevision(manifest);
+      if (revision !== identity.pairing_revision) return {...result, code: "conflict", quiesced: true};
+      return {...result, accepted: true, code: "ok", quiesced: true, quiesced_revision: revision, pairing_manifest: manifest};
+    } catch {return {...result, quiesced: true};}
+    finally {store.close();}
+  }
 
   async configure(page: AccessoryConfigurationPage): Promise<void> {
     if (this.closed || this.failed) throw new ProtocolError("accessory-manager-retired");
@@ -138,7 +194,7 @@ export class AccessoryManager {
 
   reconcile(): Promise<void> {
     const work = this.chain.then(() => this.reconcileNow());
-    this.chain = work.catch(error => { this.failed = true; this.invalidate();
+    this.chain = work.catch(error => { if (this.closed) return; this.failed = true; this.invalidate();
       this.options.onFailure?.(error instanceof ProtocolError ? error : new ProtocolError("accessory-reconciliation-failed")); });
     return work;
   }
@@ -290,7 +346,7 @@ export class AccessoryManager {
     managed.camera.ring();
   }
 
-  close(): Promise<void> {
+  close(preserveStore = false): Promise<void> {
     if (this.closing) return this.closing;
     this.closed = true; this.invalidate();
     if (this.configurationTimer) clearTimeout(this.configurationTimer);
@@ -298,7 +354,7 @@ export class AccessoryManager {
     this.closing = (async () => {
       await this.chain;
       await this.retireAll();
-      this.options.store?.close();
+      if (!preserveStore) this.options.store?.close();
     })();
     return this.closing;
   }

@@ -1,8 +1,8 @@
-import { createPrivateKey, createPublicKey, randomInt } from "node:crypto";
+import { createHash, createPrivateKey, createPublicKey, randomInt } from "node:crypto";
 import { closeSync, constants, fstatSync, openSync, opendirSync, readSync } from "node:fs";
 import { TextDecoder } from "node:util";
 import { HAPStorage } from "@homebridge/hap-nodejs";
-import { ProtocolError } from "./protocol.js";
+import { ProtocolError, pairingManifestRevision, type PairingManifest } from "./protocol.js";
 
 export const MAX_PAIRING_FILES = 1024;
 export const MAX_PAIRING_FILE_BYTES = 1024 * 1024;
@@ -18,6 +18,45 @@ const hex = (value: unknown, length: number): boolean =>
 const pin = (value: unknown): value is string => typeof value === "string" && /^\d{3}-\d{2}-\d{3}$/.test(value);
 const safeText = (value: unknown, maximum: number): value is string =>
   typeof value === "string" && Array.from(value).length <= maximum && !/[\p{Cc}\p{Cs}]/u.test(value);
+
+export const PAIRING_RECORDS = {accessory_info: "AccessoryInfo", controller_storage: "ControllerStorage", identifier_cache: "IdentifierCache"} as const;
+export function pairingRevision(manifest: PairingManifest): string {
+  return pairingManifestRevision(manifest);
+}
+function pairingSuffix(username: string): string {
+  if (username.length !== 17 || !/^[0-9A-F][26AE](?::[0-9A-F]{2}){5}$/.test(username)) throw new ProtocolError("invalid-accessory-identity");
+  return username.replaceAll(":", "");
+}
+function privateDirectory(descriptor: number): void {
+  const metadata = fstatSync(descriptor);
+  if (!metadata.isDirectory() || metadata.uid !== process.getuid?.() || (metadata.mode & 0o077) !== 0) throw new ProtocolError("pairing-store-unsafe");
+}
+function readPrivateRecord(descriptor: number, name: string): Buffer | null {
+  let file: number;
+  try { file = openSync(`/proc/self/fd/${descriptor}/${name}`, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return null; throw new ProtocolError("pairing-store-unsafe"); }
+  try {
+    const metadata = fstatSync(file);
+    if (!metadata.isFile() || metadata.uid !== process.getuid?.() || metadata.nlink !== 1 || (metadata.mode & 0o077) !== 0 ||
+        metadata.size < 1 || metadata.size > MAX_PAIRING_FILE_BYTES) throw new ProtocolError("pairing-store-unsafe");
+    const bytes = Buffer.alloc(metadata.size + 1);
+    let count = 0, read = 0;
+    do {read = readSync(file, bytes, count, bytes.length - count, null); count += read;} while (read > 0 && count < bytes.length);
+    if (count !== metadata.size) throw new ProtocolError("pairing-store-unsafe");
+    return bytes.subarray(0, count);
+  } finally {closeSync(file);}
+}
+/** Exact files only. Atomic renames during a live read are caught by reset's later CAS. */
+export function readPairingManifest(descriptor: number, username: string): PairingManifest {
+  privateDirectory(descriptor);
+  const suffix = pairingSuffix(username), result = {} as PairingManifest;
+  for (const [field, kind] of Object.entries(PAIRING_RECORDS) as [keyof PairingManifest, string][]) {
+    const bytes = readPrivateRecord(descriptor, `${kind}.${suffix}.json`);
+    if (bytes !== null) validateStoredRecord(kind, parseRecord(bytes));
+    result[field] = bytes === null ? null : createHash("sha256").update(bytes).digest("hex");
+  }
+  return result;
+}
 
 function keyPairValid(secret: unknown, publicKey: unknown): boolean {
   if (!hex(secret, 128) || !hex(publicKey, 64)) return false;
@@ -105,9 +144,10 @@ export class PairingStore {
   private closed = false;
   private readonly pins = new Map<string, string>();
 
-  constructor(private readonly descriptor: number) {
+  constructor(private readonly descriptor: number, private readonly resettingUsername: string | null = null) {
     if (process.platform !== "linux" || !integer(descriptor, 3)) throw new ProtocolError("pairing-store-unavailable");
     this.path = `/proc/self/fd/${descriptor}`;
+    if (resettingUsername !== null) pairingSuffix(resettingUsername);
     this.preflight();
   }
 
@@ -153,9 +193,10 @@ export class PairingStore {
       for (const [name, value] of loaded) {
         const match = basename.exec(name)!;
         const identity = match[2]!;
-        if (match[1] !== "AccessoryInfo" && !loaded.has(`AccessoryInfo.${identity}.json`)) throw new Error();
+        const resetting = this.resettingUsername !== null && identity === pairingSuffix(this.resettingUsername);
+        if (!resetting && match[1] !== "AccessoryInfo" && !loaded.has(`AccessoryInfo.${identity}.json`)) throw new Error();
         if (match[1] === "AccessoryInfo") {
-          if (Object.keys(value.pairedClients as object).length && !loaded.has(`IdentifierCache.${identity}.json`)) throw new Error();
+          if (!resetting && Object.keys(value.pairedClients as object).length && !loaded.has(`IdentifierCache.${identity}.json`)) throw new Error();
           this.pins.set(identity, value.pincode as string);
         }
       }
@@ -185,6 +226,11 @@ export class PairingStore {
     } while (!value);
     this.pins.set(key, value);
     return value;
+  }
+
+  manifest(username: string): PairingManifest {
+    this.preflight();
+    return readPairingManifest(this.descriptor, username);
   }
 
   close(): void {

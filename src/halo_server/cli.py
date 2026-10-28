@@ -10,6 +10,7 @@ import signal
 import sys
 from dataclasses import replace
 from pathlib import Path
+from uuid import UUID, uuid4
 
 from halo_server import __version__
 from halo_server.configuration import (
@@ -41,7 +42,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--mode",
         choices=tuple(mode.value for mode in ServerMode),
         default=None,
-        help="Override saved operating mode (HomeKit camera publication is not implemented yet)",
+        help="Override the saved operating mode for this daemon run",
     )
     daemon.add_argument(
         "--plugin-host",
@@ -76,6 +77,54 @@ def build_parser() -> argparse.ArgumentParser:
 
     shutdown = subparsers.add_parser("shutdown", help="Stop the local daemon cleanly")
     _add_path_arguments(shutdown)
+
+    homekit = subparsers.add_parser("homekit", help="Manage direct HomeKit cameras and pairing")
+    _add_path_arguments(homekit)
+    commands = homekit.add_subparsers(dest="homekit_command", required=True)
+    commands.add_parser("list", help="List cameras, selection and stable accessory identity")
+    selection = commands.add_parser("select", help="Replace the explicit selected camera set")
+    selection.add_argument("camera_ids", nargs="*")
+    selection.add_argument("--none", action="store_true", help="Explicitly deselect every camera")
+    warm = commands.add_parser("warm", help="Opt a selected mains-only camera into warm recording")
+    warm.add_argument("camera_id")
+    warm.add_argument("state", choices=("on", "off"))
+    pairing = commands.add_parser("pairing", help="Inspect or explicitly reveal/reset setup data")
+    pairing_commands = pairing.add_subparsers(dest="pairing_command", required=True)
+    pairing_commands.add_parser("list")
+    reveal = pairing_commands.add_parser("reveal", help="Print sensitive camera setup data")
+    reveal.add_argument("camera_id")
+    reset = pairing_commands.add_parser("reset", help="Remove one camera's Apple Home pairing")
+    reset.add_argument("camera_id")
+    reset.add_argument("--yes", action="store_true", help="Confirm reset and adapter restart")
+    reset.add_argument("--operation-id", type=_operation_id, help="Resume an exact pending reset")
+
+    configuration = subparsers.add_parser(
+        "config", help="Inspect/save settings; restart applies them"
+    )
+    _add_path_arguments(configuration)
+    configurations = configuration.add_subparsers(dest="config_command", required=True)
+    configurations.add_parser("get")
+    save = configurations.add_parser("set")
+    save.add_argument("--expected-revision", type=int)
+    save.add_argument("--mode", choices=tuple(mode.value for mode in ServerMode))
+    save.add_argument("--plugin-host", type=_loopback_host)
+    save.add_argument("--plugin-port", type=_tcp_port)
+    save.add_argument("--rtsp-host", type=_loopback_host)
+    save.add_argument("--rtsp-port", type=_tcp_port)
+
+    control = subparsers.add_parser("camera-control", help="Set an evidenced light/siren control")
+    _add_path_arguments(control)
+    control.add_argument("camera_id")
+    control.add_argument("control", choices=("light", "siren"))
+    control.add_argument("state", choices=("on", "off"))
+    doctor = subparsers.add_parser(
+        "doctor", help="Run bounded local diagnostics without waking cameras"
+    )
+    _add_path_arguments(doctor)
+    doctor.add_argument("--probe", action="store_true", help="Explicit bounded local codec probes")
+    support = subparsers.add_parser("support", help="Export a bounded sanitized support report")
+    _add_path_arguments(support)
+    support.add_argument("--output", type=Path, required=True)
     return parser
 
 
@@ -105,6 +154,21 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command in {"status", "shutdown"}:
         return asyncio.run(_run_admin_command(paths, args.command))
+    if args.command in {"homekit", "config", "camera-control", "doctor", "support"}:
+        if (
+            args.command == "homekit"
+            and args.homekit_command == "select"
+            and bool(args.camera_ids) == args.none
+        ):
+            parser.error("select requires camera IDs or --none")
+        if (
+            args.command == "homekit"
+            and args.homekit_command == "pairing"
+            and args.pairing_command == "reset"
+            and not args.yes
+        ):
+            parser.error("reset removes this camera's pairing and restarts the adapter; use --yes")
+        return asyncio.run(_run_owner_command(paths, args))
     parser.error(f"Unknown command: {args.command}")
     return 2
 
@@ -160,13 +224,22 @@ def _tcp_port(value: str) -> int:
     return port
 
 
+def _operation_id(value: str) -> str:
+    try:
+        if str(UUID(value)) != value:
+            raise ValueError
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("Operation ID must be a canonical UUID") from error
+    return value
+
+
 def _require_native_platform(parser: argparse.ArgumentParser) -> None:
     if sys.platform in {"linux", "darwin"}:
         return
     if sys.platform == "win32":
         parser.error(
-            "native Windows is not supported; Halo Server and Scrypted must run together "
-            "in a Linux environment such as WSL2"
+            "native Windows is not supported; run Halo Server in Linux. "
+            "WSL2 direct HomeKit networking remains unqualified"
         )
     parser.error(f"native Halo Server does not support this platform: {sys.platform}")
 
@@ -211,3 +284,105 @@ async def _run_admin_command(paths: ServerPaths, command: str) -> int:
         return 1
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0
+
+
+async def _run_owner_command(paths: ServerPaths, args: argparse.Namespace) -> int:
+    from halo_server.tui.client import AdminClient, AdminClientError
+    from halo_server.tui.support import write_support_report
+
+    client = AdminClient(paths.admin_socket)
+    try:
+        if args.command == "homekit":
+            result = await _homekit_command(client, args)
+        elif args.command == "config":
+            current = await client.configuration_get()
+            if args.config_command == "get":
+                result = current
+            else:
+                saved = dict(current["saved"])
+                changes = {
+                    name: value
+                    for name in ("mode", "plugin_host", "plugin_port", "rtsp_host", "rtsp_port")
+                    if (value := getattr(args, name)) is not None
+                }
+                if not changes:
+                    raise AdminClientError("bad_params", "config set requires a setting to change")
+                revision = (
+                    saved["revision"] if args.expected_revision is None else args.expected_revision
+                )
+                saved.update(changes)
+                result = await client.configuration_set(revision, saved)
+        elif args.command == "camera-control":
+            page = await client.camera_controls()
+            camera = _camera_row(page, args.camera_id)
+            result = await client.camera_control(
+                page["profile_id"],
+                page["account_generation"],
+                args.camera_id,
+                camera["device_generation"],
+                str(uuid4()),
+                args.control,
+                args.state == "on",
+            )
+        elif args.command == "doctor":
+            try:
+                result = await client.doctor(probe=args.probe)
+            except AdminClientError as error:
+                if error.code != "daemon_unavailable":
+                    raise
+                from halo_server.diagnostics import local_doctor
+
+                result = await local_doctor(paths, probe=args.probe)
+        else:
+            result = await client.support_report()
+            write_support_report(args.output, result)
+            print(f"Saved private support report: {args.output}")
+            return 0
+    except (AdminClientError, OSError, ValueError) as error:
+        print(f"halo-server: {error}", file=sys.stderr)
+        return 1
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return 0
+
+
+async def _homekit_command(client, args: argparse.Namespace):
+    from halo_server.tui.client import AdminClientError
+
+    if args.homekit_command == "list":
+        return await client.homekit_cameras()
+    if args.homekit_command == "select":
+        page = await client.homekit_cameras()
+        if len(set(args.camera_ids)) != len(args.camera_ids):
+            raise AdminClientError("bad_params", "Camera IDs must be unique")
+        for camera_id in args.camera_ids:
+            _camera_row(page, camera_id)
+        return await client.homekit_select(
+            page["profile_id"], page["account_generation"], args.camera_ids, page["revision"]
+        )
+    if args.homekit_command == "warm":
+        page = await client.homekit_recording_cameras()
+        _camera_row(page, args.camera_id)
+        return await client.homekit_recording_warm(
+            page["profile_id"],
+            page["account_generation"],
+            args.camera_id,
+            page["revision"],
+            args.state == "on",
+        )
+    page = await client.homekit_pairing_list()
+    if args.pairing_command == "list":
+        return page
+    row = _camera_row(page, args.camera_id)
+    if args.pairing_command == "reveal":
+        return await client.homekit_pairing_reveal(page, row)
+    operation = args.operation_id or row.get("reset_operation_id") or str(uuid4())
+    return await client.homekit_pairing_reset(page, row, operation)
+
+
+def _camera_row(page, camera_id):
+    from halo_server.tui.client import AdminClientError
+
+    rows = [row for row in page["cameras"] if row.get("camera_id") == camera_id]
+    if len(rows) != 1:
+        raise AdminClientError("camera_unavailable", "Camera is not in the current observed view")
+    return rows[0]

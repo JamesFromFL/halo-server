@@ -6,6 +6,7 @@ import asyncio
 import concurrent.futures
 import contextlib
 import logging
+import math
 import time
 import uuid
 from collections import deque
@@ -29,6 +30,7 @@ from halo_server.api.tokens import PluginTokenStore, PluginTokenStoreError
 from halo_server.configuration import ServerConfiguration
 from halo_server.homekit.bridge import HomeKitBridge
 from halo_server.homekit.controller import HomeKitController
+from halo_server.homekit.controls import CONTROL_STATE_TTL, observed_controls
 from halo_server.homekit.models import HomeKitOperationError
 from halo_server.homekit.power import mains_confirmed
 from halo_server.homekit.recording_settings import (
@@ -170,6 +172,9 @@ class HaloService:
     ) -> None:
         self.paths = paths
         self.configuration = configuration or ServerConfiguration()
+        from halo_server.owner_admin import OwnerAdministration
+
+        self._owner_admin = OwnerAdministration(self)
         if not self.configuration.compatibility_enabled and (
             plugin_host is not None or rtsp_host is not None
         ):
@@ -217,6 +222,7 @@ class HaloService:
         self._camera_media_locks: dict[str, asyncio.Lock] = {}
         self._camera_control_locks: dict[str, asyncio.Lock] = {}
         self._media_epoch = 0
+        self._control_observations = None
         self._listener: EventListener | None = None
         self._listener_generation = 0
         self._accept_events = False
@@ -362,6 +368,7 @@ class HaloService:
         if self._plugin_api is not None:
             await attempt("plugin API", self._plugin_api.stop())
         await attempt("admin API", self._admin.stop())
+        await attempt("owner administration", self._owner_admin.close())
         initial_restore = self._initial_restore_task
         self._initial_restore_task = None
         if initial_restore is not None:
@@ -466,6 +473,7 @@ class HaloService:
             _log.exception("Ring account integration reconciliation failed")
             return True
         self._account_integrations_ready = True
+        self._remember_control_observations(client)
         self._last_account_error = None
         await self.homekit.reconcile()
         self._notify_homekit_inventory()
@@ -512,6 +520,8 @@ class HaloService:
 
     async def handle_admin(self, method: str, params: dict[str, Any]) -> Any:
         """Dispatch one authenticated local admin request."""
+        if method in self._owner_admin.methods:
+            return await self._owner_admin.handle(method, params)
         if method == "status":
             _require_only(params, set())
             return self.status()
@@ -1268,6 +1278,9 @@ class HaloService:
                 await self._sync_rtsp_cameras(camera_ids)
                 await self._reconcile_refreshed_media(camera_ids)
                 await self.homekit.reconcile()
+                self._remember_control_observations(
+                    client, refreshed_at=getattr(client, "_last_device_update_at", time.monotonic())
+                )
                 self._notify_homekit_inventory()
             except asyncio.CancelledError:
                 raise
@@ -1829,6 +1842,62 @@ class HaloService:
             if self._intercom_leases.get(camera_id) == lease_id:
                 self._intercom_leases.pop(camera_id, None)
             _log.info("Halo intercom service lease released camera_id=%s", camera_id)
+
+    def _remember_control_observations(self, client, *, refreshed_at=None):
+        if client is not self._media_client or not self._account_authority_current():
+            self._control_observations = None
+            return
+        if refreshed_at is None:
+            refreshed_at = getattr(client, "_last_device_update_at", None)
+        if (
+            type(refreshed_at) not in {int, float}
+            or not math.isfinite(refreshed_at)
+            or not 0 <= time.monotonic() - refreshed_at <= CONTROL_STATE_TTL
+        ):
+            self._control_observations = None
+            return
+        try:
+            devices = tuple(client.all_devices)
+            rows = {}
+            duplicates = set()
+            for device in devices:
+                identifier = getattr(device, "id", None)
+                if type(identifier) not in {str, int}:
+                    continue
+                identifier = str(identifier).strip()
+                if identifier in rows:
+                    duplicates.add(identifier)
+                rows[identifier] = (device, *observed_controls(device))
+            for identifier in duplicates:
+                rows.pop(identifier, None)
+            self._control_observations = (
+                client,
+                self._current_account_scope(),
+                refreshed_at,
+                rows,
+            )
+        except Exception:
+            self._control_observations = None
+
+    def _observed_camera_controls(self, camera_id, device):
+        proof = self._control_observations
+        if (
+            proof is None
+            or not self._account_authority_current()
+            or not self._account_integrations_ready
+        ):
+            return None, None
+        client, account, received_at, rows = proof
+        row = rows.get(camera_id)
+        if (
+            client is not self._media_client
+            or account != self._current_account_scope()
+            or not 0 <= time.monotonic() - received_at <= CONTROL_STATE_TTL
+            or row is None
+            or row[0] is not device
+        ):
+            return None, None
+        return row[1], row[2]
 
     async def _set_plugin_camera_control(
         self,

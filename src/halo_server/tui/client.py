@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import itertools
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -149,3 +150,237 @@ class AdminClient:
         if not isinstance(result, dict):
             raise AdminClientError("bad_response", "Daemon returned an invalid revocation result")
         return result
+
+    async def _object(self, method: str, **params: Any) -> dict[str, Any]:
+        result = await self.request(method, **params)
+        if not isinstance(result, dict):
+            raise AdminClientError("bad_response", "Daemon returned an invalid admin result")
+        return result
+
+    async def homekit_list(self, *, offset: int = 0, limit: int = 32) -> dict[str, Any]:
+        return _camera_page(await self._object("homekit_list", offset=offset, limit=limit), offset)
+
+    async def homekit_cameras(self) -> dict[str, Any]:
+        """Read one bounded coherent selection view; never combine changing pages."""
+        return await self._camera_pages(self.homekit_list)
+
+    async def _camera_pages(self, fetch, *, revision_key="revision") -> dict[str, Any]:
+        first = await fetch(offset=0, limit=32)
+        rows = list(first["cameras"])
+        keys = ("profile_id", "account_generation", revision_key, "boot_id")
+        token = tuple(first.get(key) for key in keys)
+        while len(rows) < first["total"]:
+            page = await fetch(offset=len(rows), limit=32)
+            if (
+                tuple(page.get(key) for key in keys) != token
+                or page["total"] != first["total"]
+                or not page["cameras"]
+            ):
+                raise AdminClientError("configuration_conflict", "Camera view changed; refresh")
+            rows.extend(page["cameras"])
+        if len(rows) != first["total"] or len({row["camera_id"] for row in rows}) != len(rows):
+            raise AdminClientError("bad_response", "Daemon returned an invalid camera page")
+        return first | {"cameras": rows}
+
+    async def homekit_select(
+        self,
+        profile_id: str,
+        account_generation: int,
+        camera_ids: list[str],
+        expected_revision: int,
+    ) -> dict[str, Any]:
+        return await self._object(
+            "homekit_select",
+            profile_id=profile_id,
+            account_generation=account_generation,
+            camera_ids=camera_ids,
+            expected_revision=expected_revision,
+        )
+
+    async def homekit_recording_list(self, *, offset: int = 0, limit: int = 32) -> dict[str, Any]:
+        return _camera_page(
+            await self._object("homekit_recording_list", offset=offset, limit=limit), offset
+        )
+
+    async def homekit_recording_cameras(self) -> dict[str, Any]:
+        return await self._camera_pages(self.homekit_recording_list)
+
+    async def homekit_recording_warm(
+        self,
+        profile_id: str,
+        account_generation: int,
+        camera_id: str,
+        expected_revision: int,
+        enabled: bool,
+    ) -> dict[str, Any]:
+        return await self._object(
+            "homekit_recording_warm",
+            profile_id=profile_id,
+            account_generation=account_generation,
+            camera_id=camera_id,
+            expected_revision=expected_revision,
+            enabled=enabled,
+        )
+
+    async def configuration_get(self) -> dict[str, Any]:
+        return _configuration_result(await self._object("configuration_get"))
+
+    async def configuration_set(
+        self, expected_revision: int, configuration: dict[str, Any]
+    ) -> dict[str, Any]:
+        fields = ("mode", "plugin_host", "plugin_port", "rtsp_host", "rtsp_port")
+        return _configuration_result(
+            await self._object(
+                "configuration_set",
+                expected_revision=expected_revision,
+                configuration={name: configuration[name] for name in fields},
+            )
+        )
+
+    async def homekit_pairing_list(self) -> dict[str, Any]:
+        async def page(*, offset, limit):
+            result = await self._object("homekit_pairing_list", offset=offset, limit=limit)
+            _camera_page(result | {"revision": result.get("registry_revision")}, offset)
+            return result
+
+        return await self._camera_pages(page, revision_key="registry_revision")
+
+    async def homekit_pairing_reveal(
+        self, page: dict[str, Any], camera: dict[str, Any]
+    ) -> dict[str, Any]:
+        params = _pairing_identity(page, camera)
+        result = await self._object("homekit_pairing_reveal", **params)
+        identity = params | {
+            "registry_revision": params["expected_registry_revision"],
+            "pairing_revision": params["expected_pairing_revision"],
+        }
+        if (
+            any(
+                result.get(name) != value
+                for name, value in identity.items()
+                if not name.startswith("expected_")
+            )
+            or not isinstance(result.get("pin"), str)
+            or re.fullmatch(r"[0-9]{3}-[0-9]{2}-[0-9]{3}", result["pin"]) is None
+            or not isinstance(result.get("setup_uri"), str)
+            or re.fullmatch(r"X-HM://[0-9A-Z]{9,32}", result["setup_uri"]) is None
+            or result.get("expires_in_ms") != 60000
+        ):
+            raise AdminClientError("bad_response", "Daemon returned invalid camera setup data")
+        return result
+
+    async def homekit_pairing_reset(
+        self, page: dict[str, Any], camera: dict[str, Any], operation_id: str
+    ) -> dict[str, Any]:
+        result = await self._object(
+            "homekit_pairing_reset", **_pairing_identity(page, camera), operation_id=operation_id
+        )
+        if result.get("operation_id") != operation_id or result.get("status") not in {
+            "completed",
+            "pending",
+        }:
+            raise AdminClientError("bad_response", "Daemon returned an invalid reset outcome")
+        return result
+
+    async def camera_controls(self) -> dict[str, Any]:
+        result = await self._object("camera_control_list")
+        if (
+            not isinstance(result.get("cameras"), list)
+            or len(result["cameras"]) > 256
+            or type(result.get("account_generation")) is not int
+            or any(
+                not isinstance(row, dict)
+                or not isinstance(row.get("camera_id"), str)
+                or type(row.get("device_generation")) is not int
+                for row in result["cameras"]
+            )
+        ):
+            raise AdminClientError("bad_response", "Daemon returned an invalid control view")
+        return result
+
+    async def camera_control(
+        self,
+        profile_id: str,
+        account_generation: int,
+        camera_id: str,
+        device_generation: int,
+        operation_id: str,
+        control: str,
+        enabled: bool,
+    ) -> dict[str, Any]:
+        result = await self._object(
+            "camera_control",
+            profile_id=profile_id,
+            account_generation=account_generation,
+            camera_id=camera_id,
+            device_generation=device_generation,
+            operation_id=operation_id,
+            control=control,
+            enabled=enabled,
+        )
+        if result.get("status") not in {"accepted", "rejected", "unknown"}:
+            raise AdminClientError("bad_response", "Daemon returned an invalid control outcome")
+        return result
+
+    async def doctor(self, *, probe: bool = False) -> dict[str, Any]:
+        return await self._object("doctor", probe=probe)
+
+    async def support_report(self) -> dict[str, Any]:
+        return await self._object("support_report")
+
+
+def _camera_page(value: dict[str, Any], offset: int) -> dict[str, Any]:
+    if (
+        value.get("profile_id") is not None
+        and not isinstance(value.get("profile_id"), str)
+        or type(value.get("account_generation")) is not int
+        or type(value.get("revision")) is not int
+        or value["revision"] < 0
+        or type(value.get("total")) is not int
+        or not 0 <= value["total"] <= 256
+        or value.get("offset") != offset
+        or not isinstance(value.get("cameras"), list)
+        or len(value["cameras"]) > 32
+        or any(
+            not isinstance(row, dict)
+            or not isinstance(row.get("camera_id"), str)
+            or not 1 <= len(row["camera_id"]) <= 128
+            for row in value["cameras"]
+        )
+    ):
+        raise AdminClientError("bad_response", "Daemon returned an invalid camera page")
+    return value
+
+
+def _configuration_result(result):
+    from halo_server.configuration import ConfigurationError, ServerConfiguration
+
+    try:
+        for key in ("saved", "applied"):
+            if not isinstance(result.get(key), dict):
+                raise TypeError
+            ServerConfiguration(**result[key])
+        if type(result.get("restart_required")) is not bool:
+            raise TypeError
+    except (ConfigurationError, TypeError) as error:
+        raise AdminClientError(
+            "bad_response", "Daemon returned invalid operating settings"
+        ) from error
+    return result
+
+
+def _pairing_identity(page, camera):
+    try:
+        return {
+            "profile_id": page["profile_id"],
+            "account_generation": page["account_generation"],
+            "camera_id": camera["camera_id"],
+            "accessory_id": camera["accessory_id"],
+            "expected_registry_revision": page["registry_revision"],
+            "expected_pairing_revision": camera["pairing_revision"],
+            "boot_id": page["boot_id"],
+        }
+    except KeyError as error:
+        raise AdminClientError(
+            "bad_response", "Daemon returned invalid pairing identity"
+        ) from error

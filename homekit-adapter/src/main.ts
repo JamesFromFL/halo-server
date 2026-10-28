@@ -8,7 +8,7 @@ import { BulkChannel } from "./bulk.js";
 import { AdapterSession } from "./session.js";
 import { AccessoryManager, hapPublisher, type AccessoryConfigurationPage } from "./accessories.js";
 import { PairingStore } from "./storage.js";
-import { FEATURES, ProtocolError, validateDirection, type Envelope } from "./protocol.js";
+import { FEATURES, ProtocolError, validateDirection, type Envelope, type PairingIdentity } from "./protocol.js";
 import { verifyPublicApi } from "./public-api.js";
 
 export const HANDSHAKE_TIMEOUT_MS = 5_000;
@@ -175,6 +175,15 @@ async function run(): Promise<number> {
           generation: message.payload.generation, page_index: message.payload.page_index,
           accepted, code: accepted ? "ok" : "not-ready",
         });
+      } else if (message.kind === "pairing_status_request") {
+        if (!accessories) throw new ProtocolError("session-not-ready");
+        await reply(message, "pairing_status_result", {...accessories.pairingStatus(message.payload as unknown as PairingIdentity)});
+      } else if (message.kind === "pairing_reveal_request") {
+        if (!accessories) throw new ProtocolError("session-not-ready");
+        await reply(message, "pairing_reveal_result", {...accessories.pairingReveal(message.payload as unknown as PairingIdentity & {pairing_revision: string})});
+      } else if (message.kind === "pairing_reset_prepare") {
+        if (!accessories) throw new ProtocolError("session-not-ready");
+        await reply(message, "pairing_reset_prepare_result", {...await accessories.preparePairingReset(message.payload as unknown as PairingIdentity & {pairing_revision: string})});
       } else if (message.kind === "event_state") {
         accessories?.eventState(message.payload as unknown as Parameters<AccessoryManager["eventState"]>[0]);
       } else if (message.kind === "camera_event") {

@@ -13,6 +13,7 @@ from pathlib import Path
 from halo_server.homekit.broker import HomeKitBroker, RecordingEvent
 from halo_server.homekit.events import EventPump
 from halo_server.homekit.models import HomeKitOperationError, MediaScope
+from halo_server.homekit.pairing_admin import PairingAdministration
 from halo_server.homekit.power import mains_confirmed
 from halo_server.homekit.recording_settings import (
     RecordingPreferences,
@@ -149,14 +150,18 @@ class HomeKitBridge:
             recording_policy=self._recording_policy,
             recording_event=self._recording_event_for_scope,
             selection=lambda: tuple(
-                row.camera.scope for row in self._registry.resolve(backend.inventory())
+                row.camera.scope
+                for row in self._registry.resolve(backend.inventory())
+                if not self._pairing_admin.denied(*row.identity.key)
             ),
         )
+        self._pairing_admin = PairingAdministration(self, paths)
         self._runtime = None
         self._task: asyncio.Task | None = None
         self._updates = asyncio.Event()
         self._stopping = False
         self._stop_lock = asyncio.Lock()
+        self._inventory_apply_lock = asyncio.Lock()
         self.state, self.reason = "stopped", None
 
     def start(self) -> None:
@@ -200,7 +205,11 @@ class HomeKitBridge:
                 },
             )
 
+    async def owner_pairing(self, method, params):
+        return await self._pairing_admin.handle(method, params)
+
     async def _load_registry(self):
+        await self._pairing_admin.load()
         if self._store is not None:
             inventory = self._backend.inventory()
             self._observe_recording_power(inventory)
@@ -407,9 +416,33 @@ class HomeKitBridge:
         self._config_signature = None
 
     async def _request(self, message):
+        if message["kind"] == "control_state_request":
+            data, boot = message["payload"], self._broker._require_boot(message)
+            scope = MediaScope(**data["scope"])
+            result = {
+                "scope": data["scope"],
+                "operation_id": data["operation_id"],
+                "light": None,
+                "siren": None,
+            }
+            try:
+                self._broker.controller.authorize(boot, scope, "controls")
+                light, siren = self._backend.control_state(
+                    scope, admission=lambda: self._control_current(boot, scope)
+                )
+                self._broker.controller.authorize(boot, scope, "controls")
+            except HomeKitOperationError:
+                return result | {"status": "rejected", "code": "stale-scope"}
+            return result | {"status": "accepted", "code": "ok", "light": light, "siren": siren}
         if message["kind"] == "recording_settings_update":
             data, boot = message["payload"], self._broker._require_boot(message)
             result = {"scope": data["scope"]}
+            scope = MediaScope(**data["scope"])
+
+            def camera_revision():
+                row = self._recording_settings.camera(scope.profile_id, scope.camera_id)
+                return row.preferences_revision if row is not None else 0
+
             try:
                 saved = await self.set_recording_settings(
                     boot,
@@ -425,21 +458,25 @@ class HomeKitBridge:
                 return result | {
                     "accepted": False,
                     "code": "conflict",
-                    "revision": self._recording_settings.revision,
+                    "revision": camera_revision(),
                 }
             except RecordingSettingsError:
                 return result | {
                     "accepted": False,
                     "code": "not-ready",
-                    "revision": self._recording_settings.revision,
+                    "revision": camera_revision(),
                 }
             except HomeKitOperationError:
                 return result | {
                     "accepted": False,
                     "code": "stale-scope",
-                    "revision": self._recording_settings.revision,
+                    "revision": camera_revision(),
                 }
-            return result | {"accepted": True, "code": "ok", "revision": saved.revision}
+            return result | {
+                "accepted": True,
+                "code": "ok",
+                "revision": saved.camera(scope.profile_id, scope.camera_id).preferences_revision,
+            }
         if message["kind"] == "audio_settings_update":
             data, boot = message["payload"], self._broker._require_boot(message)
             result = {"scope": data["scope"]}
@@ -472,6 +509,13 @@ class HomeKitBridge:
         if message["kind"] == "event_sync" and self._events is not None:
             return await self._events.sync(message["boot_id"], message["payload"])
         return await self._broker.request(message)
+
+    def _control_current(self, boot, scope):
+        try:
+            self._broker.controller.authorize(boot, scope, "controls")
+        except HomeKitOperationError:
+            return False
+        return True
 
     async def _replied(self, message, reply):
         await self._broker.replied(message, reply)
@@ -515,6 +559,7 @@ class HomeKitBridge:
                     ),
                 }
                 for row in registry.selected(inventory.profile_id)
+                if not self._pairing_admin.denied(*row.key)
             ]
         )
         current = {camera.scope.camera_id: camera for camera in inventory.cameras}
@@ -522,7 +567,6 @@ class HomeKitBridge:
             row = recording_settings.camera(inventory.profile_id, entry["camera_id"])
             entry["recording"] = (
                 row.wire(
-                    recording_settings.revision,
                     enabled=(
                         self._publication_enabled
                         and self._recording.ready
@@ -533,7 +577,7 @@ class HomeKitBridge:
                 )
                 if row is not None and row.accessory_id == entry["accessory_id"]
                 else {
-                    "revision": recording_settings.revision,
+                    "revision": 0,
                     "enabled": False,
                     "active": False,
                     "audio_active": False,
@@ -766,7 +810,12 @@ class HomeKitBridge:
             row = self._recording_settings.camera(profile, camera_id)
             if not self._recording_available or row is None or self._recording_store is None:
                 raise RecordingSettingsError("Trusted recording preferences are unavailable")
-            if revision != self._recording_settings.revision:
+            current_revision = (
+                row.preferences_revision
+                if owner_enabled is None
+                else self._recording_settings.revision
+            )
+            if revision != current_revision:
                 self.notify_inventory()
                 raise RecordingSettingsConflict("Recording settings changed; reload before saving")
             proposed = (
@@ -779,7 +828,7 @@ class HomeKitBridge:
                 self._broker.controller.fence_camera(boot, scope)
             try:
                 method, argument = (
-                    (self._recording_store.set_preferences, preferences)
+                    (self._recording_store.set_hap_preferences, preferences)
                     if owner_enabled is None
                     else (self._recording_store.set_owner_warm, owner_enabled)
                 )
@@ -789,7 +838,11 @@ class HomeKitBridge:
                     camera_id,
                     row.accessory_id,
                     argument,
-                    expected_revision=revision,
+                    **(
+                        {"expected_preferences_revision": revision}
+                        if owner_enabled is None
+                        else {"expected_revision": revision}
+                    ),
                 )
             except RecordingSettingsError:
                 try:
@@ -821,6 +874,12 @@ class HomeKitBridge:
         profile = self._backend.inventory().profile_id
         transport_ready = runtime is not None and runtime.state == "ready"
         reason = self.reason
+        if not reason and not self._pairing_admin.available:
+            reason = "pairing_maintenance_unavailable"
+        if not reason and any(
+            row.phase != "completed" for row in self._pairing_admin.journal.entries
+        ):
+            reason = "pairing_reset_pending"
         if runtime is not None and not transport_ready:
             reason = runtime.reason or "adapter_not_ready"
         if self._broker.cleanup_failed:
@@ -878,6 +937,11 @@ class HomeKitBridge:
         )
         return {
             "requested": True,
+            "boot_id": runtime.boot_id if runtime is not None else None,
+            "pairing_maintenance_pending": sum(
+                row.phase != "completed" for row in self._pairing_admin.journal.entries
+            ),
+            "pairing_maintenance_available": self._pairing_admin.available,
             "state": "degraded" if reason else "control_ready" if transport_ready else self.state,
             "reason": reason or fallback,
             "transport_ready": transport_ready,
@@ -939,15 +1003,16 @@ class HomeKitBridge:
                     await self._runtime.stop()
                     self.state, self.reason = "degraded", "native_cleanup_failed"
                     return
-                if self._runtime.state == "ready":
-                    await self._load_registry()
-                    await self._live.refresh()
-                    self._snapshots.refresh()
-                    await self._recording.refresh()
-                    await self._broker.refresh()
-                    await self._recording_policy.refresh(self._broker.boot_id)
-                    await self._configure()
-                    self.notify_event()
+                async with self._inventory_apply_lock:
+                    if self._runtime.state == "ready":
+                        await self._load_registry()
+                        await self._live.refresh()
+                        self._snapshots.refresh()
+                        await self._recording.refresh()
+                        await self._broker.refresh()
+                        await self._recording_policy.refresh(self._broker.boot_id)
+                        await self._configure()
+                        self.notify_event()
         except asyncio.CancelledError:
             raise
         except (OSError, ValueError):

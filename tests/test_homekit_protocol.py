@@ -348,3 +348,32 @@ def test_literal_text_uses_frozen_unicode_ranges_on_every_supported_python():
     assert literal_text("", 128)
     assert not literal_text("", 128, empty=False)
     assert safe_display_text(None) == ""
+
+
+def test_pairing_replies_require_exact_registry_accessory_username_and_expected_revision():
+    import copy
+
+    from halo_server.homekit.ipc import validate_reply
+
+    fixtures = _private_fixtures()["valid"]
+    for kind in ("pairing_status_request", "pairing_reveal_request", "pairing_reset_prepare"):
+        request = next(f for f in fixtures if f["kind"] == kind)
+        reply_kind = {
+            "pairing_status_request": "pairing_status_result",
+            "pairing_reveal_request": "pairing_reveal_result",
+            "pairing_reset_prepare": "pairing_reset_prepare_result",
+        }[kind]
+        reply = next(f for f in fixtures if f["kind"] == reply_kind)
+        assert validate_reply(request, reply) is reply
+        for key, value in (
+            ("registry_revision", 2),
+            ("accessory_id", str(uuid.uuid4())),
+            ("username", "02:00:00:00:00:06"),
+            ("pairing_revision", "f" * 64),
+        ):
+            if key not in request["payload"]:
+                continue
+            altered = copy.deepcopy(reply)
+            altered["payload"][key] = value
+            with pytest.raises(HomeKitProtocolError):
+                validate_reply(request, altered)

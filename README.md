@@ -6,20 +6,15 @@ administers it through an owner-only Unix socket.
 
 ## Current Status
 
-Direct HomeKit implementation has started. The account/capture/request reliability
-foundation, validated operating modes, shared native service facade and a private,
-supervised adapter lifecycle with operational private IPC are implemented. Stable
-camera selection/identity, protected pairing-state ownership and prompt scoped
-motion/doorbell delivery are implemented as accessory groundwork. The
-adapter implements direct H.264 video, negotiated Opus audio, shared talkback
-and bounded JPEG snapshots. Explicitly selected development accessories can
-publish after native output qualification. Scoped recording capture and native
-H.264/AAC fragmented-MP4 preparation are implemented; HKSV delivery remains
-disabled pending its separate transport gate. Owner pairing management, release
-installation and real Apple/Ring qualification remain unfinished. The existing
-plugin/RTSP integration remains available. See
-[direct HomeKit engineering status](docs/direct-homekit-status.md) for completed
-work, validation boundaries, and remaining implementation gates.
+Direct HomeKit live video/audio, talkback, prompt events, JPEG snapshots and bounded
+HKSV H.264/AAC recording delivery are implemented through a supervised HAP adapter.
+Explicit camera selection, protected stable pairing identities, owner configuration,
+setup reveal/reset, warm-recording opt-in and diagnostics are available through the
+local CLI/TUI. Native output and encrypted recording transport are tested locally;
+real Apple/Ring device qualification and release installation remain unfinished.
+The plugin/RTSP path remains available as optional compatibility mode. See the
+[owner administration guide](docs/owner-administration.md) for setup and commands, and
+[direct HomeKit engineering status](docs/direct-homekit-status.md) for validation boundaries.
 
 Implemented:
 
@@ -31,7 +26,7 @@ Implemented:
 - bounded H.264/Opus prebuffer gated on a retained SPS/PPS/IDR boundary
 - H.264 passthrough and mono 48 kHz Opus normalization for compatibility clients
 - development native HomeKit live video/audio, talkback, events and JPEG snapshots
-- separate recording permissions, measured pre-roll and bounded native fMP4 preparation
+- separate recording permissions, measured pre-roll and bounded native HKSV/HDS delivery
 - camera inventory with an allowlisted public schema
 - authenticated, versioned plugin HTTP and WebSocket APIs with event replay
 - a server-owned protocol-v3 schema and fixture corpus shipped in the wheel
@@ -40,13 +35,14 @@ Implemented:
 - cached-by-default JPEG snapshots with bounded explicit fresh capture
 - capability-gated camera light and siren controls with nullable observed state
 - per-camera validated two-way audio with bounded WebRTC readiness and activation signaling
-- local daemon status, login, logout, and shutdown administration
+- local daemon status, login, logout, shutdown, mode CAS and saved/applied settings
+- explicit HomeKit selection, scoped setup reveal/reset and warm-recording owner opt-in
+- verified owner light/siren actions and sanitized diagnostics/support exports
 - Textual status, login, two-factor, logout, pairing, camera, and recent-event views
 - the proven Halo Ring WebRTC video and audio compatibility layer
 
 Not implemented yet:
 
-- camera controls and server settings in the TUI
 - TLS-protected remote plugin and media access
 - operating-system service installers and atomic upgrades
 
@@ -64,7 +60,7 @@ that security boundary, not just whether Python can import the package.
 | Fedora 42 or newer | Supported source target; distro CI pending | Official packages provide the required Python and media stack. |
 | macOS (Apple Silicon and Intel) | Experimental | Uses Homebrew GStreamer and Apple's `getpeereid`; automated and real-camera acceptance on macOS are still required. |
 | Native Windows | Unsupported | Windows does not provide Halo's current Unix credential, locking, or admin-socket security model. |
-| Windows with WSL2 | Experimental | Run both Halo Server and Scrypted inside the same WSL2 Linux environment so the loopback-only API remains local. |
+| Windows with WSL2 | Experimental | Halo can run inside Linux, but direct HomeKit discovery/networking and unattended operation under WSL2 remain unqualified. |
 
 A supported source target has no known runtime or dependency blocker and has a documented
 native package set. Debian and Fedora still require clean-host install and media smoke jobs
@@ -73,11 +69,10 @@ Current Linux verification is x86_64 only; ARM64 remains unverified on every Lin
 The direct HomeKit worker CPU-affinity contract currently targets Linux; macOS
 native delivery requires its own qualification.
 
-Do not use Docker Desktop as the Windows or macOS workaround. Scrypted's
-[installation documentation](https://docs.scrypted.app/installation.html) currently lists Docker
-Desktop on Windows and macOS as unsupported; Halo therefore does not claim that deployment. A
-native Windows port needs a designed Windows credential store, file lock, local IPC
-authentication, and service installer; substituting a loopback TCP admin port would weaken the
+Direct HomeKit publication is currently Linux-only. macOS and WSL2 labels above
+cover experimental source use; they do not qualify direct HomeKit delivery there.
+A native Windows port needs a designed credential store, file lock, local IPC
+authentication and service installer. A loopback TCP admin port would weaken the
 current owner boundary.
 
 ## Run From Source

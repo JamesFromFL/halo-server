@@ -11,6 +11,7 @@ from textual.containers import Horizontal, VerticalScroll
 from textual.widgets import Button, DataTable, Footer, Header, Input, Label, Static
 
 from halo_server.tui.client import AdminClient, AdminClientError
+from halo_server.tui.homekit import HomeKitPanel
 
 TOKEN_REVEAL_SECONDS = 60.0
 
@@ -122,9 +123,10 @@ class HaloTui(App):
             yield Static("", id="message")
             yield Label("Cameras", classes="section-title")
             yield DataTable(id="cameras")
+            yield HomeKitPanel(self._client)
             yield Label("Recent Ring Events", classes="section-title")
             yield DataTable(id="events")
-            yield Label("Scrypted Integrations", classes="section-title")
+            yield Label("Compatibility integrations", classes="section-title")
             with Horizontal(id="integration-fields"):
                 yield Input(placeholder="Integration name", id="plugin-label")
                 yield Input(
@@ -147,6 +149,7 @@ class HaloTui(App):
         integration_table = self.query_one("#integrations", DataTable)
         integration_table.add_columns("Name", "Client ID", "Created")
         await self._refresh()
+        self.set_interval(3, self._refresh)
 
     async def action_refresh(self) -> None:
         await self._refresh()
@@ -170,8 +173,18 @@ class HaloTui(App):
             return
         self._set_busy(True)
         try:
-            self._apply_status(await self._client.status())
+            status = await self._client.status()
+            self._apply_status(status)
+            panel = self.query_one(HomeKitPanel)
             self._message("")
+            if "configuration" in status and not panel._busy:
+                try:
+                    await panel.refresh_owner()
+                except AdminClientError as error:
+                    if error.code in {"daemon_unavailable", "request_failed"}:
+                        raise
+                    panel.unavailable()
+                    self._message(str(error), error=True)
         except AdminClientError as exc:
             self._mark_unavailable()
             self._message(str(exc), error=True)
@@ -192,6 +205,7 @@ class HaloTui(App):
 
         self._set_busy(True)
         self._clear_token()
+        self.query_one(HomeKitPanel).clear_secret()
         try:
             status = await self._client.login(email, password, otp)
         except AdminClientError as exc:
@@ -218,6 +232,7 @@ class HaloTui(App):
             return
         self._set_busy(True)
         self._clear_token()
+        self.query_one(HomeKitPanel).clear_secret()
         self.query_one("#password", Input).value = ""
         self.query_one("#otp", Input).value = ""
         self.query_one("#otp", Input).display = False
@@ -283,6 +298,7 @@ class HaloTui(App):
             self._set_busy(False)
 
     def _apply_status(self, status: dict[str, Any]) -> None:
+        self.query_one(HomeKitPanel).observe_status(status)
         account = _mapping(status.get("account"))
         authenticated = account.get("authenticated") is True
         email = account.get("email")
@@ -356,6 +372,7 @@ class HaloTui(App):
         self._authenticated = False
         self._account_identity = None
         self._clear_token()
+        self.query_one(HomeKitPanel).unavailable()
         self._plugin_client_ids = []
         for table_id in ("cameras", "events", "integrations"):
             self.query_one(f"#{table_id}", DataTable).clear()
@@ -370,6 +387,7 @@ class HaloTui(App):
         self.query_one("#pair-plugin", Button).disabled = busy or not self._available
         self.query_one("#revoke-plugin", Button).disabled = busy or not self._plugin_client_ids
         self.query_one("#clear-plugin-token", Button).disabled = busy
+        self.query_one(HomeKitPanel)._buttons()
 
     def _message(self, text: str, *, error: bool = False) -> None:
         message = self.query_one("#message", Static)

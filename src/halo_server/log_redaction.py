@@ -12,20 +12,24 @@ _SENSITIVE_KEY = (
     r"(?:authorization|access[_-]?token|refresh[_-]?token|oauth[_-]?token|"
     r"id[_-]?token|session[_-]?token|ring[_-]?token|admin[_-]?token|token|"
     r"password|passwd|client[_-]?secret|plugin[_-]?secret|"
-    r"pairing[_-]?(?:code|secret|token)|api[_-]?key)"
+    r"pairing[_-]?(?:code|secret|token)|api[_-]?key|pin[_-]?code|setup[_-]?(?:uri|id)|"
+    r"(?:srtp|srtcp)[_-]?(?:key|salt)|(?:hap)?sign(?:ing)?[_-]?(?:sk|pk|key)|"
+    r"private[_-]?key|shared[_-]?secret)"
 )
 _AUTHORIZATION_RE = re.compile(
     rf"(?i)(\b{_SENSITIVE_KEY}\b\s*[:=]\s*)"
     r"(?:bearer|basic|digest)?\s*[^\s,;}\]]+"
 )
 _QUOTED_VALUE_RE = re.compile(
-    rf"""(?ix)
+    rf"""(?ixs)
     (\b{_SENSITIVE_KEY}\b["']?\s*[:=]\s*)
     (["'])
     .*?
     \2
     """
 )
+_HOMEKIT_URI_RE = re.compile(r"(?i)X-HM://[^\s\"'<>]+")
+_HOMEKIT_PIN_RE = re.compile(r"(?<![0-9])[0-9]{3}-[0-9]{2}-[0-9]{3}(?![0-9])")
 _BEARER_RE = re.compile(r"(?i)\bbearer\s+[a-z0-9._~+/=-]+")
 _JWT_RE = re.compile(r"\beyJ[a-zA-Z0-9_-]*\.[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+\b")
 
@@ -33,6 +37,8 @@ _JWT_RE = re.compile(r"\beyJ[a-zA-Z0-9_-]*\.[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+\b")
 def redact_text(value: object) -> str:
     """Return diagnostic text with common secret representations removed."""
     text = str(value)
+    text = _HOMEKIT_URI_RE.sub("<redacted-homekit-uri>", text)
+    text = _HOMEKIT_PIN_RE.sub("<redacted-homekit-pin>", text)
     text = _URL_RE.sub(_redact_url_match, text)
     text = _QUOTED_VALUE_RE.sub(r"\1\2<redacted>\2", text)
     text = _AUTHORIZATION_RE.sub(r"\1<redacted>", text)

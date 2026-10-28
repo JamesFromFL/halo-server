@@ -90,6 +90,8 @@ class HomeKitController:
         self._closed = False
         self._cameras: dict[tuple, _Camera] = {}
         self._claims: dict[str, _Claim] = {}
+        self._quiesced_boot = None
+        self._quiesced_sources = set()
         self._privacy_generation = 0
         self._revision = 0
         self._inventory_signature = None
@@ -149,6 +151,9 @@ class HomeKitController:
             claims = tuple(self._claims.values())
             for claim in claims:
                 claim.retired = True
+            if self._quiesced_boot != boot_id:
+                self._quiesced_boot = boot_id
+                self._quiesced_sources.clear()
             self._boot = boot_id
             self._cameras = {
                 scope.source_key: _Camera(replace(scope, privacy_generation=self._next_privacy()))
@@ -226,6 +231,8 @@ class HomeKitController:
         entry = self._cameras.get(scope.source_key)
         if entry is None or entry.scope != scope or not self._backend.scope_current(scope):
             raise HomeKitOperationError("scope_changed")
+        if self._quiesced_boot == boot_id and scope.source_key in self._quiesced_sources:
+            raise HomeKitOperationError("maintenance_pending")
         return entry
 
     def authorize(self, boot_id: str, scope: MediaScope, permission: str) -> None:
@@ -244,6 +251,17 @@ class HomeKitController:
             if not entry.policy.permits("recording_audio" if audio else "recording"):
                 raise HomeKitOperationError("policy_denied")
             return entry.recording_audio_floor if audio else entry.recording_floor
+
+    def quiesce_camera(self, boot_id: str, scope: MediaScope) -> None:
+        """Deny this boot permanently while preserving child metadata for reset CAS."""
+        with self._lock:
+            entry = self._entry(boot_id, scope)
+            self._quiesced_boot = boot_id
+            self._quiesced_sources.add(scope.source_key)
+            entry.policy = CameraPolicy()
+            for claim in self._claims.values():
+                if claim.scope.source_key == scope.source_key:
+                    claim.retired = True
 
     def fence_camera(self, boot_id: str, scope: MediaScope) -> None:
         """Revoke one camera before awaiting a durable settings operation."""

@@ -109,6 +109,7 @@ export class AdapterSession {
   private noticeEpoch = 0;
   private complete = false;
   private closed = false;
+  private quiesced = false;
   private refreshing: Promise<void> | null = null;
   private refreshAgain = false;
   private readonly timeout: number;
@@ -138,7 +139,7 @@ export class AdapterSession {
   cameras(): NativeCamera[] { return [...this.entries.values()].map(entry => structuredClone(entry.camera)); }
   camera(cameraId: string): CameraDelegate {
     const entry = this.entries.get(cameraId);
-    if (!entry || !this.complete || this.closed) throw new ProtocolError("camera-not-ready");
+    if (!entry || !this.complete || this.closed || this.quiesced) throw new ProtocolError("camera-not-ready");
     return new CameraDelegate(this, cameraId, sourceKey(entry.camera.scope));
   }
 
@@ -301,13 +302,22 @@ export class AdapterSession {
   }
   private entry(cameraId: string, identity: string, permission?: keyof CameraPolicy): CameraEntry {
     const entry = this.entries.get(cameraId);
-    if (this.closed || !this.complete || !entry || sourceKey(entry.camera.scope) !== identity) throw new ProtocolError("stale-camera");
+    if (this.closed || this.quiesced || !this.complete || !entry || sourceKey(entry.camera.scope) !== identity) throw new ProtocolError("stale-camera");
     if (permission && (!entry.synchronized || !entry.policy?.synchronized || !entry.policy[permission])) throw new ProtocolError("policy-denied");
     return entry;
   }
   cameraInfo(cameraId: string, identity: string): NativeCamera { return structuredClone(this.entry(cameraId, identity).camera); }
   cameraReady(cameraId: string, identity: string): boolean {
     try { return this.entry(cameraId, identity).synchronized; } catch { return false; }
+  }
+  /** Keep cleanup correlation alive while permanently closing all acquisition. */
+  quiesce(): void {
+    if (this.quiesced) return;
+    this.quiesced = true;
+    for (const entry of this.entries.values()) {
+      entry.synchronized = false; entry.policy = null;
+      this.retireCamera(entry.camera.scope);
+    }
   }
 
   async updatePolicy(cameraId: string, identity: string, policy: CameraPolicy): Promise<void> {
@@ -680,6 +690,13 @@ export class AdapterSession {
     if (reply.payload.status === "rejected" || (reply.payload.status === "accepted" && reply.payload.code !== "ok")) throw new ProtocolError("control-rejected");
     return reply.payload.status as "accepted" | "unknown";
   }
+  async controlState(cameraId: string, identity: string): Promise<{light: boolean | null; siren: boolean | null}> {
+    const scope = {...this.entry(cameraId, identity, "controls").camera.scope};
+    const reply = await this.request("control_state_request", {scope, operation_id: randomUUID()});
+    if (!sameScope(this.entry(cameraId, identity, "controls").camera.scope, scope)) throw new ProtocolError("resource-retired");
+    if (reply.payload.status !== "accepted" || reply.payload.code !== "ok") throw new ProtocolError("control-state-unavailable");
+    return {light: reply.payload.light as boolean | null, siren: reply.payload.siren as boolean | null};
+  }
 
   async snapshot(cameraId: string, identity: string, width: number, height: number,
     reason: SnapshotReason = "explicit", signal?: AbortSignal): Promise<Buffer> {
@@ -856,6 +873,9 @@ export class CameraDelegate {
   }
   setControl(control: "light" | "siren", enabled: boolean): Promise<"accepted" | "unknown"> {
     return this.session.setControl(this.cameraId, this.identity, control, enabled);
+  }
+  controlState(): Promise<{light: boolean | null; siren: boolean | null}> {
+    return this.session.controlState(this.cameraId, this.identity);
   }
   acquireTalkback(): Promise<TalkbackDelegate> { return this.session.acquireTalkback(this.cameraId, this.identity); }
 }

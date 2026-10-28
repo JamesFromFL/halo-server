@@ -8,6 +8,7 @@ import type { NativeCamera, CameraDelegate } from "./session.js";
 import { HapVideoDelegate } from "./video.js";
 import { AudioControls } from "./audio.js";
 import { HapRecordingDelegate } from "./recording.js";
+import { CameraControls } from "./controls.js";
 
 const recordingConnections = new PhysicalConnectionBudget(16);
 
@@ -39,6 +40,7 @@ export class CameraAccessory {
   private retired = false;
   private lastState: MotionState = {motion: null, synchronized: false, source_state: "connecting"};
   private audioControls: AudioControls | null = null;
+  private controls: CameraControls | null = null;
   readonly streamingDelegate: HapVideoDelegate | null;
   readonly recordingDelegate: HapRecordingDelegate | null;
 
@@ -95,6 +97,8 @@ export class CameraAccessory {
     this.controller = identity.doorbell ? new DoorbellController({...controllerOptions, name}) : new CameraController(controllerOptions);
     this.accessory.configureController(this.controller);
     this.recordingDelegate?.attach(this.controller);
+    this.controls = new CameraControls(this.accessory, camera, options.native,
+      () => !this.retired && this.homeKitActive(), () => this.synchronizePolicy());
     if (identity.audio !== undefined && identity.audio !== null) {
       this.audioControls = new AudioControls(this.accessory, this.controller, identity.audio, {
         fence: () => this.fence(),
@@ -135,7 +139,7 @@ export class CameraAccessory {
     return {synchronized: true, streaming, snapshots: streaming && this.current.capabilities.snapshot,
       live_audio: streaming && audio?.microphone === true && !audio.microphone_muted && audio.microphone_volume > 0,
       talkback: streaming && this.current.capabilities.talkback && audio?.speaker === true && !audio.speaker_muted && audio.speaker_volume > 0,
-      controls: false, recording: active && recording.recording, recording_audio: active && recording.recording_audio};
+      controls: active && this.controls?.available === true, recording: active && recording.recording, recording_audio: active && recording.recording_audio};
   }
   private fence(): Promise<void> {
     return Promise.all([this.streamingDelegate?.fence(), this.recordingDelegate?.fence()]).then(() => {});
@@ -155,6 +159,7 @@ export class CameraAccessory {
     await this.streamingDelegate?.synchronizePolicy();
   }
   async closeStreams(): Promise<void> {
+    this.controls?.retire();
     this.audioControls?.retire();
     this.recordingDelegate?.retire();
     await Promise.all([this.audioControls?.settle(), this.streamingDelegate?.close(), this.recordingDelegate?.close(),
@@ -163,6 +168,7 @@ export class CameraAccessory {
   update(camera: NativeCamera): void {
     if (this.retired) return;
     this.current = structuredClone(camera);
+    this.controls?.update(camera);
     const name = camera.name || (this.identity.doorbell ? "Ring Doorbell" : "Ring Camera");
     this.accessory.displayName = name;
     this.accessory.getService(Service.AccessoryInformation)!
@@ -183,6 +189,7 @@ export class CameraAccessory {
   }
   retire(): void {
     this.retired = true;
+    this.controls?.retire();
     this.audioControls?.retire();
     this.recordingDelegate?.retire();
     this.applyState({motion: null, synchronized: false, source_state: "offline"});

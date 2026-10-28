@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
+import hashlib
 import json
 import math
 import re
@@ -15,7 +16,7 @@ from typing import Any
 from halo_server.homekit.text import literal_text
 
 PROTOCOL_VERSION = 1
-FEATURES = ("classic-camera-control-v1", "bulk-cancel-v1", "hksv-recording-v1")
+FEATURES = ("classic-camera-control-v1", "bulk-cancel-v1", "hksv-recording-v1", "owner-admin-v1")
 MAX_CONTROL_BYTES = 65536
 MAX_JSON_DEPTH = 32
 IO_TIMEOUT_SECONDS = 5.0
@@ -582,7 +583,127 @@ def _recording_next_result(value):
     return value["sequence"] >= 1 and value["total_bytes"] >= 1 and value["duration_ms"] >= 1
 
 
+def _hash(value):
+    return isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) is not None
+
+
+_pairing_manifest = _object(
+    accessory_info=_nullable(_hash),
+    identifier_cache=_nullable(_hash),
+    controller_storage=_nullable(_hash),
+)
+_PAIRING_IDENTITY = dict(
+    scope=_scope, registry_revision=_revision, accessory_id=_uuid, username=_username
+)
+
+
+def pairing_manifest_revision(manifest: dict) -> str:
+    """Digest exact validated HAP file bytes without exposing their contents."""
+    if not _pairing_manifest(manifest):
+        raise HomeKitProtocolError("invalid pairing manifest")
+    return hashlib.sha256(
+        b"halo-pairing-manifest-v1\0"
+        + json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
+def _pairing_status_result(value):
+    if not _object(
+        **_PAIRING_IDENTITY,
+        accepted=_boolean,
+        code=_code,
+        published=_boolean,
+        paired=_nullable(_boolean),
+        paired_clients=_nullable(_integer(0, 256)),
+        pairing_revision=_nullable(_hash),
+        pairing_manifest=_nullable(_pairing_manifest),
+    )(value):
+        return False
+    if value["accepted"] != (value["code"] == "ok"):
+        return False
+    if not value["accepted"]:
+        return not value["published"] and all(
+            value[key] is None
+            for key in ("paired", "paired_clients", "pairing_revision", "pairing_manifest")
+        )
+    return (
+        value["paired"] is not None
+        and value["paired_clients"] is not None
+        and value["paired"] == (value["paired_clients"] > 0)
+        and value["pairing_manifest"] is not None
+        and value["pairing_revision"] == pairing_manifest_revision(value["pairing_manifest"])
+    )
+
+
+def _pairing_reveal_result(value):
+    if not _object(
+        **_PAIRING_IDENTITY,
+        pairing_revision=_hash,
+        accepted=_boolean,
+        code=_code,
+        pincode=_nullable(
+            lambda v: (
+                isinstance(v, str) and re.fullmatch(r"[0-9]{3}-[0-9]{2}-[0-9]{3}", v) is not None
+            )
+        ),
+        setup_uri=_nullable(
+            lambda v: isinstance(v, str) and re.fullmatch(r"X-HM://[0-9A-Z]{13}", v) is not None
+        ),
+        ttl_ms=lambda v: _safe_integer(v) and v in (0, 60000),
+    )(value):
+        return False
+    return value["accepted"] == (value["code"] == "ok") and (
+        value["pincode"] is not None and value["setup_uri"] is not None and value["ttl_ms"] == 60000
+        if value["accepted"]
+        else value["pincode"] is None and value["setup_uri"] is None and value["ttl_ms"] == 0
+    )
+
+
+def _pairing_reset_prepare_result(value):
+    if not _object(
+        **_PAIRING_IDENTITY,
+        pairing_revision=_hash,
+        accepted=_boolean,
+        code=_code,
+        quiesced=_boolean,
+        quiesced_revision=_nullable(_hash),
+        pairing_manifest=_nullable(_pairing_manifest),
+    )(value):
+        return False
+    return value["accepted"] == (value["code"] == "ok") and (
+        value["quiesced"]
+        and value["pairing_manifest"] is not None
+        and value["quiesced_revision"] == value["pairing_revision"]
+        and value["quiesced_revision"] == pairing_manifest_revision(value["pairing_manifest"])
+        if value["accepted"]
+        else value["quiesced_revision"] is None and value["pairing_manifest"] is None
+    )
+
+
+def _control_state_result(value):
+    return (
+        _object(
+            scope=_scope,
+            operation_id=_uuid,
+            status=_enum("accepted", "rejected"),
+            code=_code,
+            light=_nullable(_boolean),
+            siren=_nullable(_boolean),
+        )(value)
+        and ((value["status"] == "accepted") == (value["code"] == "ok"))
+        and (value["status"] == "accepted" or value["light"] is None and value["siren"] is None)
+    )
+
+
 PAYLOAD_VALIDATORS = {
+    "pairing_status_request": _object(**_PAIRING_IDENTITY),
+    "pairing_status_result": _pairing_status_result,
+    "pairing_reveal_request": _object(**_PAIRING_IDENTITY, pairing_revision=_hash),
+    "pairing_reveal_result": _pairing_reveal_result,
+    "pairing_reset_prepare": _object(**_PAIRING_IDENTITY, pairing_revision=_hash),
+    "pairing_reset_prepare_result": _pairing_reset_prepare_result,
+    "control_state_request": _object(scope=_scope, operation_id=_uuid),
+    "control_state_result": _control_state_result,
     "recording_settings_update": _object(
         scope=_scope,
         expected_revision=_revision,
@@ -749,6 +870,10 @@ PAYLOAD_VALIDATORS = {
 KINDS = frozenset(PAYLOAD_VALIDATORS)
 PYTHON_KINDS = frozenset(
     {
+        "pairing_status_request",
+        "pairing_reveal_request",
+        "pairing_reset_prepare",
+        "control_state_result",
         "recording_settings_result",
         "recording_open_result",
         "recording_next_result",
@@ -780,6 +905,10 @@ PYTHON_KINDS = frozenset(
 )
 HAP_KINDS = frozenset(
     {
+        "pairing_status_result",
+        "pairing_reveal_result",
+        "pairing_reset_prepare_result",
+        "control_state_request",
         "recording_settings_update",
         "recording_open",
         "recording_next",
@@ -850,6 +979,10 @@ def validate_direction(envelope: dict[str, Any], sender: str) -> dict[str, Any]:
 
 
 REPLY_KINDS = {
+    "pairing_status_request": "pairing_status_result",
+    "pairing_reveal_request": "pairing_reveal_result",
+    "pairing_reset_prepare": "pairing_reset_prepare_result",
+    "control_state_request": "control_state_result",
     "recording_settings_update": "recording_settings_result",
     "recording_open": "recording_open_result",
     "recording_next": "recording_next_result",
@@ -923,6 +1056,12 @@ def validate_reply(request: dict[str, Any], reply: dict[str, Any]) -> dict[str, 
     for key in ("scope", "session_id", "job_id", "operation_id", "transfer_id"):
         if key in sent and sent[key] != received.get(key):
             raise HomeKitProtocolError("invalid control reply ownership")
+    if request["kind"].startswith("pairing_") and any(
+        sent[key] != received.get(key)
+        for key in ("registry_revision", "accessory_id", "username", "pairing_revision")
+        if key in sent
+    ):
+        raise HomeKitProtocolError("invalid pairing reply ownership")
     if request["kind"] == "accessory_config" and any(
         sent[key] != received[key] for key in ("revision", "generation", "page_index")
     ):

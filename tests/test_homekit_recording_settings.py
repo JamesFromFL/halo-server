@@ -171,7 +171,7 @@ async def test_configuration_only_update_preserves_scope_and_hap_cannot_set_owne
     preferences = RecordingPreferences(True, True, configuration())
     try:
         initial = await bridge.set_recording_settings(
-            boot, scope, bridge._recording_settings.revision, preferences
+            boot, scope, bridge._recording_settings.entries[0].preferences_revision, preferences
         )
         scope = service.homekit.inventory().cameras[0].scope
         changed = replace(
@@ -182,7 +182,7 @@ async def test_configuration_only_update_preserves_scope_and_hap_cannot_set_owne
             "recording_settings_update",
             {
                 "scope": asdict(scope),
-                "expected_revision": initial.revision,
+                "expected_revision": initial.entries[0].preferences_revision,
                 "active": changed.active,
                 "audio_active": changed.audio_active,
                 "configuration": configuration_wire(changed.configuration),
@@ -207,7 +207,7 @@ async def test_cancelled_recording_disable_fences_before_disk_then_joins_durable
     first = await bridge.set_recording_settings(
         boot,
         scope,
-        bridge._recording_settings.revision,
+        bridge._recording_settings.entries[0].preferences_revision,
         RecordingPreferences(True, True, configuration()),
     )
     scope = service.homekit.inventory().cameras[0].scope
@@ -216,17 +216,20 @@ async def test_cancelled_recording_disable_fences_before_disk_then_joins_durable
     )
     other = service.homekit.inventory().cameras[1].scope
     entered, release = threading.Event(), threading.Event()
-    original = bridge._recording_store.set_preferences
+    original = bridge._recording_store.set_hap_preferences
 
     def blocked(*args, **kwargs):
         entered.set()
         assert release.wait(3)
         return original(*args, **kwargs)
 
-    monkeypatch.setattr(bridge._recording_store, "set_preferences", blocked)
+    monkeypatch.setattr(bridge._recording_store, "set_hap_preferences", blocked)
     writing = asyncio.create_task(
         bridge.set_recording_settings(
-            boot, scope, first.revision, RecordingPreferences(False, False, configuration())
+            boot,
+            scope,
+            first.entries[0].preferences_revision,
+            RecordingPreferences(False, False, configuration()),
         )
     )
     try:
@@ -252,19 +255,19 @@ async def test_cancelled_recording_disable_fences_before_disk_then_joins_durable
 @pytest.mark.asyncio
 async def test_uncertain_recording_save_reloads_truth_and_lost_store_fences(tmp_path, monkeypatch):
     bridge, boot, scope, service, _, _ = await selected_bridge(tmp_path)
-    original = bridge._recording_store.set_preferences
+    original = bridge._recording_store.set_hap_preferences
 
     def saved_then_failed(*args, **kwargs):
         original(*args, **kwargs)
         raise RecordingSettingsError("Injected fsync error", possibly_saved=True)
 
-    monkeypatch.setattr(bridge._recording_store, "set_preferences", saved_then_failed)
+    monkeypatch.setattr(bridge._recording_store, "set_hap_preferences", saved_then_failed)
     try:
         with pytest.raises(RecordingSettingsError):
             await bridge.set_recording_settings(
                 boot,
                 scope,
-                bridge._recording_settings.revision,
+                bridge._recording_settings.entries[0].preferences_revision,
                 RecordingPreferences(True, True, configuration()),
             )
         assert bridge._recording_settings == bridge._recording_store.load()

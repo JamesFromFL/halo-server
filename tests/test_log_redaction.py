@@ -64,3 +64,40 @@ def test_server_logging_configuration_installs_only_redacting_handlers():
     finally:
         root.handlers[:] = original_handlers
         root.setLevel(original_level)
+
+
+def test_redact_homekit_reveal_and_transport_key_spellings():
+    value = (
+        "PIN 031-45-154 X-HM://0023ISYWYABCD "
+        '{"pincode":"canary-pin", "setupURI":"canary-uri", '
+        '"signSk":"canary-sign", "srtp_key":"canary-key", "srtpSalt":"canary-salt", '
+        '"private_key":"canary-private"} paired_clients=2 state=ready codec=h264'
+    )
+    result = redact_text(value)
+    assert "canary-" not in result and "031-45-154" not in result and "X-HM://" not in result
+    assert "paired_clients=2 state=ready codec=h264" in result
+
+
+def test_redacting_formatter_sanitizes_exception_and_multiline_reveal():
+    try:
+        raise RuntimeError("failed setupURI=X-HM://0023ISYWYABCD\npincode=031-45-154")
+    except RuntimeError:
+        import sys
+
+        record = logging.LogRecord(
+            "halo",
+            logging.ERROR,
+            __file__,
+            1,
+            "failed %s",
+            ("srtp_key=key-canary",),
+            sys.exc_info(),
+        )
+    result = RedactingFormatter().format(record)
+    assert "key-canary" not in result and "031-45-154" not in result and "X-HM://" not in result
+    assert "RuntimeError" in result
+
+
+def test_redaction_hides_multiline_quoted_secret_without_hiding_adjacent_status():
+    result = redact_text('private_key="first-canary\nsecond-canary" paired_clients=2')
+    assert "canary" not in result and "paired_clients=2" in result

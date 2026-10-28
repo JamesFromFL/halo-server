@@ -1,13 +1,16 @@
 import { TextDecoder } from "node:util";
+import { createHash } from "node:crypto";
 
 export const PROTOCOL_VERSION = 1;
 export const MAX_FRAME_BYTES = 65_536;
 export const MAX_JSON_DEPTH = 32;
 export const MAX_FRAMES_PER_CHUNK = 256;
 export const FEATURE = "classic-camera-control-v1";
-export const FEATURES = [FEATURE, "bulk-cancel-v1", "hksv-recording-v1"] as const;
+export const FEATURES = [FEATURE, "bulk-cancel-v1", "hksv-recording-v1", "owner-admin-v1"] as const;
 
 export const KINDS = [
+  "pairing_status_request", "pairing_status_result", "pairing_reveal_request", "pairing_reveal_result", "pairing_reset_prepare", "pairing_reset_prepare_result",
+  "control_state_request", "control_state_result",
   "recording_settings_update", "recording_settings_result", "recording_open", "recording_open_result",
   "recording_next", "recording_next_result", "recording_stop", "recording_stop_result",
   "audio_settings_update", "audio_settings_result",
@@ -82,6 +85,23 @@ export const RESULT_CODES = [
 ] as const;
 export interface AccountScope { profile_id: string; account_generation: number }
 export interface MediaScope extends AccountScope { camera_id: string; device_generation: number; privacy_generation: number }
+export interface PairingManifest { accessory_info: string | null; identifier_cache: string | null; controller_storage: string | null }
+export function pairingManifestRevision(manifest: PairingManifest): string {
+  const canonical = {accessory_info: manifest.accessory_info, controller_storage: manifest.controller_storage, identifier_cache: manifest.identifier_cache};
+  return createHash("sha256").update("halo-pairing-manifest-v1\0").update(JSON.stringify(canonical)).digest("hex");
+}
+export interface PairingIdentity { scope: MediaScope; registry_revision: number; accessory_id: string; username: string }
+export interface PairingStatus extends PairingIdentity {
+  accepted: boolean; code: string; published: boolean; paired: boolean | null; paired_clients: number | null;
+  pairing_revision: string | null; pairing_manifest: PairingManifest | null;
+}
+export interface PairingReveal extends PairingIdentity {
+  pairing_revision: string; accepted: boolean; code: string; pincode: string | null; setup_uri: string | null; ttl_ms: number;
+}
+export interface PairingReset extends PairingIdentity {
+  pairing_revision: string; accepted: boolean; code: string; quiesced: boolean;
+  quiesced_revision: string | null; pairing_manifest: PairingManifest | null;
+}
 export type CameraPolicy = Record<typeof POLICY_FIELDS[number], boolean>;
 export interface AudioSettings {
   microphone_muted: boolean; speaker_muted: boolean; microphone_volume: number; speaker_volume: number;
@@ -212,6 +232,30 @@ const transferOpen: Check = value => transferOpenFields(value) && record(value) 
   (value.chunk_bytes as number) * (value.window_chunks as number) <= MAX_BULK_WINDOW_BYTES;
 const epoch: Check = value => typeof value === "string" && value.length >= 1 && value.length <= 64 && !/[^A-Za-z0-9_-]/.test(value);
 const username: Check = value => typeof value === "string" && value.length === 17 && /^[0-9A-F][26AE](?::[0-9A-F]{2}){5}$/.test(value);
+const sha256: Check = value => typeof value === "string" && value.length === 64 && /^[0-9a-f]{64}$/.test(value);
+const pairingManifest = object({accessory_info: nullable(sha256), identifier_cache: nullable(sha256), controller_storage: nullable(sha256)});
+const pairingIdentity = {scope, registry_revision: revision, accessory_id: uuid, username};
+const pairingExpected = {...pairingIdentity, pairing_revision: sha256};
+const pairingStatusFields = object({...pairingIdentity, accepted: bool, code, published: bool, paired: nullable(bool),
+  paired_clients: nullable(integer(0, 256)), pairing_revision: nullable(sha256), pairing_manifest: nullable(pairingManifest)});
+const pairingStatus: Check = value => pairingStatusFields(value) && record(value) && (value.accepted
+  ? value.code === "ok" && value.paired !== null && value.paired_clients !== null && value.pairing_revision !== null && value.pairing_manifest !== null &&
+    value.paired === ((value.paired_clients as number) > 0) && value.pairing_revision === pairingManifestRevision(value.pairing_manifest as unknown as PairingManifest)
+  : value.code !== "ok" && value.published === false && value.paired === null && value.paired_clients === null && value.pairing_revision === null && value.pairing_manifest === null);
+const pairingRevealFields = object({...pairingExpected, accepted: bool, code, pincode: nullable(value => typeof value === "string" && value.length === 10 && /^\d{3}-\d{2}-\d{3}$/.test(value)),
+  setup_uri: nullable(value => typeof value === "string" && value.length === 20 && /^X-HM:\/\/[0-9A-Z]{13}$/.test(value)), ttl_ms: integer(0, 60000)});
+const pairingReveal: Check = value => pairingRevealFields(value) && record(value) && (value.accepted
+  ? value.code === "ok" && value.pincode !== null && value.setup_uri !== null && value.ttl_ms === 60000
+  : value.code !== "ok" && value.pincode === null && value.setup_uri === null && value.ttl_ms === 0);
+const pairingResetFields = object({...pairingExpected, accepted: bool, code, quiesced: bool,
+  quiesced_revision: nullable(sha256), pairing_manifest: nullable(pairingManifest)});
+const pairingReset: Check = value => pairingResetFields(value) && record(value) && (value.accepted
+  ? value.code === "ok" && value.quiesced === true && value.quiesced_revision === value.pairing_revision && value.pairing_manifest !== null &&
+    value.quiesced_revision === pairingManifestRevision(value.pairing_manifest as unknown as PairingManifest)
+  : value.code !== "ok" && value.quiesced_revision === null && value.pairing_manifest === null);
+const controlStateFields = object({scope, operation_id: uuid, status: choice("accepted", "rejected"), code, light: nullable(bool), siren: nullable(bool)});
+const controlState: Check = value => controlStateFields(value) && record(value) && (value.status === "accepted"
+  ? value.code === "ok" : value.code !== "ok" && value.light === null && value.siren === null);
 const audioSettingsFields = {microphone_muted:bool,speaker_muted:bool,microphone_volume:integer(0,100),speaker_volume:integer(0,100)};
 const audioSettings = object(audioSettingsFields);
 const accessoryAudioFields = object({...audioSettingsFields,microphone:bool,speaker:bool,revision});
@@ -279,6 +323,10 @@ const recordingNextResult: Check = value => {
   return (value.sequence as number)>=1&&(value.total_bytes as number)>=1&&(value.duration_ms as number)>=1;
 };
 const payloadValidators: Record<Kind, Check> = {
+  pairing_status_request: object(pairingIdentity), pairing_status_result: pairingStatus,
+  pairing_reveal_request: object(pairingExpected), pairing_reveal_result: pairingReveal,
+  pairing_reset_prepare: object(pairingExpected), pairing_reset_prepare_result: pairingReset,
+  control_state_request: object({scope, operation_id: uuid}), control_state_result: controlState,
   recording_settings_update:object({scope,expected_revision:revision,active:bool,audio_active:bool,configuration:nullable(recordingConfiguration)}),
   recording_settings_result:value=>object({scope,accepted:bool,code,revision})(value)&&record(value)&&((value.accepted===true)===(value.code==="ok")),
   recording_open:object({...recordingJob,configuration:recordingConfiguration}),
@@ -326,8 +374,8 @@ const payloadValidators: Record<Kind, Check> = {
   transfer_fence_ack: object({...transfer, sequence_count: integer(0, 2 ** 32 - 1), sent_bytes: integer(0, 8 * 1024 * 1024), code: choice("cancelled", "invalidated", "timeout")}),
   transfer_result: object({...transfer, status: choice("complete", "cancelled", "rejected"), code}),
 };
-const pythonKinds: readonly Kind[] = ["recording_settings_result", "recording_open_result", "recording_next_result", "recording_stop_result", "audio_settings_result", "video_prepare_result", "video_start_result", "video_reconfigure_result", "video_stop_result", "video_ended", "accessory_config", "event_sync_ack", "event_state", "camera_event", "hello", "ping", "shutdown", "inventory_reset", "inventory_page", "camera_status", "policy_ack", "lease_result", "lease_renew_result", "lease_stop_result", "snapshot_result", "talkback_result", "control_result"];
-const hapKinds: readonly Kind[] = ["recording_settings_update", "recording_open", "recording_next", "recording_stop", "audio_settings_update", "video_prepare", "video_start", "video_reconfigure", "video_stop", "accessory_config_ack", "event_sync", "hello_ack", "pong", "shutdown_ack", "inventory_request", "policy_update", "lease_request", "lease_renew", "lease_stop", "snapshot_request", "snapshot_cancel", "talkback_request", "control_request"];
+const pythonKinds: readonly Kind[] = ["pairing_status_request", "pairing_reveal_request", "pairing_reset_prepare", "control_state_result", "recording_settings_result", "recording_open_result", "recording_next_result", "recording_stop_result", "audio_settings_result", "video_prepare_result", "video_start_result", "video_reconfigure_result", "video_stop_result", "video_ended", "accessory_config", "event_sync_ack", "event_state", "camera_event", "hello", "ping", "shutdown", "inventory_reset", "inventory_page", "camera_status", "policy_ack", "lease_result", "lease_renew_result", "lease_stop_result", "snapshot_result", "talkback_result", "control_result"];
+const hapKinds: readonly Kind[] = ["pairing_status_result", "pairing_reveal_result", "pairing_reset_prepare_result", "control_state_request", "recording_settings_update", "recording_open", "recording_next", "recording_stop", "audio_settings_update", "video_prepare", "video_start", "video_reconfigure", "video_stop", "accessory_config_ack", "event_sync", "hello_ack", "pong", "shutdown_ack", "inventory_request", "policy_update", "lease_request", "lease_renew", "lease_stop", "snapshot_request", "snapshot_cancel", "talkback_request", "control_request"];
 export function validateScope(value: unknown): MediaScope {
   if (!scope(value)) throw new ProtocolError("invalid-scope");
   return value as MediaScope;
@@ -354,6 +402,7 @@ export function validateDirection(value: unknown, sender: "python" | "hap"): Env
   return message;
 }
 export const REPLY_KINDS: Partial<Record<Kind, Kind>> = {
+  pairing_status_request:"pairing_status_result",pairing_reveal_request:"pairing_reveal_result",pairing_reset_prepare:"pairing_reset_prepare_result",control_state_request:"control_state_result",
   recording_settings_update:"recording_settings_result",recording_open:"recording_open_result",recording_next:"recording_next_result",recording_stop:"recording_stop_result",
   audio_settings_update:"audio_settings_result",
   video_prepare:"video_prepare_result",video_start:"video_start_result",video_reconfigure:"video_reconfigure_result",video_stop:"video_stop_result",
@@ -368,7 +417,7 @@ export function validateReply(requestValue: unknown, replyValue: unknown): Envel
   if (REPLY_KINDS[request.kind] !== reply.kind || request.boot_id !== reply.boot_id || request.request_id !== reply.request_id) {
     throw new ProtocolError("invalid-reply-correlation");
   }
-  for (const key of ["scope", "session_id", "job_id", "operation_id", "transfer_id"]) {
+  for (const key of ["scope", "session_id", "job_id", "operation_id", "transfer_id", "registry_revision", "accessory_id", "username", "pairing_revision"]) {
     if (!Object.hasOwn(request.payload, key)) continue;
     const sent = request.payload[key], received = reply.payload[key];
     const equal = key === "scope" ? sent===null && received===null || record(sent) && record(received) &&
