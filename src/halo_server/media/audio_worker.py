@@ -70,7 +70,9 @@ class Converter:
         if self.mode not in {"encode", "decode"}:
             raise ValueError
         self.configuration = wire.AudioConfiguration(**settings["configuration"])
-        self.decoder = av.CodecContext.create("opus", "r")
+        # Ring's 60 ms SILK packets require the reference decoder; FFmpeg's
+        # native Opus decoder can corrupt this otherwise-valid source format.
+        self.decoder = av.CodecContext.create("libopus", "r")
         self.decoder.thread_count = 1
         # Two output channels allow arbitrary mono/stereo source TOCs; the
         # resampler explicitly downmixes. No container pre-skip trims RTP input.

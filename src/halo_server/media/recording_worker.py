@@ -217,7 +217,8 @@ class Recording:
             self.audio_track.codec_context.thread_count = 1
             self.audio_track.codec_context.profile = "LC"
             self.audio_track.time_base = Fraction(1, self.audio_config["sample_rate"])
-            self.audio_decoder = av.CodecContext.create("opus", "r")
+            # Use the same reference decoder as live audio for Ring SILK.
+            self.audio_decoder = av.CodecContext.create("libopus", "r")
             self.audio_decoder.thread_count = 1
             self.audio_decoder.extradata = (
                 b"OpusHead\x01\x02\0\0" + struct.pack("<I", 48000) + b"\0\0\0"

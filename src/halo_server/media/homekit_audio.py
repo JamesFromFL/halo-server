@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
+import logging
 import secrets
 import socket
 import struct
@@ -24,6 +26,159 @@ RECEIVER_SECONDS = 60.0
 SEND_SECONDS = 0.25
 MAX_DATAGRAM_RATE = 128
 MAX_INPUT_SPANS = 512
+_LOGGER = logging.getLogger(__name__)
+_COUNTER_MAX = 2**31 - 1
+_SAMPLE_BINS = (120, 240, 480, 960, 1440, 1920, 2880, 5760)
+
+
+class _AudioTiming:
+    """Constant-size metadata only; no payloads, absolute timestamps or identities."""
+
+    def __init__(self, config, now):
+        self.started = now
+        self.next_snapshot = 0
+        self.finished = False
+        self.previous_input = self.previous_output = self.previous_wire = None
+        self.values = {
+            "sample_rate": config.sample_rate,
+            "packet_ms": config.packet_time,
+            "channels": config.channels,
+            "bitrate_kbps": config.max_bit_rate,
+            "bitrate_mode": config.bitrate_mode,
+        }
+        for name in [
+            "input_packets",
+            "input_bytes",
+            "invalid_toc",
+            "input_step_mismatch",
+            "input_backward",
+            "input_step_max",
+            "input_gap_max",
+            "epoch_resets",
+            "adapter_recreates",
+            "feed_calls",
+            "feed_latency_ms_max",
+            "output_packets",
+            "output_pts_mismatch",
+            "output_backward",
+            "output_gap_max",
+            "stale_input",
+            "stale_output",
+            "epoch_drop",
+            "source_age_ms_max",
+            "sent_packets",
+            "sent_bytes",
+            "wire_step_mismatch",
+            "wire_step_max",
+            "pacing_late_ms_max",
+            "presentation_age_ms_max",
+            "rtcp_sent",
+            "mode_copy",
+            "mode_repacketize",
+            "mode_adapt",
+            "mode_other",
+        ]:
+            self.values[name] = 0
+        for prefix, bins in (
+            ("duration", _SAMPLE_BINS),
+            ("frame", _SAMPLE_BINS),
+            ("channel", (1, 2)),
+            ("bandwidth", (8000, 12000, 16000, 24000, 48000)),
+        ):
+            for value in (*bins, "other"):
+                self.values[f"{prefix}_{value}"] = 0
+
+    def count(self, key, amount=1):
+        self.values[key] = min(_COUNTER_MAX, self.values[key] + max(0, amount))
+
+    def maximum(self, key, value):
+        self.values[key] = min(_COUNTER_MAX, max(self.values[key], max(0, int(value))))
+
+    def source(self, packet, now):
+        from halo_server.media.opus import parse_opus
+
+        self.count("input_packets")
+        self.count("input_bytes", len(packet.payload))
+        self.maximum("source_age_ms_max", (now - packet.received_at) * 1000)
+        try:
+            parsed = parse_opus(packet.payload)
+        except Exception:
+            self.count("invalid_toc")
+            return
+        for prefix, value in (
+            ("duration", parsed.duration_samples),
+            ("frame", parsed.frame_samples),
+            ("channel", parsed.channels),
+            ("bandwidth", parsed.bandwidth_rate),
+        ):
+            key = f"{prefix}_{value}"
+            self.count(key if key in self.values else f"{prefix}_other")
+        if self.previous_input is not None:
+            timestamp, duration = self.previous_input
+            step = packet.rtp_timestamp - timestamp
+            if step != duration:
+                self.count("input_step_mismatch")
+            if step <= 0:
+                self.count("input_backward")
+            self.maximum("input_step_max", step)
+            self.maximum("input_gap_max", abs(step - duration))
+        self.previous_input = packet.rtp_timestamp, parsed.duration_samples
+
+    def reset(self):
+        self.count("epoch_resets")
+        self.previous_input = self.previous_output = None
+
+    def feed(self, seconds):
+        self.count("feed_calls")
+        self.maximum("feed_latency_ms_max", seconds * 1000)
+
+    def output(self, output):
+        self.count("output_packets")
+        mode = output.mode if output.mode in {"copy", "repacketize", "adapt"} else "other"
+        self.count(f"mode_{mode}")
+        if self.previous_output is not None:
+            timestamp, duration = self.previous_output
+            step = output.timestamp - timestamp
+            if step != duration:
+                self.count("output_pts_mismatch")
+            if step <= 0:
+                self.count("output_backward")
+            self.maximum("output_gap_max", abs(step - duration))
+        self.previous_output = output.timestamp, output.duration
+
+    def sent(self, timestamp, duration, size, now, presentation):
+        self.count("sent_packets")
+        self.count("sent_bytes", size)
+        if self.previous_wire is not None:
+            previous, expected = self.previous_wire
+            step = (timestamp - previous) & 0xFFFFFFFF
+            if step != expected:
+                self.count("wire_step_mismatch")
+            self.maximum("wire_step_max", step)
+        self.previous_wire = timestamp, duration
+        self.maximum("presentation_age_ms_max", (now - presentation) * 1000)
+
+    def tick(self, now):
+        thresholds = (5, 15, 30)
+        if not self.finished and self.next_snapshot < len(thresholds):
+            threshold = thresholds[self.next_snapshot]
+            if now - self.started >= threshold:
+                self.next_snapshot += 1
+                self.emit(f"{threshold}s", now)
+
+    def finish(self, now):
+        if not self.finished:
+            self.finished = True
+            self.emit("terminal", now)
+
+    def emit(self, phase, now):
+        values = dict(self.values)
+        values["elapsed_ms"] = min(_COUNTER_MAX, max(0, int((now - self.started) * 1000)))
+        _LOGGER.info(
+            "HomeKit audio timing phase=%s metrics=%s",
+            phase,
+            json.dumps(values, sort_keys=True, separators=(",", ":")),
+        )
 
 
 @dataclass(frozen=True)
@@ -122,12 +277,14 @@ class AudioTrack:
         self._capture_epoch = None
         self._input_spans = deque()
         self._input_end = None
+        self._timing = None
         self.failure = None
 
     def start(self, handle, config, *, speaker_volume):
         from halo_server.media.homekit_audio_codec import AudioAdapter
 
         self.handle, self.config = handle, config
+        self._timing = _AudioTiming(config, self._clock())
         self._adapter = (self._adapter_factory or AudioAdapter)(config)
         self.talkback = Talkback(
             self._controller,
@@ -162,12 +319,19 @@ class AudioTrack:
 
     def _failed(self, stage, code, error):
         self.failure = code
+        self._trace("finish", self._clock())
         if self._diagnostic_failure is not None:
             with contextlib.suppress(BaseException):
                 # The owner emits fixed metadata only. Diagnostics cannot
                 # interrupt the existing whole-session retirement callback.
                 self._diagnostic_failure(stage, code, error)
         self._failure(code)
+
+    def _trace(self, method, *args):
+        # Even a failing log handler must leave delivery and retirement intact.
+        with contextlib.suppress(BaseException):
+            if self._timing is not None:
+                getattr(self._timing, method)(*args)
 
     def _may(self, permission):
         if self._retired:
@@ -200,6 +364,8 @@ class AudioTrack:
                 await asyncio.sleep(0.002)
 
     def _reset(self, epoch):
+        if self._capture_epoch is not None:
+            self._trace("reset")
         self._capture_epoch = epoch
         self._source_base = self._source_last = None
         if self._last_timestamp is not None:
@@ -217,6 +383,7 @@ class AudioTrack:
             if self._retired:
                 raise HomeKitOperationError("authority_changed")
             self._adapter = (self._adapter_factory or AudioAdapter)(self.config)
+            self._trace("count", "adapter_recreates")
             self._input_spans.clear()
             self._input_end = None
 
@@ -253,6 +420,7 @@ class AudioTrack:
         try:
             while not self._retired:
                 self._check(None)
+                self._trace("tick", self._clock())
                 if not self._may("live_audio"):
                     await asyncio.sleep(0.05)
                     continue
@@ -268,14 +436,19 @@ class AudioTrack:
                 if not self._may("live_audio"):
                     continue
                 for packet in batch.packets:
+                    self._trace("source", packet, self._clock())
                     if packet.capture_epoch != self._epoch():
+                        self._trace("count", "epoch_drop")
                         continue
                     if self._clock() - packet.received_at > MAX_AUDIO_AGE:
+                        self._trace("count", "stale_input")
                         continue
                     await self._discard_expired_prefix()
                     if packet.capture_epoch != self._epoch():
+                        self._trace("count", "epoch_drop")
                         break
                     if self._clock() - packet.received_at > MAX_AUDIO_AGE:
+                        self._trace("count", "stale_input")
                         continue
                     if self._input_end is not None and packet.rtp_timestamp != self._input_end:
                         self._input_spans.clear()
@@ -291,19 +464,33 @@ class AudioTrack:
                             packet.received_at,
                         )
                     )
-                    outputs = await self._adapter.feed(
-                        packet.payload, packet.rtp_timestamp, capture_epoch=packet.capture_epoch
-                    )
+                    feed_started = self._clock()
+                    try:
+                        outputs = await self._adapter.feed(
+                            packet.payload, packet.rtp_timestamp, capture_epoch=packet.capture_epoch
+                        )
+                    finally:
+                        self._trace("feed", self._clock() - feed_started)
                     for output in outputs:
+                        self._trace("output", output)
                         received_at = self._output_receipt(output, packet.received_at)
                         if packet.capture_epoch != self._epoch():
+                            self._trace("count", "epoch_drop")
                             break
                         if self._clock() - received_at > MAX_AUDIO_AGE:
+                            self._trace("count", "stale_output")
                             continue
+                        if self._next_packet_at:
+                            self._trace(
+                                "maximum",
+                                "pacing_late_ms_max",
+                                (self._clock() - self._next_packet_at) * 1000,
+                            )
                         target = max(self._clock(), self._next_packet_at)
                         if target > self._clock():
                             await asyncio.sleep(target - self._clock())
                         if self._clock() - received_at > MAX_AUDIO_AGE:
+                            self._trace("count", "stale_output")
                             continue
                         if len(output.payload) + 22 > MAX_AUDIO_PACKET:
                             raise HomeKitOperationError("media_saturated")
@@ -337,6 +524,14 @@ class AudioTrack:
                         )
                         self._packets += 1
                         self._octets += len(output.payload)
+                        self._trace(
+                            "sent",
+                            timestamp,
+                            self._last_duration,
+                            len(output.payload),
+                            self._clock(),
+                            self._last_presentation,
+                        )
                         self._next_packet_at = target + output.duration / 48000
         except asyncio.CancelledError:
             raise
@@ -398,6 +593,7 @@ class AudioTrack:
             while not self._retired:
                 await asyncio.sleep(self.config.rtcp_interval)
                 self._check(None)
+                self._trace("tick", self._clock())
                 if self._clock() - max(self._last_feedback, self._last_seen()) > RECEIVER_SECONDS:
                     self._failure("receiver_timeout")
                     return
@@ -416,11 +612,18 @@ class AudioTrack:
                     report = sender_report(
                         self.prepared.ssrc, timestamp, self._packets, self._octets
                     )
-                    await self._send(
+                    sent = await self._send(
                         self.secure.protect_rtcp(report),
                         permission="live_audio",
                         epoch=self._capture_epoch,
                     )
+                    if sent:
+                        self._trace("count", "rtcp_sent")
+                        self._trace(
+                            "maximum",
+                            "presentation_age_ms_max",
+                            (self._clock() - self._last_presentation) * 1000,
+                        )
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -428,6 +631,7 @@ class AudioTrack:
 
     def fence(self):
         self._retired = True
+        self._trace("finish", self._clock())
         descriptor = self.socket.fileno()
         if descriptor >= 0:
             loop = asyncio.get_running_loop()
