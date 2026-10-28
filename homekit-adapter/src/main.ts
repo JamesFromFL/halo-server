@@ -8,7 +8,7 @@ import { BulkChannel } from "./bulk.js";
 import { AdapterSession } from "./session.js";
 import { AccessoryManager, hapPublisher, type AccessoryConfigurationPage } from "./accessories.js";
 import { PairingStore } from "./storage.js";
-import { FEATURE, ProtocolError, validateDirection, type Envelope } from "./protocol.js";
+import { FEATURES, ProtocolError, validateDirection, type Envelope } from "./protocol.js";
 import { verifyPublicApi } from "./public-api.js";
 
 export const HANDSHAKE_TIMEOUT_MS = 5_000;
@@ -120,7 +120,7 @@ async function run(): Promise<number> {
         renewIdle();
         await reply(message, "hello_ack", {
           role: "hap", build_id: message.payload.build_id, protocol: 1,
-          features: [FEATURE], pid: process.pid,
+          features: [...FEATURES], pid: process.pid,
         });
         transfer = new BulkChannel(bulk, {
           bootId: boot, role: "hap",

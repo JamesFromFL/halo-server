@@ -1,8 +1,8 @@
 # Halo private HAP adapter groundwork
 
-This package implements **S04 dependency checks, S05 contracts, S06 supervised channels and S07 stable accessory/events and S08 public live-video delegates and S09 negotiated audio/talkback**. It publishes explicitly selected development accessories only after Python qualifies native video output. Python owns Ring, UDP/SRTP and video bytes. Snapshots, owner pairing management and HKSV are later slices. A `hello_ack` and the feature marker `classic-camera-control-v1` mean only that this initial private control protocol is understood.
+This package implements **S04 dependency checks, S05 contracts, S06 supervised channels and S07 stable accessory/events and S08 public live-video delegates, S09 negotiated audio/talkback and S10 snapshots**. It publishes explicitly selected development accessories only after Python qualifies native video output. Python owns Ring, UDP/SRTP and video bytes. Owner pairing management and HKSV are later slices. A `hello_ack` and the feature marker `classic-camera-control-v1` mean only that this initial private control protocol is understood.
 
-The Python daemon remains the Ring/session owner. The intended future adapter uses the released HAP public API; it does not embed Scrypted, require Homebridge, or import HAP private paths. Stable selected camera/doorbell graphs, pairing-store preflight and state-plus-cursor event delivery are implemented. Publication stays gated on the qualified Python video catalogue. Snapshots and HKSV remain later slices. No unpublished scratchpad dependency or HAP fork is used here.
+The Python daemon remains the Ring/session owner. The intended future adapter uses the released HAP public API; it does not embed Scrypted, require Homebridge, or import HAP private paths. Stable selected camera/doorbell graphs, pairing-store preflight and state-plus-cursor event delivery are implemented. Publication stays gated on the qualified Python video catalogue. HKSV remains a later slice. No unpublished scratchpad dependency or HAP fork is used here.
 
 ## Pinned toolchain
 
@@ -31,7 +31,7 @@ The first message is Python `hello`; Node echoes boot/request/build correlation 
 
 The shared S05 decoder also validates inventory, privacy, lease, snapshot, talkback, control and transfer metadata with scoped reply correlation. These operations are wired into bounded synthetic camera delegates without accessory publication. Inventory must paginate by encoded bytes as well as the 32-camera page limit to remain below the control byte cap.
 
-After hello, same-boot `ping` and `shutdown` reply `pong` and `shutdown_ack`. Inventory notices discover account state and drive scoped, byte-aware pagination. Camera delegates synchronize policy before lease/control/talkback work; snapshots remain not-ready on the production broker until S10. Exact duplicate complete inventory notices preserve current leases. Repeated hello, stale boot, unknown direction or malformed frame closes the channel. Shutdown acknowledgment is flushed before descriptor closure. Child startup handshake and partial-frame budgets are 5 s; partial deadlines do not extend with each received byte. Writes have a 5 s whole queue/flush budget, at most 32 pending messages and 256 KiB retained output. The parent's specified heartbeat interval is 5 s; child idle expiry is 15 s. Parent identity is rechecked periodically. EOF, signals, framing/I/O failure and parent retirement close owned channels and timers; Python owns escalation/reap and retires that boot's work.
+After hello, same-boot `ping` and `shutdown` reply `pong` and `shutdown_ack`. Inventory notices discover account state and drive scoped, byte-aware pagination. Camera delegates synchronize policy before lease/control/talkback work; snapshots use the bounded S10 service. Exact duplicate complete inventory notices preserve current leases. Repeated hello, stale boot, unknown direction or malformed frame closes the channel. Shutdown acknowledgment is flushed before descriptor closure. Child startup handshake and partial-frame budgets are 5 s; partial deadlines do not extend with each received byte. Writes have a 5 s whole queue/flush budget, at most 32 pending messages and 256 KiB retained output. The parent's specified heartbeat interval is 5 s; child idle expiry is 15 s. Parent identity is rechecked periodically. EOF, signals, framing/I/O failure and parent retirement close owned channels and timers; Python owns escalation/reap and retires that boot's work.
 
 No cancellation can undo bytes already handed to a kernel/peer. This control-only lifecycle has no actuator retries or accepted source writes to replay.
 
@@ -89,3 +89,21 @@ setters fence active output and wait for Python CAS/fsync acknowledgement before
 updating HAP state. Publication and fresh policy wait for pending setting writes.
 Unsafe/failed settings keep the graph closed until durable configuration recovers.
 There is no HAP private-path patch or implicit unmute on restart.
+
+## S10 public snapshot callbacks and isolated transfer retirement
+
+Public HAP snapshot reasons map exactly to event/periodic; absent or unknown
+reasons remain unknown. The20second callback budget includes a17second scoped
+READY request and bounded JPEG transfer. Python's existing Ring downloader and
+isolated native worker supply validated images. Final callback delivery checks
+current scope, policy and abort token. Cancelled callers retain only exact
+cleanup authorization for a late READY/OPEN and never revive a callback.
+
+The matched child now requires `bulk-cancel-v1` in addition to the original
+control marker. Producer `transfer_fence` and exact `transfer_fence_ack` account
+for already enqueued frames, including a fragmented body or cancelled drain.
+Normal successful cancellation preserves unrelated transfers; failed framing or
+frontier deadlines still close the shared channel. Native cleanup can remain
+owned after its wire bytes are drained. Terminal history contains minimal
+metadata,4096 entries/60seconds, and never retains image buffers or sink closures.
+These are private IPC guarantees; released HDS backpressure remains an HKSV gate.

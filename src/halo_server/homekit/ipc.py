@@ -267,7 +267,7 @@ def _snapshot_request(value: Any) -> bool:
             job_id=_uuid,
             width=_integer(1, 4096),
             height=_integer(1, 4096),
-            reason=_enum("periodic", "event", "explicit"),
+            reason=_enum("periodic", "event", "explicit", "unknown"),
         )(value)
         and value["width"] * value["height"] <= 8_000_000
     )
@@ -280,7 +280,10 @@ def _snapshot_result(value: Any) -> bool:
         status=_enum("ready", "rejected", "cancelled"),
         code=_code,
         transfer_id=_nullable(_uuid),
-    )(value) and ((value["status"] == "ready") == (value["transfer_id"] is not None))
+    )(value) and (
+        (value["status"] == "ready") == (value["transfer_id"] is not None)
+        and (value["status"] == "ready") == (value["code"] == "ok")
+    )
 
 
 def _lease_result(value: Any) -> bool:
@@ -545,7 +548,7 @@ PAYLOAD_VALIDATORS = {
         role=_enum("hap"),
         build_id=lambda value: _bounded_text(value, 128),
         protocol=_integer(1, 1),
-        features=lambda value: value == ["classic-camera-control-v1"],
+        features=lambda value: value == ["classic-camera-control-v1", "bulk-cancel-v1"],
         pid=_positive,
     ),
     "ping": _object(),
@@ -600,6 +603,18 @@ PAYLOAD_VALIDATORS = {
     ),
     "transfer_cancel": _object(
         **_TRANSFER, code=_enum("cancelled", "invalidated", "timeout", "protocol-error")
+    ),
+    "transfer_fence": _object(
+        **_TRANSFER,
+        sequence_count=_integer(0, 2**32 - 1),
+        sent_bytes=_integer(0, 8 * 1024 * 1024),
+        code=_enum("cancelled", "invalidated", "timeout"),
+    ),
+    "transfer_fence_ack": _object(
+        **_TRANSFER,
+        sequence_count=_integer(0, 2**32 - 1),
+        sent_bytes=_integer(0, 8 * 1024 * 1024),
+        code=_enum("cancelled", "invalidated", "timeout"),
     ),
     "transfer_result": _object(
         **_TRANSFER, status=_enum("complete", "cancelled", "rejected"), code=_code
@@ -721,6 +736,7 @@ REPLY_KINDS = {
     "control_request": "control_result",
     "transfer_open": "transfer_credit",
     "transfer_end": "transfer_result",
+    "transfer_fence": "transfer_fence_ack",
 }
 
 
@@ -760,6 +776,10 @@ def validate_reply(request: dict[str, Any], reply: dict[str, Any]) -> dict[str, 
             )
         ):
             raise HomeKitProtocolError("invalid negotiated track key correlation")
+    if request["kind"] == "transfer_fence" and any(
+        sent[key] != received[key] for key in ("sequence_count", "sent_bytes", "code")
+    ):
+        raise HomeKitProtocolError("invalid drained frontier correlation")
     for key in ("scope", "session_id", "job_id", "operation_id", "transfer_id"):
         if key in sent and sent[key] != received.get(key):
             raise HomeKitProtocolError("invalid control reply ownership")

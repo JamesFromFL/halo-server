@@ -33,6 +33,7 @@ MAX_REQUEST_HISTORY = 256
 MAX_RECENT_REQUESTS = 256
 HEARTBEAT_SECONDS = 5.0
 REQUEST_SECONDS = 5.0
+SNAPSHOT_REQUEST_SECONDS = 16.0
 STOP_SECONDS = 5.0
 
 
@@ -69,6 +70,7 @@ class HomeKitRuntime:
         on_ready: Callable[[str], Awaitable[None]] | None = None,
         on_request: Callable[[dict[str, Any]], Awaitable[dict[str, Any]]] | None = None,
         on_notice: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
+        on_replied: Callable[[dict[str, Any], dict[str, Any]], Awaitable[None]] | None = None,
         max_restarts: int = 3,
         pairing_directory: Path | None = None,
     ) -> None:
@@ -88,6 +90,7 @@ class HomeKitRuntime:
         self._on_ready = on_ready
         self._on_request = on_request
         self._on_notice = on_notice
+        self._on_replied = on_replied
         self._max_restarts = max_restarts
         self._stopping = asyncio.Event()
         self._supervisor: asyncio.Task | None = None
@@ -481,7 +484,10 @@ class HomeKitRuntime:
                 raise HomeKitProtocolError("unowned bulk transfer metadata")
 
     async def _dispatch(self, message: dict[str, Any]) -> None:
-        async with asyncio.timeout(REQUEST_SECONDS):
+        deadline = (
+            SNAPSHOT_REQUEST_SECONDS if message["kind"] == "snapshot_request" else REQUEST_SECONDS
+        )
+        async with asyncio.timeout(deadline):
             if self._stopping.is_set() and message["kind"] not in {
                 "video_stop",
                 "lease_stop",
@@ -517,6 +523,8 @@ class HomeKitRuntime:
             await self._send_envelope(
                 reply, retirement_reply=message["kind"] in {"video_stop", "lease_stop"}
             )
+            if self._on_replied is not None:
+                await self._on_replied(message, reply)
 
     def _child_done(self, task: asyncio.Task, request_id: str) -> None:
         self._active_child_ids.discard(request_id)

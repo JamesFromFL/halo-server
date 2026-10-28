@@ -71,13 +71,16 @@ class HomeKitBridge:
         incidents=dict,
         source_state=lambda: "offline",
         live_manager=None,
+        snapshot_manager=None,
         publication_enabled=True,
     ):
         from halo_server.media.homekit_live import HomeKitLiveManager
+        from halo_server.media.snapshots import HomeKitSnapshots
 
         self._paths, self._backend = paths, backend
         self._publication_enabled = publication_enabled
         self._live = live_manager or HomeKitLiveManager(controller, on_ended=self._video_ended)
+        self._snapshots = snapshot_manager or HomeKitSnapshots(controller)
         self._store = RegistryStore(paths.homekit_registry_file) if paths is not None else None
         self._registry = CameraRegistry()
         self._audio_store = (
@@ -107,6 +110,7 @@ class HomeKitBridge:
             backend,
             changed=self.notify_inventory,
             live_manager=self._live,
+            snapshot_manager=self._snapshots,
             audio_settings=self._audio_for_scope,
             selection=lambda: tuple(
                 row.camera.scope for row in self._registry.resolve(backend.inventory())
@@ -224,6 +228,7 @@ class HomeKitBridge:
 
     async def _retired(self, boot):
         from halo_server.media.homekit_audio_codec import retire_audio_workers
+        from halo_server.media.snapshot_codec import retire_snapshot_workers
         from halo_server.media.transcode import retire_video_workers
 
         failures = []
@@ -231,6 +236,10 @@ class HomeKitBridge:
             self._broker.controller.fence()
         try:
             await self._live.retired(boot)
+        except Exception as exc:
+            failures.append(exc)
+        try:
+            await self._snapshots.retired(boot)
         except Exception as exc:
             failures.append(exc)
         if self._events is not None:
@@ -248,6 +257,10 @@ class HomeKitBridge:
             failures.append(exc)
         try:
             await retire_audio_workers()
+        except Exception as exc:
+            failures.append(exc)
+        try:
+            await retire_snapshot_workers()
         except Exception as exc:
             failures.append(exc)
         if failures:
@@ -287,6 +300,9 @@ class HomeKitBridge:
         if message["kind"] == "event_sync" and self._events is not None:
             return await self._events.sync(message["boot_id"], message["payload"])
         return await self._broker.request(message)
+
+    async def _replied(self, message, reply):
+        await self._broker.replied(message, reply)
 
     async def _notice(self, message):
         if message["kind"] in {"status", "error"}:
@@ -330,6 +346,7 @@ class HomeKitBridge:
         )
         media_ready = (
             self._publication_enabled
+            and self._snapshots.ready
             and self._live.ready
             and self._audio_available
             and (
@@ -473,6 +490,7 @@ class HomeKitBridge:
 
     def status(self) -> dict:
         runtime = self._runtime
+        bulk = getattr(runtime, "bulk_channel", None) if runtime is not None else None
         profile = self._backend.inventory().profile_id
         transport_ready = runtime is not None and runtime.state == "ready"
         reason = self.reason
@@ -480,8 +498,12 @@ class HomeKitBridge:
             reason = runtime.reason or "adapter_not_ready"
         if self._broker.cleanup_failed:
             reason = "native_cleanup_failed"
+        if bulk is not None and bulk.cleanup_pending:
+            reason = "bulk_cleanup_pending"
         if self._live.cleanup_failures:
             reason = "native_output_cleanup_failed"
+        if self._snapshots.cleanup_failures:
+            reason = "snapshot_cleanup_failed"
         if self._audio_store is not None and not self._audio_available and transport_ready:
             reason = "audio_settings_unavailable"
         if self._events is not None and self._events.state == "failed":
@@ -495,12 +517,14 @@ class HomeKitBridge:
             reason = "video_output_unavailable"
         if not reason and transport_ready and self._live.ready and not self._live.audio_ready:
             reason = "audio_output_unavailable"
+        if not reason and transport_ready and not self._snapshots.ready:
+            reason = "snapshot_output_unavailable"
         return {
             "requested": True,
             "state": "degraded" if reason else "control_ready" if transport_ready else self.state,
             "reason": reason
             or (
-                "snapshots_not_implemented"
+                "recording_not_implemented"
                 if transport_ready and self._live.ready
                 else "media_not_implemented"
                 if transport_ready
@@ -512,6 +536,12 @@ class HomeKitBridge:
             "live_video_resources": self._live.pending_resources,
             "live_video_cleanup_failures": self._live.cleanup_failures,
             "live_audio_ready": self._live.audio_ready,
+            "snapshots_ready": self._snapshots.ready,
+            "snapshot_resources": self._snapshots.pending_resources,
+            "snapshot_cleanup_failures": self._snapshots.cleanup_failures,
+            "snapshot_cache_bytes": self._snapshots.cache_bytes,
+            "bulk_resources": bulk.pending_resources if bulk is not None else 0,
+            "bulk_cleanup_pending": bulk.cleanup_pending if bulk is not None else 0,
             "audio_settings_revision": self._audio_settings.revision,
             "restart_count": runtime.restart_count if runtime is not None else 0,
             "selected_cameras": len(self._registry.selected(profile)) if profile else 0,
@@ -523,6 +553,7 @@ class HomeKitBridge:
         try:
             resources = self._resources or development_resources()
             await self._live.qualify()
+            await self._snapshots.qualify()
             self._runtime = self._runtime_factory(
                 resources.node,
                 resources.entry,
@@ -531,6 +562,7 @@ class HomeKitBridge:
                 on_retired=self._retired,
                 on_request=self._request,
                 on_notice=self._notice,
+                on_replied=self._replied,
                 pairing_directory=self._paths.homekit_pairing_directory
                 if self._paths is not None
                 else None,
@@ -548,6 +580,7 @@ class HomeKitBridge:
                 if self._runtime.state == "ready":
                     await self._load_registry()
                     await self._live.refresh()
+                    self._snapshots.refresh()
                     await self._broker.refresh()
                     await self._configure()
                     self.notify_event()
@@ -574,6 +607,7 @@ class HomeKitBridge:
 
     async def _stop_owned(self) -> None:
         from halo_server.media.homekit_audio_codec import retire_audio_workers
+        from halo_server.media.snapshot_codec import retire_snapshot_workers
         from halo_server.media.transcode import retire_video_workers
 
         async with self._stop_lock:
@@ -599,6 +633,11 @@ class HomeKitBridge:
                 failures.append(exc)
             try:
                 await retire_audio_workers()
+            except Exception as exc:
+                failures.append(exc)
+            try:
+                await self._snapshots.close()
+                await retire_snapshot_workers()
             except Exception as exc:
                 failures.append(exc)
             if failures:

@@ -49,7 +49,7 @@ control.on('data', chunk=> {
     if(message.kind==='hello') {
       boot=message.boot_id;
       send({...message,kind:'hello_ack',payload:{role:'hap',build_id:message.payload.build_id,
-        protocol:1,features:['classic-camera-control-v1'],pid:process.pid}});
+        protocol:1,features:['classic-camera-control-v1','bulk-cancel-v1'],pid:process.pid}});
     } else if(message.kind==='shutdown') {
       send({...message,kind:'shutdown_ack',payload:{}});
       control.end();bulk.destroy();
@@ -535,7 +535,8 @@ async def test_bulk_open_registers_operation_before_credit_and_keeps_control_res
         "if(!triggered){triggered=true;request(5,'transfer_open',"
         + json.dumps(opened)
         + ");}send({...message,kind:'pong',payload:{}});",
-        "if(message.kind==='transfer_credit'){bulk.write(Buffer.from("
+        "if(message.kind==='transfer_credit' && message.payload.next_sequence===0){"
+        "bulk.write(Buffer.from("
         + json.dumps(binary.hex())
         + ",'hex'));request(6,'transfer_end',"
         + json.dumps(ended)

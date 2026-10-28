@@ -5,14 +5,15 @@ Engineering record, 2026-10-28. Foundation committed locally as
 `16c5aeda589d8d59886450b74018104b49ee616d`. S06 is committed locally as
 `7b735aaf13638decb1ad839bc3c5099658e72748`. S07 is committed locally as
 `d89ad9436a0e3cd354cb8b9870e867ff81071559`. S08 is committed locally as
-`90c8832f8ef317117e9dc633f51f194b1df7ae76`. S09 builds on those commits.
+`90c8832f8ef317117e9dc633f51f194b1df7ae76`. S09 is committed locally as
+`17077c7182e863b1dd0881f526fb92e433ccf136`. S10 builds on those commits.
 
 The approved architecture keeps Python as the sole Ring account, push-event,
 shared capture and speaker owner. A supervised Node adapter uses released public
 HAP APIs for HomeKit. Native media will be delivered directly from Python rather
 than through RTSP. The existing plugin/RTSP integration remains functional during
 development. Direct video, negotiated Opus audio and shared talkback are implemented as development paths.
-Snapshots, owner pairing management, HKSV and real Apple qualification remain gated.
+Owner pairing management, HKSV and real Apple qualification remain gated.
 
 ## Implemented foundation
 
@@ -71,7 +72,7 @@ owner-only regular files, no-follow directory traversal, atomic replacement,
 file/directory fsync and visible corruption/conflict/uncertain-durability errors.
 The future settings interface will use this store; no TUI editor is added here.
 `homekit` and `dual` report `control_ready` with
-`snapshots_not_implemented` once the control child and native video
+`recording_not_implemented` once the control child and native video
 qualification are ready; missing compiled
 resources remain visibly degraded. Selected accessories can publish only after native output qualification. The
 complete owner pairing/settings interface is still S13.
@@ -304,13 +305,60 @@ independent SRTP decrypt/decode, the negotiated clock matrix, waveform boundarie
 source-clock mapping, queue expiry, persistence races and late cleanup. Actual
 Apple playback, source-device audio and talkback remain S15 hardware qualification.
 
+## S10 snapshots and isolated binary cancellation
+
+Public HAP snapshot requests now reach Python's shared reason/dimension service.
+Caches and coalesced jobs are keyed by full boot/account/device/privacy scope,
+geometry and reason. Each caller has its own cancellation token. Policy is checked
+before lookup, after download/conversion and at final HAP delivery. Periodic and
+unknown HAP reasons use Ring's cached-image GET path; event and explicit requests
+may request a fresh image. The SDK can fall back to a cached image, so capture time
+stays unknown. Retrieval TTL is never described as camera capture freshness. No
+new capture lease or automatic battery warming is needed for tiles. Optional
+recent-video frame extraction is deferred.
+
+A strict finite JPEG marker/table/scan inspector checks bytes, dimensions, scans,
+components and orientation before native allocation. Two killable PyAV workers
+have512MiB address-space limits, one codec/scaler thread, two-second conversion
+budgets and finite terminate/kill/reap ownership. Source and output bytes are
+limited to8MiB, source pixels to8Mi and requested pixels to8,000,000 with sides
+at most4096. Exact odd geometry is honored with aspect-preserving letterbox.
+An exact-size baseline JPEG preserves its bytes only after isolated native
+entropy/corruption/geometry verification. Progressive or different-sized accepted
+images are converted and independently decoded inside the worker. CMYK and
+nonidentity EXIF orientation are explicitly unsupported; malformed/truncated and
+dimension-bomb inputs fail. These are per-process/operation budgets, not a claim
+of a whole-daemon RSS ceiling. No Pillow runtime dependency or FFmpeg executable
+was added.
+
+The matched private protocol adds `bulk-cancel-v1`. Cancellation fences delivery
+before awaiting, then drains only already credited frames to a producer-owned
+sequence/byte frontier. Its exact correlated ACK releases charged slots once.
+An uncooperative native callback retains its cleanup reservation independently
+of drained wire state. Other transfers continue. Unknown remote cancel never
+creates authority. A canceled trusted pre-OPEN authorization sends zero credits
+when exact OPEN arrives. Malformed framing or an undrained frontier remains a
+real shared-transport failure. Terminal records retain minimal metadata only,
+at most4096 for60seconds, enough for the existing50Hz PCM cadence plus other
+traffic; a3000-transfer test covers that workload.
+
+Outgoing ownership is reserved before READY. OPEN starts only after that scoped
+reply is flushed. This prevents media from racing its operation authorization and
+rejects capacity before acceptance. Image/client/private-RPC/Node-job budgets are
+12/14/16/20seconds; Node's READY budget is17seconds, within the pinned HAP25second
+callback limit. Ordinary RPC deadlines are unchanged. Motion/event publication
+never waits for a snapshot. Native/synthetic/composed tests cover actual image
+content, independent decode, public HAP callbacks, real IPC/bulk, cancellation,
+partial frames, privacy retirement and source/native cleanup failure. Real Apple
+and Ring device qualification remains S15.
+
 ## Remaining implementation
 
-S04 still needs the final distribution/runtime capability gates. S05–S09 implement service/configuration/contracts, operational private IPC,
-identity/accessory/events, direct H264 live video, negotiated Opus and shared talkback. Build identity remains correlation, not independent provenance; immutable
+S04 still needs the final distribution/runtime capability gates. S05–S10 implement service/configuration/contracts, operational private IPC,
+identity/accessory/events, direct H264 live video, negotiated Opus, shared talkback and bounded snapshots. Build identity remains correlation, not independent provenance; immutable
 bundled-resource manifests and release packaging belong in S14.
 
-S10–S15 remain: bounded JPEG decode/resize/cache; timed recording samples and an
+S11–S15 remain: timed recording samples and an
 isolated fMP4 worker; HDS delivery; CLI/TUI management; packaged installation and
 rollback; authorized Ring/Apple Home acceptance and measured performance.
 

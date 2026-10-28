@@ -5,6 +5,7 @@ export const MAX_FRAME_BYTES = 65_536;
 export const MAX_JSON_DEPTH = 32;
 export const MAX_FRAMES_PER_CHUNK = 256;
 export const FEATURE = "classic-camera-control-v1";
+export const FEATURES = [FEATURE, "bulk-cancel-v1"] as const;
 
 export const KINDS = [
   "audio_settings_update", "audio_settings_result",
@@ -14,7 +15,7 @@ export const KINDS = [
   "inventory_reset", "inventory_request", "inventory_page", "camera_status", "policy_update", "policy_ack",
   "lease_request", "lease_result", "lease_renew", "lease_renew_result", "lease_stop", "lease_stop_result",
   "snapshot_request", "snapshot_result", "snapshot_cancel", "talkback_request", "talkback_result",
-  "control_request", "control_result", "transfer_open", "transfer_credit", "transfer_end", "transfer_cancel", "transfer_result",
+  "control_request", "control_result", "transfer_open", "transfer_credit", "transfer_end", "transfer_cancel", "transfer_result", "transfer_fence", "transfer_fence_ack",
 ] as const;
 export type Kind = typeof KINDS[number];
 export type JsonObject = { [key: string]: unknown };
@@ -184,10 +185,10 @@ const inventory: Check = value => {
     devices.every(item => item.scope.profile_id === accountScope.profile_id && item.scope.account_generation === accountScope.account_generation) &&
     (value.next_cursor === null || (devices.length > 0 && value.next_cursor !== value.cursor));
 };
-const snapshotRequestFields = object({scope, job_id: uuid, width: integer(1, 4096), height: integer(1, 4096), reason: choice("periodic", "event", "explicit")});
+const snapshotRequestFields = object({scope, job_id: uuid, width: integer(1, 4096), height: integer(1, 4096), reason: choice("periodic", "event", "explicit", "unknown")});
 const snapshotRequest: Check = value => snapshotRequestFields(value) && record(value) && (value.width as number) * (value.height as number) <= 8_000_000;
 const snapshotResultFields = object({scope, job_id: uuid, status: choice("ready", "rejected", "cancelled"), code, transfer_id: nullable(uuid)});
-const snapshotResult: Check = value => snapshotResultFields(value) && record(value) && ((value.status === "ready") === (value.transfer_id !== null));
+const snapshotResult: Check = value => snapshotResultFields(value) && record(value) && ((value.status === "ready") === (value.transfer_id !== null)) && ((value.status === "ready") === (value.code === "ok"));
 const resource = {scope, session_id: uuid};
 const transfer = {scope, operation_id: uuid, transfer_id: uuid};
 const leaseResultFields = object({...resource, status: choice("accepted", "rejected", "expired"), code, ttl_ms: integer(0, 30_000)});
@@ -245,7 +246,7 @@ const payloadValidators: Record<Kind, Check> = {
   camera_event: object({scope,epoch,sequence:revision,event_id:uuid,type:choice("doorbell"),ttl_ms:integer(1,2000),expires_at_ms:revision}),
   hello: object({role: choice("python"), build_id: value => text(value, 128, true), protocol: integer(1, 1)}),
   hello_ack: object({role: choice("hap"), build_id: value => text(value, 128, true), protocol: integer(1, 1),
-    features: value => Array.isArray(value) && value.length === 1 && value[0] === FEATURE, pid: positive}),
+    features: value => Array.isArray(value) && value.length === FEATURES.length && FEATURES.every((feature, index) => value[index] === feature), pid: positive}),
   ping: object({}), pong: object({}), shutdown: object({}), shutdown_ack: object({}),
   status: object({state: choice("ready", "degraded"), reason: value => text(value, 256)}),
   error: object({code: value => text(value, 64, true), message: value => text(value, 256)}),
@@ -265,6 +266,8 @@ const payloadValidators: Record<Kind, Check> = {
   transfer_credit: object({...transfer, next_sequence: integer(0, 2 ** 32 - 1), credits: integer(1, MAX_BULK_WINDOW_CHUNKS)}),
   transfer_end: object({...transfer, sequence_count: integer(1, 2 ** 32 - 1), total_bytes: integer(1, 8 * 1024 * 1024)}),
   transfer_cancel: object({...transfer, code: choice("cancelled", "invalidated", "timeout", "protocol-error")}),
+  transfer_fence: object({...transfer, sequence_count: integer(0, 2 ** 32 - 1), sent_bytes: integer(0, 8 * 1024 * 1024), code: choice("cancelled", "invalidated", "timeout")}),
+  transfer_fence_ack: object({...transfer, sequence_count: integer(0, 2 ** 32 - 1), sent_bytes: integer(0, 8 * 1024 * 1024), code: choice("cancelled", "invalidated", "timeout")}),
   transfer_result: object({...transfer, status: choice("complete", "cancelled", "rejected"), code}),
 };
 const pythonKinds: readonly Kind[] = ["audio_settings_result", "video_prepare_result", "video_start_result", "video_reconfigure_result", "video_stop_result", "video_ended", "accessory_config", "event_sync_ack", "event_state", "camera_event", "hello", "ping", "shutdown", "inventory_reset", "inventory_page", "camera_status", "policy_ack", "lease_result", "lease_renew_result", "lease_stop_result", "snapshot_result", "talkback_result", "control_result"];
@@ -301,7 +304,7 @@ export const REPLY_KINDS: Partial<Record<Kind, Kind>> = {
   hello: "hello_ack", ping: "pong", shutdown: "shutdown_ack", inventory_request: "inventory_page",
   policy_update: "policy_ack", lease_request: "lease_result", lease_renew: "lease_renew_result",
   lease_stop: "lease_stop_result", snapshot_request: "snapshot_result", talkback_request: "talkback_result",
-  control_request: "control_result", transfer_open: "transfer_credit", transfer_end: "transfer_result",
+  control_request: "control_result", transfer_fence: "transfer_fence_ack", transfer_open: "transfer_credit", transfer_end: "transfer_result",
 };
 export function validateReply(requestValue: unknown, replyValue: unknown): Envelope {
   const request = validateEnvelope(requestValue), reply = validateEnvelope(replyValue);
@@ -315,6 +318,7 @@ export function validateReply(requestValue: unknown, replyValue: unknown): Envel
       Object.keys(sent).length === Object.keys(received).length && Object.entries(sent).every(([name, value]) => received[name] === value) : sent === received;
     if (!equal) throw new ProtocolError("invalid-reply-ownership");
   }
+  if (request.kind === "transfer_fence" && ["sequence_count", "sent_bytes", "code"].some(key => request.payload[key] !== reply.payload[key])) throw new ProtocolError("invalid-fence-correlation");
   if (request.kind === "audio_settings_update" && reply.payload.accepted === true &&
       reply.payload.revision !== request.payload.expected_revision && reply.payload.revision !== (request.payload.expected_revision as number) + 1) throw new ProtocolError("invalid-audio-correlation");
   if (request.kind === "accessory_config" && ["revision","generation","page_index"].some(key=>request.payload[key]!==reply.payload[key])) throw new ProtocolError("invalid-config-correlation");

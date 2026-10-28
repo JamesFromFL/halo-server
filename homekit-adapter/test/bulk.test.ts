@@ -12,19 +12,20 @@ const identity = (totalBytes = 6, kind: SendOptions['kind'] = 'snapshot') => ({
 async function* source(...values: Buffer[]): AsyncGenerator<Buffer> { for (const value of values) yield value; }
 function pair(timeoutMs = 1000) {
   const streams = duplexPair({ highWaterMark: 65536 }), bootId = randomUUID();
-  const controls: Envelope[][] = [[], []];
+  const controls: Envelope[][] = [[], []], blocked = new Set<string>();
   let left!: BulkChannel, right!: BulkChannel;
   const tails = [Promise.resolve(), Promise.resolve()];
   const send = async (index: number, kind: Kind, payload: Record<string, unknown>, requestId: string = randomUUID()): Promise<void> => {
     const message: Envelope = { v: 1, kind, payload, request_id: requestId, boot_id: bootId };
     controls[index]!.push(message);
+    if (blocked.has(`${index}:${kind}`)) return;
     tails[index] = tails[index]!.then(async () => { await (index === 0 ? right : left).handleControl(message); });
     void tails[index]!.catch(() => {});
   };
   left = new BulkChannel(streams[0], { bootId, role: 'python', timeoutMs, sendControl: (...args) => send(0, ...args) });
   right = new BulkChannel(streams[1], { bootId, role: 'hap', timeoutMs, sendControl: (...args) => send(1, ...args) });
   left.start(); right.start();
-  return { left, right, streams, controls, bootId, close: async () => { await Promise.allSettled([left.close(), right.close()]); } };
+  return { left, right, streams, controls, bootId, block: (index:number,kind:Kind) => blocked.add(`${index}:${kind}`), close: async () => { await Promise.allSettled([left.close(), right.close()]); } };
 }
 
 test('binary transfer waits for sink consumption before credits and completion', async () => {
@@ -185,4 +186,162 @@ test('consumer ignoring abort has a finite failed close and retained reservation
   const sending = p.left.send({ ...info, source: source(Buffer.from('a')) }); void sending.catch(() => {});
   await started; await assert.rejects(p.right.close(), /timeout|source-failed/); assert.deepEqual(p.right.counts, [1, 0]);
   release(); await tick(); await p.right.close(); assert.deepEqual(p.right.counts, [0, 0]); await assert.rejects(sending); await p.close();
+});
+
+test('cancelling one consumer drains its credited chunks and preserves other transfers', async () => {
+  const p = pair(), cancelled = identity(6), healthy = identity(6), delivered: string[] = [];
+  let entered!: () => void; const started = new Promise<void>(yes => {entered = yes;});
+  const handle = p.right.authorizeReceive({...cancelled, sink: async (_, signal) => {
+    entered(); await new Promise<void>(yes => signal.addEventListener('abort', () => yes(), {once:true}));
+  }});
+  const sender = p.left.send({...cancelled, source: source(Buffer.from('abc'), Buffer.from('def'))}); void sender.catch(() => {});
+  await started; await handle.cancel(); await assert.rejects(handle.wait(), /cancelled/); await assert.rejects(sender, /cancelled/);
+  const next = p.right.authorizeReceive({...healthy, sink: async bytes => {delivered.push(bytes.toString());}});
+  await p.left.send({...healthy, source: source(Buffer.from('abcdef'))}); await next.wait();
+  assert.deepEqual(delivered, ['abcdef']); assert.equal(p.left.closed, false); assert.equal(p.right.closed, false);
+  const fence = p.controls[0]!.find(item => item.kind === 'transfer_fence')!;
+  const ack = p.controls[1]!.find(item => item.kind === 'transfer_fence_ack')!;
+  assert.equal(ack.request_id, fence.request_id); assert.deepEqual(ack.payload, fence.payload);
+  await p.close();
+});
+
+test('cancel before OPEN retains only its authorization and grants no initial credit', async () => {
+  const p = pair(), info = identity(1); let delivered = false;
+  const handle = p.right.authorizeReceive({...info, sink: async () => {delivered = true;}});
+  await handle.cancel(); assert.equal(p.controls[1]!.length, 0);
+  await assert.rejects(p.left.send({...info, source: source(Buffer.from('a'))}), /cancelled/);
+  await assert.rejects(handle.wait(), /cancelled/); await tick();
+  assert.equal(delivered, false); assert.equal(p.controls[1]!.some(item => item.kind === 'transfer_credit'), false);
+  assert.equal(p.left.closed, false); assert.equal(p.right.closed, false); await p.close();
+});
+
+test('uncooperative sink cannot delay wire fence or consume another transfer', async () => {
+  const p = pair(30), info = identity(1), nextInfo = identity(1);
+  let release!: () => void, entered!: () => void;
+  const gate = new Promise<void>(yes => {release = yes;}), started = new Promise<void>(yes => {entered = yes;});
+  const handle = p.right.authorizeReceive({...info, sink: async () => {entered(); await gate;}});
+  const sending = p.left.send({...info, source: source(Buffer.from('a'))}); void sending.catch(() => {});
+  await started; await assert.rejects(handle.cancel(), /timeout/); await assert.rejects(sending);
+  assert.equal(p.controls[1]!.some(item => item.kind === 'transfer_fence_ack'), true);
+  assert.deepEqual(p.right.counts, [1, 0]); assert.equal(p.right.closed, false);
+  const next = p.right.authorizeReceive({...nextInfo, sink: async () => {}});
+  await p.left.send({...nextInfo, source: source(Buffer.from('b'))}); await next.wait();
+  release(); await tick(); await handle.cancel(); assert.deepEqual(p.right.counts, [0, 0]); await p.close();
+});
+
+test('pending producer next cannot delay fence and remains owned until cleanup succeeds', async () => {
+  const p = pair(30), info = identity(1); let finishNext!: () => void, finishReturn!: () => void;
+  const iterator: AsyncIterable<Buffer> = {[Symbol.asyncIterator]() {return {
+    next: () => new Promise<IteratorResult<Buffer>>(yes => {finishNext = () => yes({done:true,value:undefined});}),
+    return: () => new Promise<IteratorResult<Buffer>>(yes => {finishReturn = () => yes({done:true,value:undefined});}),
+  };}};
+  const handle = p.right.authorizeReceive({...info, sink: async () => assert.fail('cancelled source delivered')});
+  const sending = p.left.send({...info, source: iterator}); void sending.catch(() => {});
+  while (!finishNext) await tick();
+  const cancel = p.left.cancelTransfer(info.transferId); void cancel.catch(() => {});
+  for (let index=0; index<50 && !p.controls[1]!.some(item => item.kind === 'transfer_fence_ack');index++) await tick();
+  assert.equal(p.controls[1]!.some(item => item.kind === 'transfer_fence_ack'), true);
+  await assert.rejects(cancel, /timeout/); await assert.rejects(sending, /timeout/);
+  assert.deepEqual(p.left.counts, [0,1]); assert.equal(p.left.closed, false);
+  finishNext(); finishReturn(); await tick(); await p.left.cancelTransfer(info.transferId);
+  assert.deepEqual(p.left.counts,[0,0]); await assert.rejects(handle.wait()); await p.close();
+});
+
+for (const field of ['request_id','sequence_count','sent_bytes','code','scope','operation_id']) {
+  test(`fence ACK must exactly echo its owned producer fence: ${field}`, async () => {
+    const p=pair(), info=identity(1); let entered!:()=>void;
+    const started=new Promise<void>(yes=>{entered=yes;}); p.block(1,'transfer_fence_ack');
+    p.right.authorizeReceive({...info,sink:async(_,signal)=>{entered();await new Promise<void>(yes=>signal.addEventListener('abort',()=>yes(),{once:true}));}});
+    const sending=p.left.send({...info,source:source(Buffer.from('a'))});void sending.catch(()=>{});await started;
+    const cancel=p.left.cancelTransfer(info.transferId);void cancel.catch(()=>{});
+    while(!p.controls[1]!.some(item=>item.kind==='transfer_fence_ack'))await tick();
+    const ack=structuredClone(p.controls[1]!.find(item=>item.kind==='transfer_fence_ack')!);
+    if(field==='request_id')ack.request_id=randomUUID();
+    else if(field==='scope')(ack.payload.scope as typeof info.scope).privacy_generation++;
+    else if(field==='operation_id')ack.payload.operation_id=randomUUID();
+    else if(field==='code')ack.payload.code='timeout';
+    else ack.payload[field]=(ack.payload[field] as number)+1;
+    await assert.rejects(p.left.handleControl(ack));
+    assert.equal(p.left.closed,true);await assert.rejects(cancel);await assert.rejects(sending);await p.close();
+  });
+}
+
+test('unknown remote cancellation cannot create a producer or suppress a future transfer', async () => {
+  const p=pair(),info=identity();
+  await p.left.cancelTransfer(info.transferId);assert.equal(p.controls[0]!.length,0);
+  await assert.rejects(p.left.handleControl({v:1,kind:'transfer_cancel',boot_id:p.bootId,request_id:randomUUID(),payload:{
+    scope:info.scope,operation_id:info.operationId,transfer_id:info.transferId,code:'cancelled'}}));
+  assert.equal(p.left.closed,true);await p.close();
+});
+
+test('completed tombstones acknowledge an exact late cancellation without releasing wire slots twice',async()=>{
+  const p=pair(),info=identity(1),handle=p.right.authorizeReceive({...info,sink:async()=>{}});
+  await p.left.send({...info,source:source(Buffer.from('a'))});await handle.wait();
+  const cancel:Envelope={v:1,kind:'transfer_cancel',boot_id:p.bootId,request_id:randomUUID(),payload:{scope:info.scope,operation_id:info.operationId,transfer_id:info.transferId,code:'cancelled'}};
+  await p.left.handleControl(cancel);
+  while(!p.controls[1]!.some(message=>message.kind==='transfer_fence_ack'))await tick();
+  await p.left.handleControl(p.controls[1]!.find(message=>message.kind==='transfer_fence_ack')!);
+  const next=identity(1),nextHandle=p.right.authorizeReceive({...next,sink:async()=>{}});
+  await p.left.send({...next,source:source(Buffer.from('b'))});await nextHandle.wait();
+  assert.equal(p.left.closed,false);assert.equal(p.right.closed,false);await p.close();
+});
+
+test('normal result racing cancellation cannot skip the owned fence ACK handshake',async()=>{
+  const p=pair(),info=identity(1);p.block(1,'transfer_result');p.block(1,'transfer_fence_ack');
+  const handle=p.right.authorizeReceive({...info,sink:async()=>{}});
+  const sending=p.left.send({...info,source:source(Buffer.from('a'))});void sending.catch(()=>{});
+  while(!p.controls[1]!.some(message=>message.kind==='transfer_result'))await tick();await handle.wait();
+  let resolved=false;const cancel=p.left.cancelTransfer(info.transferId).then(()=>{resolved=true;});void cancel.catch(()=>{});
+  while(!p.controls[1]!.some(message=>message.kind==='transfer_fence_ack'))await tick();
+  await p.left.handleControl(p.controls[1]!.find(message=>message.kind==='transfer_result')!);await tick();assert.equal(resolved,false);
+  await p.left.handleControl(p.controls[1]!.find(message=>message.kind==='transfer_fence_ack')!);await cancel;await assert.rejects(sending,/cancelled/);
+  assert.equal(p.left.closed,false);assert.equal(p.right.closed,false);await p.close();
+});
+
+test('producer fence admits the second credited chunk whose body is still in flight',async()=>{
+  const sockets=duplexPair(),bootId=randomUUID(),info=identity(6),messages:Envelope[]=[];
+  const receiver=new BulkChannel(sockets[1],{bootId,role:'hap',sendControl:async(kind,payload,request_id=randomUUID())=>{messages.push({v:1,kind,payload,boot_id:bootId,request_id});}});
+  const handle=receiver.authorizeReceive({...info,sink:async()=>{}});receiver.start();
+  await receiver.handleControl({v:1,kind:'transfer_open',boot_id:bootId,request_id:randomUUID(),payload:{scope:info.scope,operation_id:info.operationId,transfer_id:info.transferId,kind:'snapshot',total_bytes:6,chunk_bytes:3,window_chunks:2}});
+  sockets[0].write(Buffer.concat([encodeBulkHeader({kind:'snapshot',transfer_id:info.transferId,sequence:0,length:3}),Buffer.from('abc')]));
+  for(let turn=0;turn<100 && messages.filter(message=>message.kind==='transfer_credit').length<2;turn++)await tick();
+  assert.equal(messages.filter(message=>message.kind==='transfer_credit').length,2,String(receiver.failure));
+  sockets[0].write(Buffer.concat([encodeBulkHeader({kind:'snapshot',transfer_id:info.transferId,sequence:1,length:3}),Buffer.from('d')]));await tick();
+  const fence:Envelope={v:1,kind:'transfer_fence',boot_id:bootId,request_id:randomUUID(),payload:{scope:info.scope,operation_id:info.operationId,transfer_id:info.transferId,sequence_count:2,sent_bytes:6,code:'cancelled'}};
+  await receiver.handleControl(fence);assert.equal(messages.some(message=>message.kind==='transfer_fence_ack'),false);
+  sockets[0].write(Buffer.from('ef'));
+  for(let turn=0;turn<100 && !messages.some(message=>message.kind==='transfer_fence_ack');turn++)await tick();
+  assert.equal(messages.some(message=>message.kind==='transfer_fence_ack'),true,String(receiver.failure));
+  assert.equal(receiver.closed,false);await assert.rejects(handle.wait());await receiver.close();sockets[0].destroy();
+});
+
+test('sixty seconds of 50Hz tiny PCM keeps bounded metadata without retaining sink or source closures',async()=>{
+  const p=pair();
+  for(let index=0;index<3000;index++){
+    const info=identity(2,'talkback_pcm'),sink=async()=>{};
+    const received=p.left.authorizeReceive({...info,sink});
+    await p.right.send({...info,source:source(Buffer.from([0,0]))});await received.wait();
+  }
+  const terminals=(p.left as unknown as {tombstones:Map<string,Record<string,unknown>>}).tombstones;
+  assert.equal(terminals.size,3000);assert.equal((p.right as unknown as {tombstones:Map<string,unknown>}).tombstones.size,3000);
+  for(const value of terminals.values())for(const field of ['sink','source','iterator','completion','wire','abort','timer','cleanup','consumers','result'])assert.equal(Object.hasOwn(value,field),false);
+  assert.ok(Buffer.byteLength(JSON.stringify([...terminals.values()]))<2_000_000);
+  assert.equal(p.left.closed,false);assert.equal(p.right.closed,false);await p.close();
+});
+
+test('success cleanup does not block another transfer and cancellation shares its owned callback',async()=>{
+  const p=pair(30),info=identity(1),next=identity(1);let entered!:()=>void,release!:()=>void,closed=0;
+  const started=new Promise<void>(yes=>{entered=yes;}),gate=new Promise<void>(yes=>{release=yes;});
+  const handle=p.right.authorizeReceive({...info,sink:async()=>{},onClose:async()=>{closed++;entered();await gate;}});
+  const sending=p.left.send({...info,source:source(Buffer.from('a'))});void sending.catch(()=>{});await started;
+  const other=p.right.authorizeReceive({...next,sink:async()=>{}});await p.left.send({...next,source:source(Buffer.from('b'))});await other.wait();
+  await assert.rejects(handle.cancel(),/timeout/);await assert.rejects(sending);assert.equal(p.right.closed,false);assert.equal(closed,1);
+  release();await tick();await handle.cancel();assert.equal(closed,1);assert.deepEqual(p.right.counts,[0,0]);await p.close();
+});
+
+test('revocation at initial credit admission cancels only its owned transfer',async()=>{
+  const p=pair(),info=identity(1);let checks=0;
+  const handle=p.right.authorizeReceive({...info,valid:()=>++checks<3,sink:async()=>assert.fail('revoked delivery')});
+  await assert.rejects(p.left.send({...info,source:source(Buffer.from('a'))}),/invalidated/);await assert.rejects(handle.wait(),/invalidated/);
+  assert.equal(p.controls[1]!.some(message=>message.kind==='transfer_credit'),false);assert.equal(p.left.closed,false);assert.equal(p.right.closed,false);await p.close();
 });

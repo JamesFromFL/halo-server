@@ -232,3 +232,17 @@ test("an expired monotonic deadline is structurally valid and never proves event
     assert.deepEqual(decodeEnvelope(encodeEnvelope(message).subarray(4)), message);
   }
 });
+
+test('bulk cancellation negotiation and fence replies require exact released capabilities and frontier echo',async()=>{
+  const {FEATURES,validateReply}=await import('../src/protocol.js');
+  const hello=structuredClone(fixtures.valid.find(message=>message.kind==='hello_ack')!);
+  assert.deepEqual(hello.payload.features,[...FEATURES]);
+  for(const features of [['classic-camera-control-v1'],['bulk-cancel-v1','classic-camera-control-v1'],[...FEATURES,'extra']])
+    assert.throws(()=>encodeEnvelope({...hello,payload:{...hello.payload,features}}),ProtocolError);
+  const fence=structuredClone(fixtures.valid.find(message=>message.kind==='transfer_fence')!);
+  const ack={...fence,kind:'transfer_fence_ack' as const};assert.deepEqual(validateReply(fence,ack),ack);
+  for(const field of ['sequence_count','sent_bytes','code']){
+    const payload={...ack.payload,[field]:field==='code'?(ack.payload.code==='timeout'?'cancelled':'timeout'):(ack.payload[field] as number)+1};
+    assert.throws(()=>validateReply(fence,{...ack,payload}),ProtocolError);
+  }
+});

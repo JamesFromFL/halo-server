@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { BulkChannel } from "./bulk.js";
+import type { BulkChannel, ReceiveHandle } from "./bulk.js";
 import {
   BULK_LIMITS, MAX_INVENTORY_DEVICES, MAX_INVENTORY_PAGE, ProtocolError, REPLY_KINDS,
   validateDirection, validateReply, type AccountScope, type CameraPolicy, type Envelope,
@@ -10,6 +10,9 @@ import {
 export const MAX_SESSION_REQUESTS = 16;
 export const REQUEST_TIMEOUT_MS = 30_000;
 const MAX_SNAPSHOT_REQUESTS = 2;
+export const SNAPSHOT_TIMEOUT_MS = 20_000;
+export const SNAPSHOT_REPLY_TIMEOUT_MS = 17_000;
+export type SnapshotReason = "periodic" | "event" | "explicit" | "unknown";
 const MAX_LIVE_SESSIONS = 8;
 
 export interface NativeCamera {
@@ -41,7 +44,7 @@ interface VideoResource { scope: MediaScope; retired: boolean; endpoint: VideoEn
 interface SnapshotJob {
   scope: MediaScope; transferId: string | null; cancelled: boolean;
   resolve: (value: Buffer) => void; reject: (error: Error) => void;
-  result: Promise<Buffer>; timer: NodeJS.Timeout;
+  result: Promise<Buffer>; timer: NodeJS.Timeout; receiver: ReceiveHandle | null; cleanupTimer: NodeJS.Timeout | null;
 }
 const sourceKey = (scope: MediaScope): string => JSON.stringify([
   scope.profile_id, scope.account_generation, scope.camera_id, scope.device_generation,
@@ -223,16 +226,20 @@ export class AdapterSession {
     throw this.fail(new ProtocolError("inventory-page-capacity"));
   }
 
-  private request(kind: Kind, payload: JsonObject, observe?: Pending["observe"]): Promise<Envelope> {
+  private request(kind: Kind, payload: JsonObject, observe?: Pending["observe"], timeout = this.timeout): Promise<Envelope> {
     if (this.closed) return Promise.reject(new ProtocolError("session-closed"));
     if (!REPLY_KINDS[kind]) return Promise.reject(new ProtocolError("request-not-supported"));
     if (this.pending.size >= this.maximumPending) return Promise.reject(new ProtocolError("request-capacity"));
     const message = structuredClone(validateDirection({v: 1, kind, boot_id: this.bootId, request_id: randomUUID(), payload}, "hap"));
     return new Promise<Envelope>((resolve, reject) => {
       const timer = setTimeout(() => {
-        this.retirePending(message.request_id);
+        if (kind === "snapshot_request") {
+          // A cancelled image can still have a READY already queued by the
+          // parent. Keep only this bounded correlation for cleanup admission.
+          item.timer = setTimeout(() => this.retirePending(message.request_id), 60_000); item.timer.unref();
+        } else this.retirePending(message.request_id);
         reject(new ProtocolError("request-timeout"));
-      }, this.timeout);
+      }, timeout);
       const item: Pending = {request: message, timer, resolve, reject};
       if (observe) item.observe = observe;
       this.pending.set(message.request_id, item);
@@ -400,56 +407,82 @@ export class AdapterSession {
   }
 
   async snapshot(cameraId: string, identity: string, width: number, height: number,
-    reason: "periodic" | "event" | "explicit" = "explicit"): Promise<Buffer> {
+    reason: SnapshotReason = "explicit", signal?: AbortSignal): Promise<Buffer> {
     const scope = {...this.entry(cameraId, identity, "snapshots").camera.scope};
-    if (this.snapshots.size >= MAX_SNAPSHOT_REQUESTS) throw new ProtocolError("snapshot-capacity");
+    if (signal?.aborted) throw new ProtocolError("snapshot-cancelled");
+    if ([...this.snapshots.values()].filter(job => !job.cancelled).length >= MAX_SNAPSHOT_REQUESTS ||
+        this.snapshots.size >= MAX_SESSION_REQUESTS) throw new ProtocolError("snapshot-capacity");
     const jobId = randomUUID();
+    validateDirection({v: 1, boot_id: this.bootId, request_id: randomUUID(), kind: "snapshot_request",
+      payload: {scope, job_id: jobId, width, height, reason}}, "hap");
     let resolve!: (value: Buffer) => void, reject!: (error: Error) => void;
-    const result = new Promise<Buffer>((ok, no) => { resolve = ok; reject = no; });
-    // The rejection can precede the operation reply; keep it observed until awaited.
-    void result.catch(() => {});
-    const timer = setTimeout(() => this.cancelSnapshot(jobId, "snapshot-timeout"), this.timeout);
-    const job: SnapshotJob = {scope, transferId: null, cancelled: false, result, resolve, reject, timer};
+    const result = new Promise<Buffer>((ok, no) => {resolve = ok; reject = no;}); void result.catch(() => {});
+    const timer = setTimeout(() => this.cancelSnapshot(jobId, "snapshot-timeout"), Math.min(this.timeout, SNAPSHOT_TIMEOUT_MS));
+    const job: SnapshotJob = {scope, transferId: null, cancelled: false, result, resolve, reject, timer, receiver: null, cleanupTimer: null};
     this.snapshots.set(jobId, job);
+    const abort = (): void => this.cancelSnapshot(jobId, "snapshot-cancelled");
+    signal?.addEventListener("abort", abort, {once:true});
+    // Keep the owned RPC correlation after caller cancellation. Its exact late
+    // READY/OPEN may authorize draining, but can never invoke the caller again.
+    const request = this.request("snapshot_request", {scope, job_id: jobId, width, height, reason}, message => {
+      if (message.payload.status === "ready" && message.payload.code === "ok") job.transferId = message.payload.transfer_id as string;
+    }, Math.min(this.timeout, SNAPSHOT_REPLY_TIMEOUT_MS));
+    void request.then(reply => {
+      if (reply.payload.status !== "ready" || reply.payload.code !== "ok") {
+        job.reject(new ProtocolError("snapshot-rejected")); this.finishSnapshot(jobId, job);
+      }
+    }).catch(error => {job.reject(error as Error); this.cancelSnapshot(jobId, "snapshot-cancelled");});
     try {
-      const reply = await this.request("snapshot_request", {scope, job_id: jobId, width, height, reason}, message => {
-        if (message.payload.status === "ready" && message.payload.code === "ok") job.transferId = message.payload.transfer_id as string;
-      });
-      if (reply.payload.status !== "ready" || reply.payload.code !== "ok") throw new ProtocolError("snapshot-rejected");
       const bytes = await result;
-      if (!sameScope(this.entry(cameraId, identity, "snapshots").camera.scope, scope)) throw new ProtocolError("resource-retired");
+      if (signal?.aborted || job.cancelled || !sameScope(this.entry(cameraId, identity, "snapshots").camera.scope, scope)) throw new ProtocolError("resource-retired");
       return bytes;
-    } finally { clearTimeout(timer); this.snapshots.delete(jobId); }
+    } catch (error) {this.cancelSnapshot(jobId, "snapshot-cancelled"); throw error;}
+    finally {
+      clearTimeout(timer); signal?.removeEventListener("abort", abort);
+      if (!job.cancelled) this.finishSnapshot(jobId, job);
+    }
+  }
+  private finishSnapshot(id: string, job: SnapshotJob): void {
+    if (this.snapshots.get(id) !== job) return;
+    clearTimeout(job.timer); if (job.cleanupTimer) clearTimeout(job.cleanupTimer); this.snapshots.delete(id);
   }
   private authorizeSnapshot(message: Envelope): void {
-    const payload = message.payload, job = this.snapshots.get(payload.operation_id as string);
-    if (!job || job.cancelled || job.transferId !== payload.transfer_id || payload.kind !== "snapshot" ||
+    const payload = message.payload, id = payload.operation_id as string, job = this.snapshots.get(id);
+    if (!job || job.receiver || job.transferId !== payload.transfer_id || payload.kind !== "snapshot" ||
         !sameScope(job.scope, payload.scope as MediaScope) || !this.options.bulk ||
         (payload.total_bytes as number) > BULK_LIMITS.snapshot) throw this.fail(new ProtocolError("unsolicited-transfer"));
     const chunks: Buffer[] = []; let length = 0;
     const valid = (): boolean => {
-      try { return !job.cancelled && this.snapshots.get(payload.operation_id as string) === job &&
-        sameScope(this.entry(job.scope.camera_id, sourceKey(job.scope), "snapshots").camera.scope, job.scope); }
-      catch { return false; }
+      try {return !job.cancelled && this.snapshots.get(id) === job &&
+        sameScope(this.entry(job.scope.camera_id, sourceKey(job.scope), "snapshots").camera.scope, job.scope);}
+      catch {return false;}
     };
-    if (!valid()) throw this.fail(new ProtocolError("stale-transfer"));
-    const receiver = this.options.bulk.authorizeReceive({scope: job.scope, operationId: payload.operation_id as string,
-      transferId: payload.transfer_id as string, kind: "snapshot", totalBytes: payload.total_bytes as number, valid,
+    if (!valid() && !job.cancelled) this.cancelSnapshot(id, "resource-retired");
+    // A cancelled late OPEN is admitted only as the exact previously owned
+    // READY transfer, immediately fenced before OPEN handling grants credits.
+    const receiver = this.options.bulk.authorizeReceive({scope: job.scope, operationId: id,
+      transferId: payload.transfer_id as string, kind: "snapshot", totalBytes: payload.total_bytes as number,
+      valid: job.cancelled ? () => true : valid,
       sink: async chunk => {
-        length += chunk.length;
-        if (length > BULK_LIMITS.snapshot) throw new ProtocolError("snapshot-capacity");
-        chunks.push(Buffer.from(chunk));
-      }, onClose: async code => { if (code !== "ok") job.reject(new ProtocolError("snapshot-transfer-failed")); }});
+        if (!valid()) throw new ProtocolError("resource-retired");
+        length += chunk.length; if (length > BULK_LIMITS.snapshot) throw new ProtocolError("snapshot-capacity"); chunks.push(Buffer.from(chunk));
+      }, onClose: async code => {if (code !== "ok") job.reject(new ProtocolError("snapshot-transfer-failed"));}});
+    job.receiver = receiver;
+    if (job.cancelled) void receiver.cancel("cancelled").catch(() => {});
     void receiver.wait().then(() => {
-      if (valid()) job.resolve(Buffer.concat(chunks, length));
-      else job.reject(new ProtocolError("resource-retired"));
-    }).catch(() => job.reject(new ProtocolError("snapshot-transfer-failed")));
+      if (valid()) job.resolve(Buffer.concat(chunks, length)); else job.reject(new ProtocolError("resource-retired"));
+    }).catch(() => job.reject(new ProtocolError("snapshot-transfer-failed"))).finally(() => {
+      chunks.length = 0; this.finishSnapshot(id, job);
+    });
   }
   private cancelSnapshot(id: string, code: string): void {
     const job = this.snapshots.get(id);
-    if (!job) return;
+    if (!job || job.cancelled) return;
     job.cancelled = true; clearTimeout(job.timer); job.reject(new ProtocolError(code));
-    this.snapshots.delete(id);
+    if (job.receiver) void job.receiver.cancel(code === "snapshot-timeout" ? "timeout" : "invalidated").catch(() => {});
+    // A finite deny-only owner is retained for a ready reply/OPEN already in
+    // flight. It cannot grant credits or accept a different transfer identity.
+    job.cleanupTimer = setTimeout(() => this.finishSnapshot(id, job), 60_000); job.cleanupTimer.unref();
     void this.sendNotice("snapshot_cancel", {scope: job.scope, job_id: id}).catch(() => {});
   }
 
@@ -515,6 +548,7 @@ export class AdapterSession {
     for (const video of this.videos.values()) { video.retired = true; video.ended(); }
     this.videos.clear(); this.policySynchronization.clear();
     for (const [id] of this.snapshots) this.cancelSnapshot(id, "session-closed");
+    for (const [id, job] of this.snapshots) this.finishSnapshot(id, job);
     this.entries.clear(); this.live.clear(); this.speakers.clear(); this.policyChanges.clear();
     void this.options.bulk?.close("cancelled").catch(() => this.options.onFailure?.(new ProtocolError("bulk-cleanup-failed")));
   }
@@ -534,8 +568,8 @@ export class CameraDelegate {
   }
   stopVideo(sessionId: string): Promise<void> { return this.session.stopVideo(sessionId); }
   acquireLive(ttlMs?: number): Promise<LiveDelegate> { return this.session.acquireLive(this.cameraId, this.identity, ttlMs); }
-  snapshot(width: number, height: number, reason?: "periodic" | "event" | "explicit"): Promise<Buffer> {
-    return this.session.snapshot(this.cameraId, this.identity, width, height, reason);
+  snapshot(width: number, height: number, reason?: SnapshotReason, signal?: AbortSignal): Promise<Buffer> {
+    return this.session.snapshot(this.cameraId, this.identity, width, height, reason, signal);
   }
   setControl(control: "light" | "siren", enabled: boolean): Promise<"accepted" | "unknown"> {
     return this.session.setControl(this.cameraId, this.identity, control, enabled);

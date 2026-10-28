@@ -22,7 +22,9 @@ class BufferedMediaConsumer:
 
     def __post_init__(self) -> None:
         self._lock = threading.Lock()
+        self._release_lock = threading.Lock()
         self._closed = False
+        self._released = False
 
     def renew(self) -> bool:
         with self._lock:
@@ -41,7 +43,13 @@ class BufferedMediaConsumer:
 
     def close(self) -> None:
         with self._lock:
-            if self._closed:
-                return
+            # Delivery is revoked immediately even if a previous release is
+            # still running or failed. That fence is not cleanup evidence.
             self._closed = True
-        self.close_callback()
+        with self._release_lock:
+            with self._lock:
+                if self._released:
+                    return
+            self.close_callback()
+            with self._lock:
+                self._released = True

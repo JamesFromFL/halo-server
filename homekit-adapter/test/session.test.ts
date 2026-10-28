@@ -311,3 +311,59 @@ test("same inventory notice retries when the previously fetched revision was inc
   assert.equal(peer.session.camera("front").ready, false);
   peer.session.close();
 });
+
+test('cancelled snapshot keeps exact late READY/OPEN drain authority and another image still completes', async () => {
+  const sockets=duplexPair(),queues=[Promise.resolve(),Promise.resolve()];let peer!:Peer,python!:BulkChannel;
+  const controls:Envelope[]=[];
+  const send=(index:number,kind:Kind,payload:JsonObject,id:string=randomUUID()):Promise<void>=>{
+    const message:Envelope={v:1,kind,payload,boot_id:boot,request_id:id};controls.push(message);
+    queues[index]=queues[index]!.then(async()=>{if(index===0)await python.handleControl(message);else await peer.session.receive(message);});void queues[index]!.catch(()=>{});return Promise.resolve();
+  };
+  const hap=new BulkChannel(sockets[0],{bootId:boot,role:'hap',sendControl:(...args)=>send(0,...args)});
+  python=new BulkChannel(sockets[1],{bootId:boot,role:'python',sendControl:(...args)=>send(1,...args)});
+  peer=new Peer({bulk:hap});hap.start();python.start();
+  try {
+    const delegate=await peer.ready(),abort=new AbortController();
+    const first=delegate.snapshot(320,240,'event',abort.signal),firstRejected=assert.rejects(first,/snapshot-cancelled/),request=await peer.request('snapshot_request');
+    abort.abort();await firstRejected;
+    const transferId=randomUUID();await peer.reply(request,'snapshot_result',{scope:request.payload.scope,job_id:request.payload.job_id,status:'ready',code:'ok',transfer_id:transferId});
+    await assert.rejects(python.send({scope:request.payload.scope as MediaScope,operationId:request.payload.job_id as string,transferId,kind:'snapshot',totalBytes:1,source:(async function*(){yield Buffer.from('a');})()}),/cancelled/);
+    assert.equal(controls.some(message=>message.kind==='transfer_credit'&&message.payload.transfer_id===transferId),false);
+    assert.equal(peer.session.isClosed,false);assert.equal(hap.closed,false);assert.equal(python.closed,false);
+    const second=delegate.snapshot(320,240,'event'),next=await peer.request('snapshot_request'),nextId=randomUUID();
+    await peer.reply(next,'snapshot_result',{scope:next.payload.scope,job_id:next.payload.job_id,status:'ready',code:'ok',transfer_id:nextId});
+    await python.send({scope:next.payload.scope as MediaScope,operationId:next.payload.job_id as string,transferId:nextId,kind:'snapshot',totalBytes:4,source:(async function*(){yield Buffer.from('test');})()});
+    assert.deepEqual(await second,Buffer.from('test'));assert.equal(peer.session.isClosed,false);
+  } finally {peer.session.close();await Promise.allSettled([hap.close(),python.close()]);}
+});
+
+test('aborting one concurrent snapshot leaves the second owned caller deliverable',async()=>{
+  const jobs:Parameters<BulkChannel['authorizeReceive']>[0][]=[];const resolvers:(()=>void)[]=[];
+  const bulk={authorizeReceive:(operation:Parameters<BulkChannel['authorizeReceive']>[0])=>{
+    jobs.push(operation);let resolve!:()=>void,reject!:(error:Error)=>void;const promise=new Promise<void>((yes,no)=>{resolve=yes;reject=no;});resolvers.push(resolve);
+    return {wait:()=>promise,cancel:async()=>{reject(new Error('cancelled'));}};
+  },handleControl:async()=>true,close:async()=>{}} as unknown as BulkChannel;
+  const peer=new Peer({bulk}),delegate=await peer.ready(),abort=new AbortController();
+  const first=delegate.snapshot(640,480,'event',abort.signal),rejected=assert.rejects(first),one=await peer.request('snapshot_request');
+  const second=delegate.snapshot(640,480,'event'),two=await peer.request('snapshot_request');
+  const transferIds=[randomUUID(),randomUUID()];
+  for(const [index,request] of [one,two].entries()) {
+    await peer.reply(request,'snapshot_result',{scope:request.payload.scope,job_id:request.payload.job_id,status:'ready',code:'ok',transfer_id:transferIds[index]});
+    await peer.session.receive({v:1,kind:'transfer_open',boot_id:boot,request_id:randomUUID(),payload:{scope:request.payload.scope,operation_id:request.payload.job_id,transfer_id:transferIds[index],kind:'snapshot',total_bytes:4,chunk_bytes:4,window_chunks:1}});
+  }
+  abort.abort();await rejected;assert.equal(jobs[1]!.valid!(),true);
+  await jobs[1]!.sink(Buffer.from('test'),new AbortController().signal);resolvers[1]!();assert.deepEqual(await second,Buffer.from('test'));
+  assert.equal(peer.session.isClosed,false);peer.session.close();
+});
+
+test('snapshot RPC expiry preserves only correlated late READY cleanup admission',async context=>{
+  context.mock.timers.enable({apis:['setTimeout']});let cancelled=0,authorized=0;
+  const bulk={authorizeReceive:()=>{authorized++;return {wait:()=>Promise.reject(new Error('cancelled')),cancel:async()=>{cancelled++;}};},
+    handleControl:async()=>true,close:async()=>{}} as unknown as BulkChannel;
+  const peer=new Peer({bulk,timeout:20}),delegate=await peer.ready(),abort=new AbortController();
+  const snapshot=delegate.snapshot(640,480,'event',abort.signal),rejected=assert.rejects(snapshot),request=await peer.request('snapshot_request');
+  abort.abort();await rejected;context.mock.timers.tick(20);await tick();assert.equal(peer.session.pendingRequests,1);
+  const transferId=randomUUID();await peer.reply(request,'snapshot_result',{scope:request.payload.scope,job_id:request.payload.job_id,status:'ready',code:'ok',transfer_id:transferId});
+  await peer.session.receive({v:1,kind:'transfer_open',boot_id:boot,request_id:randomUUID(),payload:{scope:request.payload.scope,operation_id:request.payload.job_id,transfer_id:transferId,kind:'snapshot',total_bytes:4,chunk_bytes:4,window_chunks:1}});
+  await tick();assert.equal(authorized,1);assert.equal(cancelled,1);assert.equal(peer.session.pendingRequests,0);assert.equal(peer.session.isClosed,false);peer.session.close();
+});

@@ -23,7 +23,8 @@
         "build_id": "test-1",
         "protocol": 1,
         "features": [
-          "classic-camera-control-v1"
+          "classic-camera-control-v1",
+          "bulk-cancel-v1"
         ],
         "pid": 123
       }
@@ -2805,6 +2806,65 @@
           }
         ],
         "media_ready": false
+      }
+    },
+    {
+      "v": 1,
+      "kind": "transfer_fence",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "operation_id": "00000000-0000-0000-0000-000000000004",
+        "transfer_id": "00000000-0000-0000-0000-000000000005",
+        "sequence_count": 0,
+        "sent_bytes": 0,
+        "code": "cancelled"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "transfer_fence_ack",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "operation_id": "00000000-0000-0000-0000-000000000004",
+        "transfer_id": "00000000-0000-0000-0000-000000000005",
+        "sequence_count": 0,
+        "sent_bytes": 0,
+        "code": "cancelled"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "snapshot_request",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "width": 1920,
+        "height": 1080,
+        "reason": "unknown"
       }
     }
   ],
@@ -8475,7 +8535,7 @@
         "job_id": "00000000-0000-0000-0000-000000000004",
         "width": 1920,
         "height": 1080,
-        "reason": "unknown"
+        "reason": "unrecognized"
       }
     },
     {
@@ -18370,6 +18430,179 @@
         },
         "accepted": true,
         "code": "ok"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "transfer_fence",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "operation_id": "00000000-0000-0000-0000-000000000004",
+        "transfer_id": "00000000-0000-0000-0000-000000000005",
+        "sequence_count": -1,
+        "sent_bytes": 0,
+        "code": "cancelled"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "transfer_fence",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "operation_id": "00000000-0000-0000-0000-000000000004",
+        "transfer_id": "00000000-0000-0000-0000-000000000005",
+        "sequence_count": 0,
+        "sent_bytes": 8388609,
+        "code": "cancelled"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "transfer_fence",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "operation_id": "00000000-0000-0000-0000-000000000004",
+        "transfer_id": "00000000-0000-0000-0000-000000000005",
+        "sequence_count": 0,
+        "sent_bytes": 0,
+        "code": "ok"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "transfer_fence_ack",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "operation_id": "00000000-0000-0000-0000-000000000004",
+        "transfer_id": "00000000-0000-0000-0000-000000000005",
+        "sequence_count": -1,
+        "sent_bytes": 0,
+        "code": "cancelled"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "transfer_fence_ack",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "operation_id": "00000000-0000-0000-0000-000000000004",
+        "transfer_id": "00000000-0000-0000-0000-000000000005",
+        "sequence_count": 0,
+        "sent_bytes": 8388609,
+        "code": "cancelled"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "transfer_fence_ack",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "operation_id": "00000000-0000-0000-0000-000000000004",
+        "transfer_id": "00000000-0000-0000-0000-000000000005",
+        "sequence_count": 0,
+        "sent_bytes": 0,
+        "code": "ok"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "hello_ack",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "role": "hap",
+        "build_id": "test-1",
+        "protocol": 1,
+        "features": [
+          "classic-camera-control-v1"
+        ],
+        "pid": 123
+      }
+    },
+    {
+      "v": 1,
+      "kind": "snapshot_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "status": "ready",
+        "code": "source-failed",
+        "transfer_id": "00000000-0000-0000-0000-000000000005"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "snapshot_result",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1,
+          "camera_id": "42",
+          "device_generation": 1,
+          "privacy_generation": 1
+        },
+        "job_id": "00000000-0000-0000-0000-000000000004",
+        "status": "cancelled",
+        "code": "ok",
+        "transfer_id": null
       }
     }
   ],

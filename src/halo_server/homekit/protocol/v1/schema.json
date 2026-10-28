@@ -20,7 +20,8 @@
     "Network endpoint literals/family/interface and coupled codec/level/catalog constraints are checked by the live owner, beyond structural JSON shape.",
     "Audio speaker graph requires microphone graph; durable mute/volume gates policy and output before every await/delivery.",
     "Classic HAP Opus uses selected sample_rate destination timestamps; source Opus and decoded durations remain48000Hz. This differs from RFC7587 and does not claim Apple qualification.",
-    "Accepted audio settings reply revision equals expected or expected+1; full scope echoes submitted epoch. Accepted prepare must echo both tracks negotiated key/salt and optional audio presence."
+    "Accepted audio settings reply revision equals expected or expected+1; full scope echoes submitted epoch. Accepted prepare must echo both tracks negotiated key/salt and optional audio presence.",
+    "bulk-cancel-v1 requires producer-owned enqueue frontiers and exact drained ACK correlation; only exact owned transfers or trusted terminal records admit cleanup under retired scopes. Unknown transfers never create authority."
   ],
   "x-binary-transfer": {
     "implemented": true,
@@ -48,7 +49,8 @@
       "Chunk sequence starts0, increases exactly1, and aggregate lengths must equal announced total_bytes; chunk length<=chunk_bytes and remaining total. Validate the fixed header before bounded allocation; never allocate total_bytes from untrusted metadata.",
       "transfer_end announces exact sequence_count and total_bytes; complete result is sent only after exact payload validation/consumption. Transfer descriptor, direction, scope, operation and byte accounting must match for every header/control message.",
       "Cancel, deadline, scope/boot retirement or socket close revokes credit and discards pending bytes. No new body is enqueued after the synchronized fence; already transmitted/kernel-queued bytes cannot be recalled. Late control/headers cannot revive a retired transfer.",
-      "S06 owns finite transfer registry, aggregate memory/concurrency, deadlines and cancellation. IPC limits do not bound HDS library internal buffers or prove HKSV delivery."
+      "S06 owns finite transfer registry, aggregate memory/concurrency, deadlines and cancellation. IPC limits do not bound HDS library internal buffers or prove HKSV delivery.",
+      "Ordinary per-transfer cancel fences delivery and drains only already credited frames to producer sequence_count/sent_bytes. transfer_fence_ack echoes the producer fence UUID and frontier, releasing charged slots exactly once. Native cleanup reservations can outlive drained wire state; malformed/undrained frontiers still retire the channel."
     ]
   },
   "$defs": {
@@ -824,7 +826,8 @@
         },
         "features": {
           "const": [
-            "classic-camera-control-v1"
+            "classic-camera-control-v1",
+            "bulk-cancel-v1"
           ]
         },
         "pid": {
@@ -1310,7 +1313,8 @@
           "enum": [
             "periodic",
             "event",
-            "explicit"
+            "explicit",
+            "unknown"
           ]
         }
       },
@@ -1367,6 +1371,9 @@
             "properties": {
               "transfer_id": {
                 "$ref": "#/$defs/uuid"
+              },
+              "code": {
+                "const": "ok"
               }
             }
           },
@@ -1374,6 +1381,11 @@
             "properties": {
               "transfer_id": {
                 "type": "null"
+              },
+              "code": {
+                "not": {
+                  "const": "ok"
+                }
               }
             }
           }
@@ -2856,6 +2868,86 @@
           "type": "integer",
           "minimum": 0,
           "maximum": 9007199254740991
+        }
+      },
+      "additionalProperties": false
+    },
+    "transfer_fence_payload": {
+      "type": "object",
+      "required": [
+        "scope",
+        "operation_id",
+        "transfer_id",
+        "sequence_count",
+        "sent_bytes",
+        "code"
+      ],
+      "properties": {
+        "scope": {
+          "$ref": "#/$defs/media_scope"
+        },
+        "operation_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "transfer_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "sequence_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "sent_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 8388608
+        },
+        "code": {
+          "enum": [
+            "cancelled",
+            "invalidated",
+            "timeout"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "transfer_fence_ack_payload": {
+      "type": "object",
+      "required": [
+        "scope",
+        "operation_id",
+        "transfer_id",
+        "sequence_count",
+        "sent_bytes",
+        "code"
+      ],
+      "properties": {
+        "scope": {
+          "$ref": "#/$defs/media_scope"
+        },
+        "operation_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "transfer_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "sequence_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "sent_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 8388608
+        },
+        "code": {
+          "enum": [
+            "cancelled",
+            "invalidated",
+            "timeout"
+          ]
         }
       },
       "additionalProperties": false
@@ -4379,6 +4471,68 @@
       },
       "additionalProperties": false,
       "x-sender": "python",
+      "x-reply-kind": null
+    },
+    {
+      "type": "object",
+      "required": [
+        "v",
+        "kind",
+        "boot_id",
+        "request_id",
+        "payload"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "integer"
+        },
+        "kind": {
+          "const": "transfer_fence"
+        },
+        "boot_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "request_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "payload": {
+          "$ref": "#/$defs/transfer_fence_payload"
+        }
+      },
+      "additionalProperties": false,
+      "x-sender": "either",
+      "x-reply-kind": "transfer_fence_ack"
+    },
+    {
+      "type": "object",
+      "required": [
+        "v",
+        "kind",
+        "boot_id",
+        "request_id",
+        "payload"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "integer"
+        },
+        "kind": {
+          "const": "transfer_fence_ack"
+        },
+        "boot_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "request_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "payload": {
+          "$ref": "#/$defs/transfer_fence_ack_payload"
+        }
+      },
+      "additionalProperties": false,
+      "x-sender": "either",
       "x-reply-kind": null
     }
   ],

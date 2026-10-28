@@ -6,7 +6,7 @@ import asyncio
 import base64
 from collections import OrderedDict
 from collections.abc import Callable
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from typing import Any
 from uuid import uuid4
 
@@ -34,6 +34,21 @@ class _Resource:
     deadline: float
 
 
+@dataclass
+class _SnapshotDelivery:
+    boot: str
+    scope: MediaScope
+    identity: str
+    transfer_id: str
+    image: Any = field(default=None, repr=False)
+    prepared: Any = field(default=None, repr=False)
+    ready: asyncio.Event = field(default_factory=asyncio.Event)
+    cancelled: bool = False
+    task: asyncio.Task | None = None
+    request_task: asyncio.Task | None = None
+    cleanup_failed: bool = False
+
+
 class HomeKitBroker:
     """Own private leases, with no accessory publication or implicit selection.
 
@@ -50,11 +65,14 @@ class HomeKitBroker:
         selection: Callable = lambda: (),
         changed: Callable[[], None] = lambda: None,
         live_manager=None,
+        snapshot_manager=None,
         audio_settings: Callable | None = None,
     ) -> None:
         self.controller, self.backend = controller, backend
         self._selection, self._changed = selection, changed
         self.live_manager = live_manager
+        self.snapshot_manager = snapshot_manager
+        self._snapshot_jobs: dict[str, _SnapshotDelivery] = {}
         self._audio_settings = audio_settings
         self.runtime = None
         self.boot_id: str | None = None
@@ -75,6 +93,7 @@ class HomeKitBroker:
                 self.boot_id is not None
                 or self._retiring_boot is not None
                 or self._resources
+                or self._snapshot_jobs
                 or self.cleanup_failed
             ):
                 raise HomeKitOperationError("cleanup_pending")
@@ -156,6 +175,10 @@ class HomeKitBroker:
 
     async def _close_resources(self) -> None:
         failures = []
+        try:
+            await self._close_snapshots()
+        except Exception as exc:
+            failures.append(exc)
         for identity, resource in tuple(self._resources.items()):
             try:
                 await resource.handle.close()
@@ -173,6 +196,14 @@ class HomeKitBroker:
                 await asyncio.sleep(0.1)
                 now = asyncio.get_running_loop().time()
                 current = {camera.scope for camera in self.controller.inventory().cameras}
+                for delivery in tuple(self._snapshot_jobs.values()):
+                    if not self._snapshot_current(delivery) and not delivery.cancelled:
+                        try:
+                            await self._cancel_snapshot(delivery)
+                        except Exception:
+                            self.cleanup_failed = True
+                            self._changed()
+                            return
                 for identity, resource in tuple(self._resources.items()):
                     if now >= resource.deadline or resource.scope not in current:
                         try:
@@ -217,15 +248,7 @@ class HomeKitBroker:
         if kind in {"lease_request", "lease_renew", "lease_stop", "talkback_request"}:
             return await self._resource_request(boot, kind, data)
         if kind == "snapshot_request":
-            # S10 must decode/resize in bounded isolated work before this can
-            # promise the requested image dimensions or return a transfer ID.
-            return {
-                "scope": data["scope"],
-                "job_id": data["job_id"],
-                "status": "rejected",
-                "code": "not-ready",
-                "transfer_id": None,
-            }
+            return await self._snapshot_request(boot, data)
         if kind == "control_request":
             result = {"scope": data["scope"], "operation_id": data["operation_id"]}
             if data["operation_id"] in self._writes:
@@ -244,6 +267,155 @@ class HomeKitBroker:
                 }
             return result | {"status": "accepted", "code": "ok"}
         raise HomeKitProtocolError("unsupported child request")
+
+    def _snapshot_current(self, delivery):
+        if delivery.cancelled or self.boot_id != delivery.boot or self.cleanup_failed:
+            return False
+        try:
+            self.controller.authorize(delivery.boot, delivery.scope, "snapshots")
+        except HomeKitOperationError:
+            return False
+        return True
+
+    async def _snapshot_request(self, boot, data):
+        from halo_server.homekit.bulk import BulkTransferError
+
+        result = {"scope": data["scope"], "job_id": data["job_id"], "transfer_id": None}
+        channel = self.runtime.bulk_channel if self.runtime is not None else None
+        if self.snapshot_manager is None or not self.snapshot_manager.ready or channel is None:
+            return result | {"status": "rejected", "code": "not-ready"}
+        if data["job_id"] in self._snapshot_jobs:
+            return result | {"status": "rejected", "code": "conflict"}
+        if len(self._snapshot_jobs) >= 16:
+            return result | {"status": "rejected", "code": "busy"}
+        delivery = _SnapshotDelivery(boot, _scope(data), data["job_id"], str(uuid4()))
+        delivery.request_task = asyncio.current_task()
+        self._snapshot_jobs[delivery.identity] = delivery
+        try:
+            delivery.image = await self.snapshot_manager.get(
+                boot,
+                delivery.scope,
+                delivery.identity,
+                int(data["width"]),
+                int(data["height"]),
+                data["reason"],
+            )
+            if not self._snapshot_current(delivery):
+                raise HomeKitOperationError("cancelled")
+            # Reserve all transfer ownership before accepting the operation.
+            # OPEN cannot race ahead of its correlated READY reply.
+            delivery.prepared = channel.prepare_send(
+                scope=data["scope"],
+                operation_id=delivery.identity,
+                transfer_id=delivery.transfer_id,
+                kind="snapshot",
+                total_bytes=len(delivery.image.data),
+                valid=lambda: self._snapshot_current(delivery),
+            )
+            delivery.task = asyncio.create_task(
+                self._deliver_snapshot(delivery), name="homekit-snapshot-delivery"
+            )
+            delivery.task.add_done_callback(self._snapshot_done)
+        except HomeKitOperationError as exc:
+            return result | {"status": "rejected", "code": _code(exc)}
+        except BulkTransferError as exc:
+            return result | {"status": "rejected", "code": exc.code}
+        finally:
+            if delivery.task is None and self._snapshot_jobs.get(delivery.identity) is delivery:
+                self._snapshot_jobs.pop(delivery.identity)
+        return result | {"status": "ready", "code": "ok", "transfer_id": delivery.transfer_id}
+
+    async def replied(self, message, reply):
+        """Called only after the validated operation reply has been flushed."""
+        if message["kind"] != "snapshot_request":
+            return
+        delivery = self._snapshot_jobs.get(message["payload"]["job_id"])
+        if (
+            delivery is not None
+            and delivery.boot == message["boot_id"]
+            and delivery.scope == _scope(message["payload"])
+            and reply["payload"].get("transfer_id") == delivery.transfer_id
+        ):
+            delivery.ready.set()
+
+    async def _deliver_snapshot(self, delivery):
+        from halo_server.homekit.bulk import BulkTransferError
+
+        async def chunks():
+            image = delivery.image.data
+            for offset in range(0, len(image), 65536):
+                yield memoryview(image)[offset : offset + 65536]
+
+        try:
+            await asyncio.wait_for(delivery.ready.wait(), 5.0)
+            if not self._snapshot_current(delivery):
+                await self._cancel_snapshot(delivery)
+                return
+            await delivery.prepared.send(chunks())
+        except asyncio.CancelledError:
+            await self._cancel_snapshot(delivery)
+            raise
+        except BulkTransferError as exc:
+            if exc.code not in {"cancelled", "invalidated", "timeout"}:
+                self.cleanup_failed = True
+                delivery.cleanup_failed = exc.code == "cleanup_pending"
+                self._changed()
+        except Exception:
+            self.cleanup_failed = True
+            self._changed()
+            await self._cancel_snapshot(delivery)
+        finally:
+            if (
+                not delivery.cleanup_failed
+                and self._snapshot_jobs.get(delivery.identity) is delivery
+            ):
+                self._snapshot_jobs.pop(delivery.identity)
+
+    def _snapshot_done(self, task):
+        if not task.cancelled() and task.exception() is not None:
+            self.cleanup_failed = True
+            self._changed()
+
+    async def _cancel_snapshot(self, delivery):
+        delivery.cancelled = True  # Delivery fence before any transport await.
+        delivery.ready.set()
+        if self.snapshot_manager is not None:
+            self.snapshot_manager.cancel(delivery.boot, delivery.scope, delivery.identity)
+        if delivery.prepared is not None:
+            try:
+                await delivery.prepared.cancel("cancelled")
+                if not delivery.prepared.retirement_complete:
+                    raise HomeKitOperationError("cleanup_pending")
+            except BaseException:
+                delivery.cleanup_failed = True
+                raise
+            delivery.cleanup_failed = False
+
+    async def _close_snapshots(self):
+        deliveries = tuple(self._snapshot_jobs.values())
+        failures = []
+        for delivery in deliveries:
+            try:
+                await self._cancel_snapshot(delivery)
+            except Exception as exc:
+                failures.append(exc)
+        tasks = {
+            task
+            for delivery in deliveries
+            if (task := delivery.task or delivery.request_task) is not None
+            and task is not asyncio.current_task()
+        }
+        if tasks:
+            _, pending = await asyncio.wait(tasks, timeout=5.0)
+            if pending:
+                failures.append(HomeKitOperationError("cleanup_pending"))
+        for delivery in deliveries:
+            if delivery.task is not None and delivery.task.done() and not delivery.cleanup_failed:
+                self._snapshot_jobs.pop(delivery.identity, None)
+        if self._snapshot_jobs:
+            failures.append(HomeKitOperationError("cleanup_pending"))
+        if failures:
+            raise ExceptionGroup("Snapshot delivery retirement incomplete", failures)
 
     def _authorize_audio_policy(self, scope, policy):
         # Production injects durable Python-owned settings. A child cannot
@@ -493,7 +665,11 @@ class HomeKitBroker:
     async def notice(self, envelope: dict) -> None:
         self._require_boot(envelope)
         if envelope["kind"] == "snapshot_cancel":
-            return  # No S06 image worker/job exists to cancel.
+            data = envelope["payload"]
+            delivery = self._snapshot_jobs.get(data["job_id"])
+            if delivery is not None and delivery.scope == _scope(data):
+                await self._cancel_snapshot(delivery)
+            return
         if envelope["kind"] != "transfer_open":
             raise HomeKitProtocolError("unsupported child notice")
         data = envelope["payload"]
@@ -568,8 +744,10 @@ def _code(error: HomeKitOperationError) -> str:
         return "conflict"
     if error.code in {"capability_unsupported", "snapshot_unsupported", "intercom_unsupported"}:
         return "unsupported"
-    if error.code in {"cleanup_failed", "cleanup_pending", "closed"}:
+    if error.code in {"cleanup_failed", "cleanup_pending", "closed", "not_ready"}:
         return "not-ready"
+    if error.code in {"invalid_request", "invalid_dimensions"}:
+        return "invalid-request"
     return "source-failed"
 
 

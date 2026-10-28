@@ -243,7 +243,7 @@ async def test_registration_count_and_whole_operation_deadline():
             receiver.authorize_receive(**identity(), sink=sink)
         with pytest.raises(BulkTransferError, match="timeout"):
             await handles[0].wait()
-        assert receiver.closed
+        assert not receiver.closed
         assert receiver.counts == (0, 0)
 
 
@@ -266,7 +266,12 @@ async def test_policy_revoked_while_consumer_waits_prevents_success_credit():
         with pytest.raises(BulkTransferError):
             await handle.wait()
         await asyncio.gather(task, return_exceptions=True)
-        assert len(controls[1]) == 1
+        assert [message["kind"] for message in controls[1]] == [
+            "transfer_credit",
+            "transfer_cancel",
+            "transfer_fence_ack",
+        ]
+        assert not sender.closed and not receiver.closed
 
 
 @pytest.mark.asyncio
@@ -415,8 +420,9 @@ async def test_outgoing_source_cleanup_failure_is_not_swallowed():
         receiver.authorize_receive(**info, sink=sink)
         with pytest.raises((RuntimeError, BulkTransferError)):
             await sender.send(**info, source=producer)
-        assert sender.closed
+        assert not sender.closed
         assert sender.counts == (0, 1)
+        assert sender.cleanup_pending == 1
         assert producer.closed >= 1
         producer.aclose = lambda: asyncio.sleep(0)
         await sender.close()

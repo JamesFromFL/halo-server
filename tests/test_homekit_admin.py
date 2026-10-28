@@ -114,7 +114,7 @@ async def test_real_child_applies_trusted_selection_without_publishing_or_starti
         )
         status = bridge.status()
         assert status["selected_cameras"] == 1
-        assert status["camera_ready"] is False and status["reason"] == "snapshots_not_implemented"
+        assert status["camera_ready"] is False and status["reason"] == "recording_not_implemented"
         assert bridge._runtime._pairing_owner is not None
         assert list(service.paths.homekit_pairing_directory.iterdir()) == []
         assert not service._media_sessions and client.submissions == 0

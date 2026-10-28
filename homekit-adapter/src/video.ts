@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { BlockList, isIP } from "node:net";
 import {
-  AudioBitrate, AudioStreamingCodecType, H264Level, H264Profile, HAPStatus, SRTPCryptoSuites, StreamRequestTypes,
+  AudioBitrate, AudioStreamingCodecType, ResourceRequestReason, H264Level, H264Profile, HAPStatus, SRTPCryptoSuites, StreamRequestTypes,
   VideoCodecPacketizationMode, VideoCodecType, type CameraStreamingDelegate,
   type PrepareStreamRequest, type PrepareStreamResponse, type ReconfiguredVideoInfo,
   type StreamingRequest, type VideoInfo, type AudioInfo,
@@ -33,9 +33,9 @@ export function literalUnicastAddress(value: string, version: "ipv4" | "ipv6"): 
       !/^[A-Za-z0-9_.:-]{1,32}$/.test(zone) || /^\d+$/.test(zone) && (!/^[1-9][0-9]*$/.test(zone) || Number(zone) > 0xffffffff))) return false;
   return true;
 }
-const streamingPolicy = (enabled: boolean, audio: AccessoryAudio | null, speaker: boolean): CameraPolicy => ({synchronized: true, streaming: enabled,
+const streamingPolicy = (enabled: boolean, snapshots: boolean, audio: AccessoryAudio | null, speaker: boolean): CameraPolicy => ({synchronized: true, streaming: enabled,
   live_audio: enabled && audio?.microphone === true && !audio.microphone_muted && audio.microphone_volume > 0,
-  snapshots: false, recording: false, recording_audio: false,
+  snapshots: enabled && snapshots, recording: false, recording_audio: false,
   talkback: enabled && speaker && audio?.speaker === true && !audio.speaker_muted && audio.speaker_volume > 0, controls: false});
 const profile = (value: H264Profile): VideoConfiguration["profile"] => {
   if (value === H264Profile.BASELINE) return "baseline";
@@ -54,12 +54,13 @@ const level = (value: H264Level): VideoConfiguration["level"] => {
 export class HapVideoDelegate implements CameraStreamingDelegate {
   private readonly sessions = new Map<string, OwnedVideo>();
   private closed = false;
+  private readonly snapshots = new Set<{abort: AbortController; finish: (error?: Error | HAPStatus, bytes?: Buffer) => void}>();
   constructor(private readonly native: CameraDelegate, private readonly options: VideoCameraOptions) { }
   get count(): number { return this.sessions.size; }
 
   private policy(): CameraPolicy {
     const capabilities = this.native.info.capabilities;
-    return streamingPolicy(this.options.active(), this.options.audio?.() ?? null, capabilities.talkback);
+    return streamingPolicy(this.options.active(), capabilities.snapshot, this.options.audio?.() ?? null, capabilities.talkback);
   }
 
   async synchronizePolicy(): Promise<void> {
@@ -69,8 +70,35 @@ export class HapVideoDelegate implements CameraStreamingDelegate {
       if (JSON.stringify(policy) === JSON.stringify(this.policy())) return;
     }
   }
-  handleSnapshotRequest(_request: Parameters<CameraStreamingDelegate["handleSnapshotRequest"]>[0],
-    callback: Parameters<CameraStreamingDelegate["handleSnapshotRequest"]>[1]): void { callback(HAPStatus.SERVICE_COMMUNICATION_FAILURE); }
+  handleSnapshotRequest(request: Parameters<CameraStreamingDelegate["handleSnapshotRequest"]>[0],
+    callback: Parameters<CameraStreamingDelegate["handleSnapshotRequest"]>[1]): void {
+    let supported = false;
+    try {supported = this.available() && this.native.info.capabilities.snapshot;} catch {}
+    if (!supported || this.snapshots.size >= 2 ||
+      !Number.isSafeInteger(request.width) || request.width < 1 || request.width > 4096 ||
+      !Number.isSafeInteger(request.height) || request.height < 1 || request.height > 4096 || request.width * request.height > 8_000_000) {
+      callback(HAPStatus.SERVICE_COMMUNICATION_FAILURE); return;
+    }
+    const abort = new AbortController(); let completed = false;
+    const job = {abort, finish: (error?: Error | HAPStatus, bytes?: Buffer): void => {
+      if (completed) return; completed = true; clearTimeout(timer); this.snapshots.delete(job); callback(error, bytes);
+    }};
+    const timer = setTimeout(() => {abort.abort(); job.finish(HAPStatus.OPERATION_TIMED_OUT);}, 20_000);
+    this.snapshots.add(job);
+    // Only released public enum members have event/periodic meaning. Absence
+    // and future/unknown values never become an explicit fresh camera wakeup.
+    const reason = request.reason === ResourceRequestReason.PERIODIC ? "periodic" : request.reason === ResourceRequestReason.EVENT ? "event" : "unknown";
+    void (async () => {
+      await this.synchronizePolicy();
+      if (!this.available() || abort.signal.aborted) throw new ProtocolError("snapshot-retired");
+      const scope = this.native.info.scope;
+      const bytes = await this.native.snapshot(request.width, request.height, reason, abort.signal);
+      if (!this.available() || abort.signal.aborted || JSON.stringify(scope) !== JSON.stringify(this.native.info.scope) ||
+        !Buffer.isBuffer(bytes) || bytes.length < 4 || bytes.length > 8 * 1024 * 1024 ||
+        bytes[0] !== 0xff || bytes[1] !== 0xd8 || bytes.at(-2) !== 0xff || bytes.at(-1) !== 0xd9) throw new ProtocolError("snapshot-unavailable");
+      job.finish(undefined, bytes);
+    })().catch(() => job.finish(HAPStatus.SERVICE_COMMUNICATION_FAILURE));
+  }
   prepareStream(request: PrepareStreamRequest, callback: Parameters<CameraStreamingDelegate["prepareStream"]>[1]): void {
     void this.prepare(request).then(response => callback(undefined, response), () => callback(new Error("camera-stream-unavailable")));
   }
@@ -182,6 +210,7 @@ export class HapVideoDelegate implements CameraStreamingDelegate {
   }
   /** Synchronous local retirement precedes persistence, cleanup, and policy awaits. */
   fence(): Promise<void> {
+    for (const job of [...this.snapshots]) {job.abort.abort(); job.finish(HAPStatus.SERVICE_COMMUNICATION_FAILURE);}
     const retiring = [...this.sessions.values()];
     for (const session of retiring) { session.retired = true; this.options.forceStop(session.hapId); }
     return Promise.all(retiring.map(session => this.stop(session))).then(() => {});
