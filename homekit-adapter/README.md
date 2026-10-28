@@ -107,3 +107,12 @@ frontier deadlines still close the shared channel. Native cleanup can remain
 owned after its wire bytes are drained. Terminal history contains minimal
 metadata,4096 entries/60seconds, and never retains image buffers or sink closures.
 These are private IPC guarantees; released HDS backpressure remains an HKSV gate.
+
+## S11 Python recording preparation
+
+Python now owns separate recording capture, measured pre-event history and a
+killable native H.264/AAC fragmented-MP4 path. This adapter still publishes no
+HKSV recording capability. Released HDS transport bounds require an independent
+public API extension decision and qualification; no dependency/fork was changed.
+Warm capture is not automatically activated. Native sample readiness and actual
+HomeKit recording delivery readiness are reported separately.

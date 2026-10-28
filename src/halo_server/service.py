@@ -1303,6 +1303,11 @@ class HaloService:
                     )
             if ensure_event_generation is None:
                 return
+            if self.configuration.homekit_enabled and not self.configuration.compatibility_enabled:
+                # Direct-mode recording demand has its own scoped policy and
+                # lease owner. An unsolicited event must not bypass HomeKit-off
+                # by acquiring the compatibility prewarm lease.
+                return
             client = self._media_client
             if client is None or not self._account_authority_current():
                 return
@@ -1491,8 +1496,16 @@ class HaloService:
         *,
         admission: Callable[[], bool] | None = None,
     ) -> tuple[CameraMediaSession, str]:
-        if purpose not in {LeasePurpose.HOMEKIT_LIVE, LeasePurpose.SCRYPTED_LIVE}:
-            raise ValueError("camera consumer purpose must be a supported live integration")
+        prefixes = {
+            LeasePurpose.HOMEKIT_LIVE: "homekit",
+            LeasePurpose.SCRYPTED_LIVE: "rtsp",
+            LeasePurpose.HOMEKIT_RECORDING: "homekit-recording",
+            LeasePurpose.HOMEKIT_RECORDING_WARM: "homekit-recording-warm",
+        }
+        if purpose not in prefixes:
+            raise ValueError(
+                "camera consumer purpose must be a supported native or live integration"
+            )
         async with self._camera_media_lock(camera_id):
             _require_source_admission(admission)
             epoch = self._media_epoch
@@ -1505,8 +1518,7 @@ class HaloService:
                 raise RuntimeError("camera is unavailable")
             if not self._camera_source_current(camera_id, session):
                 raise RuntimeError("camera source reconciliation is pending")
-            prefix = "rtsp" if purpose is LeasePurpose.SCRYPTED_LIVE else "homekit"
-            lease_id = f"{prefix}-{uuid.uuid4().hex}"
+            lease_id = f"{prefixes[purpose]}-{uuid.uuid4().hex}"
             await acquire_owned(session, purpose, lease_id)
             if (
                 epoch != self._media_epoch

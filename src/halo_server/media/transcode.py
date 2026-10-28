@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
-import os
 import struct
 import sys
 import threading
@@ -26,6 +25,7 @@ from halo_server.media.h264 import (
     split_annexb,
 )
 from halo_server.media.manager import settle_owned
+from halo_server.media.worker_limits import worker_environment
 
 MAX_ENCODERS = 4
 START_SECONDS = 5.0
@@ -83,6 +83,7 @@ class VideoWorker:
                 raise VideoTransformError("Video worker is retired")
             if self._process is not None:
                 return
+            environment = worker_environment()
             with _COUNT_LOCK:
                 if _ENCODERS >= MAX_ENCODERS:
                     raise VideoTransformError("Video encoder capacity is exhausted")
@@ -98,7 +99,7 @@ class VideoWorker:
                     stderr=asyncio.subprocess.DEVNULL,
                     limit=65536,
                     umask=0o077,
-                    env={"LANG": os.environ.get("LANG", "C.UTF-8"), "OPENBLAS_NUM_THREADS": "1"},
+                    env=environment,
                 )
             )
             self._spawn = spawn

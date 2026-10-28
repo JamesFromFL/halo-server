@@ -11,10 +11,13 @@ foundation, validated operating modes, shared native service facade and a privat
 supervised adapter lifecycle with operational private IPC are implemented. Stable
 camera selection/identity, protected pairing-state ownership and prompt scoped
 motion/doorbell delivery are implemented as accessory groundwork. The
-adapter now implements direct H264 video and can publish explicitly selected
-development accessories after native output qualification. Audio, snapshots,
-pairing management and HKSV remain unfinished. The current
-working integration remains the existing plugin/RTSP path. See
+adapter implements direct H.264 video, negotiated Opus audio, shared talkback
+and bounded JPEG snapshots. Explicitly selected development accessories can
+publish after native output qualification. Scoped recording capture and native
+H.264/AAC fragmented-MP4 preparation are implemented; HKSV delivery remains
+disabled pending its separate transport gate. Owner pairing management, release
+installation and real Apple/Ring qualification remain unfinished. The existing
+plugin/RTSP integration remains available. See
 [direct HomeKit engineering status](docs/direct-homekit-status.md) for completed
 work, validation boundaries, and remaining implementation gates.
 
@@ -26,7 +29,9 @@ Implemented:
 - per-camera incident timing with a 30-second quiet period
 - event-driven, expiring per-camera media leases with one shared Ring receiver
 - bounded H.264/Opus prebuffer gated on a retained SPS/PPS/IDR boundary
-- H.264 passthrough and mono 48 kHz Opus normalization for Scrypted/HomeKit
+- H.264 passthrough and mono 48 kHz Opus normalization for compatibility clients
+- development native HomeKit live video/audio, talkback, events and JPEG snapshots
+- separate recording permissions, measured pre-roll and bounded native fMP4 preparation
 - camera inventory with an allowlisted public schema
 - authenticated, versioned plugin HTTP and WebSocket APIs with event replay
 - a server-owned protocol-v3 schema and fixture corpus shipped in the wheel
@@ -65,6 +70,8 @@ A supported source target has no known runtime or dependency blocker and has a d
 native package set. Debian and Fedora still require clean-host install and media smoke jobs
 before their packages can be promoted as release-verified environments.
 Current Linux verification is x86_64 only; ARM64 remains unverified on every Linux target.
+The direct HomeKit worker CPU-affinity contract currently targets Linux; macOS
+native delivery requires its own qualification.
 
 Do not use Docker Desktop as the Windows or macOS workaround. Scrypted's
 [installation documentation](https://docs.scrypted.app/installation.html) currently lists Docker

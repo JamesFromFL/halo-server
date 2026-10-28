@@ -5,6 +5,7 @@ from __future__ import annotations
 import threading
 from collections import Counter
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from halo_server.api.plugin import PluginCameraOperationError, PluginIntercomOpenError
@@ -31,6 +32,11 @@ from halo_server.ring.devices import (
 
 if TYPE_CHECKING:
     from halo_server.service import HaloService
+
+
+@dataclass
+class _RecordingMediaConsumer(BufferedMediaConsumer):
+    video_configuration_callback: Callable | None = None
 
 
 class ServiceHomeKitBackend:
@@ -212,18 +218,32 @@ class ServiceHomeKitBackend:
     async def acquire_live(
         self, scope: MediaScope, *, admission: Callable[[], bool]
     ) -> BufferedMediaConsumer:
+        return await self._acquire_buffered(scope, LeasePurpose.HOMEKIT_LIVE, admission)
+
+    async def acquire_recording(self, scope, *, admission, warm=False):
+        if type(warm) is not bool:
+            raise HomeKitOperationError("invalid_request")
+        purpose = LeasePurpose.HOMEKIT_RECORDING_WARM if warm else LeasePurpose.HOMEKIT_RECORDING
+        return await self._acquire_buffered(scope, purpose, admission, recording=True)
+
+    async def _acquire_buffered(self, scope, purpose, admission, recording=False):
         guard = self._guard(scope, admission)
         service = self._service
         try:
             session, lease_id = await service._acquire_camera_consumer(
                 scope.camera_id,
-                LeasePurpose.HOMEKIT_LIVE,
+                purpose,
                 admission=guard,
             )
         except RuntimeError as exc:
             raise HomeKitOperationError("camera_unavailable") from exc
-        return BufferedMediaConsumer(
-            buffer=session.buffer,
+        consumer_type = _RecordingMediaConsumer if recording else BufferedMediaConsumer
+        consumer = consumer_type(
+            buffer=(
+                getattr(session, "recording_video_buffer", session.buffer)
+                if recording
+                else session.buffer
+            ),
             original_audio_buffer=getattr(session, "original_audio_buffer", None),
             source_clock_callback=getattr(session, "source_clock_snapshot", None),
             renew_callback=lambda: service._run_gateway_call(
@@ -248,6 +268,12 @@ class ServiceHomeKitBackend:
                 and session.is_lease_active(lease_id)
             ),
         )
+
+        if recording:
+            consumer.video_configuration_callback = getattr(
+                session, "video_configuration_snapshot", None
+            )
+        return consumer
 
     async def snapshot(
         self, scope: MediaScope, fresh: bool, *, admission: Callable[[], bool]

@@ -14,6 +14,8 @@ from enum import StrEnum
 class LeasePurpose(StrEnum):
     EVENT = "event"
     HOMEKIT_LIVE = "homekit_live"
+    HOMEKIT_RECORDING = "homekit_recording"
+    HOMEKIT_RECORDING_WARM = "homekit_recording_warm"
     SCRYPTED_LIVE = "scrypted_live"
     SNAPSHOT = "snapshot"
     INTERCOM = "intercom"
@@ -33,6 +35,8 @@ class LeasePolicy:
 DEFAULT_POLICIES: Mapping[LeasePurpose, LeasePolicy] = {
     LeasePurpose.EVENT: LeasePolicy(default_ttl=90.0, maximum_lifetime=600.0),
     LeasePurpose.HOMEKIT_LIVE: LeasePolicy(default_ttl=30.0, maximum_lifetime=600.0),
+    LeasePurpose.HOMEKIT_RECORDING: LeasePolicy(default_ttl=30.0, maximum_lifetime=180.0),
+    LeasePurpose.HOMEKIT_RECORDING_WARM: LeasePolicy(default_ttl=30.0, maximum_lifetime=600.0),
     LeasePurpose.SCRYPTED_LIVE: LeasePolicy(default_ttl=30.0, maximum_lifetime=600.0),
     LeasePurpose.SNAPSHOT: LeasePolicy(default_ttl=10.0, maximum_lifetime=30.0),
     LeasePurpose.INTERCOM: LeasePolicy(default_ttl=30.0, maximum_lifetime=300.0),
@@ -43,15 +47,28 @@ DEFAULT_POLICIES: Mapping[LeasePurpose, LeasePolicy] = {
 DEFAULT_PURPOSE_LIMITS: Mapping[LeasePurpose, int] = {
     LeasePurpose.EVENT: 2,
     LeasePurpose.HOMEKIT_LIVE: 2,
+    LeasePurpose.HOMEKIT_RECORDING: 1,
+    LeasePurpose.HOMEKIT_RECORDING_WARM: 1,
     LeasePurpose.SCRYPTED_LIVE: 4,
     LeasePurpose.SNAPSHOT: 2,
     LeasePurpose.INTERCOM: 1,
 }
 
 
-def maximum_session_seconds() -> dict[str, float]:
-    """Return the public absolute lifetime limit for every media purpose."""
-    return {purpose.value: policy.maximum_lifetime for purpose, policy in DEFAULT_POLICIES.items()}
+def maximum_session_seconds(*, internal: bool = False) -> dict[str, float]:
+    """Keep plugin-v3's exact five keys; native purposes are explicit opt-in."""
+    legacy = {
+        LeasePurpose.EVENT,
+        LeasePurpose.HOMEKIT_LIVE,
+        LeasePurpose.SCRYPTED_LIVE,
+        LeasePurpose.SNAPSHOT,
+        LeasePurpose.INTERCOM,
+    }
+    return {
+        purpose.value: policy.maximum_lifetime
+        for purpose, policy in DEFAULT_POLICIES.items()
+        if internal or purpose in legacy
+    }
 
 
 @dataclass(frozen=True)

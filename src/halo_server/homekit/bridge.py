@@ -72,15 +72,20 @@ class HomeKitBridge:
         source_state=lambda: "offline",
         live_manager=None,
         snapshot_manager=None,
+        recording_manager=None,
         publication_enabled=True,
     ):
         from halo_server.media.homekit_live import HomeKitLiveManager
+        from halo_server.media.homekit_recording import HomeKitRecordingManager
         from halo_server.media.snapshots import HomeKitSnapshots
 
         self._paths, self._backend = paths, backend
         self._publication_enabled = publication_enabled
         self._live = live_manager or HomeKitLiveManager(controller, on_ended=self._video_ended)
         self._snapshots = snapshot_manager or HomeKitSnapshots(controller)
+        # S11 prepares bounded native samples without publishing HKSV or
+        # starting capture. Recording policy/HDS transport are separate gates.
+        self._recording = recording_manager or HomeKitRecordingManager(controller)
         self._store = RegistryStore(paths.homekit_registry_file) if paths is not None else None
         self._registry = CameraRegistry()
         self._audio_store = (
@@ -228,6 +233,7 @@ class HomeKitBridge:
 
     async def _retired(self, boot):
         from halo_server.media.homekit_audio_codec import retire_audio_workers
+        from halo_server.media.recording import retire_recording_workers
         from halo_server.media.snapshot_codec import retire_snapshot_workers
         from halo_server.media.transcode import retire_video_workers
 
@@ -240,6 +246,10 @@ class HomeKitBridge:
             failures.append(exc)
         try:
             await self._snapshots.retired(boot)
+        except Exception as exc:
+            failures.append(exc)
+        try:
+            await self._recording.retired(boot)
         except Exception as exc:
             failures.append(exc)
         if self._events is not None:
@@ -261,6 +271,10 @@ class HomeKitBridge:
             failures.append(exc)
         try:
             await retire_snapshot_workers()
+        except Exception as exc:
+            failures.append(exc)
+        try:
+            await retire_recording_workers()
         except Exception as exc:
             failures.append(exc)
         if failures:
@@ -504,6 +518,8 @@ class HomeKitBridge:
             reason = "native_output_cleanup_failed"
         if self._snapshots.cleanup_failures:
             reason = "snapshot_cleanup_failed"
+        if self._recording.cleanup_failures or self._recording.captures.cleanup_failures:
+            reason = "recording_cleanup_failed"
         if self._audio_store is not None and not self._audio_available and transport_ready:
             reason = "audio_settings_unavailable"
         if self._events is not None and self._events.state == "failed":
@@ -524,7 +540,9 @@ class HomeKitBridge:
             "state": "degraded" if reason else "control_ready" if transport_ready else self.state,
             "reason": reason
             or (
-                "recording_not_implemented"
+                "recording_transport_unavailable"
+                if transport_ready and self._live.ready and self._recording.ready
+                else "recording_output_unavailable"
                 if transport_ready and self._live.ready
                 else "media_not_implemented"
                 if transport_ready
@@ -536,6 +554,12 @@ class HomeKitBridge:
             "live_video_resources": self._live.pending_resources,
             "live_video_cleanup_failures": self._live.cleanup_failures,
             "live_audio_ready": self._live.audio_ready,
+            "recording_samples_ready": self._recording.ready,
+            "recording_delivery_ready": False,
+            "recording_resources": self._recording.pending_resources,
+            "recording_capture_resources": self._recording.captures.pending_resources,
+            "recording_cleanup_failures": self._recording.cleanup_failures,
+            "recording_capture_cleanup_failures": self._recording.captures.cleanup_failures,
             "snapshots_ready": self._snapshots.ready,
             "snapshot_resources": self._snapshots.pending_resources,
             "snapshot_cleanup_failures": self._snapshots.cleanup_failures,
@@ -554,6 +578,7 @@ class HomeKitBridge:
             resources = self._resources or development_resources()
             await self._live.qualify()
             await self._snapshots.qualify()
+            await self._recording.qualify()
             self._runtime = self._runtime_factory(
                 resources.node,
                 resources.entry,
@@ -581,6 +606,7 @@ class HomeKitBridge:
                     await self._load_registry()
                     await self._live.refresh()
                     self._snapshots.refresh()
+                    await self._recording.refresh()
                     await self._broker.refresh()
                     await self._configure()
                     self.notify_event()
@@ -607,6 +633,7 @@ class HomeKitBridge:
 
     async def _stop_owned(self) -> None:
         from halo_server.media.homekit_audio_codec import retire_audio_workers
+        from halo_server.media.recording import retire_recording_workers
         from halo_server.media.snapshot_codec import retire_snapshot_workers
         from halo_server.media.transcode import retire_video_workers
 
@@ -638,6 +665,14 @@ class HomeKitBridge:
             try:
                 await self._snapshots.close()
                 await retire_snapshot_workers()
+            except Exception as exc:
+                failures.append(exc)
+            try:
+                await self._recording.close()
+            except Exception as exc:
+                failures.append(exc)
+            try:
+                await retire_recording_workers()
             except Exception as exc:
                 failures.append(exc)
             if failures:

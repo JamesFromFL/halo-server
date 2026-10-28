@@ -27,6 +27,8 @@ from halo_server.media.manager import owned_thread, settle_owned
 
 MAX_LIVE_PER_CAMERA = 2
 MAX_LIVE_TOTAL = 8
+MAX_RECORDING_PER_CAMERA = 1
+MAX_RECORDING_TOTAL = 2
 MAX_SNAPSHOTS = 2
 MAX_CONTROLS = 2
 MAX_SPEAKERS = 1
@@ -42,6 +44,9 @@ class HomeKitBackend(Protocol):
     def inventory(self) -> NativeInventory: ...
     def scope_current(self, scope: MediaScope) -> bool: ...
     async def acquire_live(self, scope: MediaScope, *, admission: Callable[[], bool]): ...
+    async def acquire_recording(
+        self, scope: MediaScope, *, admission: Callable[[], bool], warm: bool = False
+    ): ...
     async def snapshot(
         self, scope: MediaScope, fresh: bool, *, admission: Callable[[], bool]
     ) -> bytes: ...
@@ -55,6 +60,8 @@ class HomeKitBackend(Protocol):
 class _Camera:
     scope: MediaScope
     policy: CameraPolicy = field(default_factory=CameraPolicy)
+    recording_floor: float = float("inf")
+    recording_audio_floor: float = float("inf")
 
 
 @dataclass(eq=False)
@@ -186,6 +193,11 @@ class HomeKitController:
                 return entry.scope
             entry.scope = replace(scope, privacy_generation=self._next_privacy())
             entry.policy = policy
+            # Shared live/legacy history is not authority to replay footage
+            # captured before this recording policy epoch was admitted.
+            now = self._owner().time()
+            entry.recording_floor = now if policy.permits("recording") else float("inf")
+            entry.recording_audio_floor = now if policy.permits("recording_audio") else float("inf")
             claims = tuple(
                 claim
                 for claim in self._claims.values()
@@ -225,6 +237,13 @@ class HomeKitController:
     def validate_selected_scope(self, boot_id: str, scope: MediaScope) -> None:
         with self._lock:
             self._entry(boot_id, scope)
+
+    def recording_floor(self, boot_id: str, scope: MediaScope, *, audio: bool = False) -> float:
+        with self._lock:
+            entry = self._entry(boot_id, scope)
+            if not entry.policy.permits("recording_audio" if audio else "recording"):
+                raise HomeKitOperationError("policy_denied")
+            return entry.recording_audio_floor if audio else entry.recording_floor
 
     def fence_camera(self, boot_id: str, scope: MediaScope) -> None:
         """Revoke one camera before awaiting a durable settings operation."""
@@ -305,6 +324,12 @@ class HomeKitController:
                 raise HomeKitOperationError("busy")
             if kind == "snapshot" and len(same_kind) >= MAX_SNAPSHOTS:
                 raise HomeKitOperationError("busy")
+            if kind in {"recording", "recording_warm"} and (
+                len(same_kind) >= MAX_RECORDING_TOTAL
+                or sum(claim.scope.source_key == scope.source_key for claim in same_kind)
+                >= MAX_RECORDING_PER_CAMERA
+            ):
+                raise HomeKitOperationError("busy")
             if kind == "control" and len(same_kind) >= MAX_CONTROLS:
                 raise HomeKitOperationError("busy")
             if kind == "speaker" and len(same_kind) >= MAX_SPEAKERS:
@@ -322,6 +347,35 @@ class HomeKitController:
         if not self._camera(scope).capabilities.talkback:
             raise HomeKitOperationError("capability_unsupported")
         return await self._open(boot_id, scope, "speaker", session_id)
+
+    async def open_recording(
+        self, boot_id: str, scope: MediaScope, *, session_id: str | None = None, warm: bool = False
+    ):
+        if type(warm) is not bool:
+            raise HomeKitOperationError("invalid_request")
+        if not self._camera(scope).capabilities.video:
+            raise HomeKitOperationError("capability_unsupported")
+        return await self._open(
+            boot_id, scope, "recording_warm" if warm else "recording", session_id
+        )
+
+    async def retire_recording(self, boot_id, scope, session_id):
+        """Retire an exact recording claim, including late/failed acquisition."""
+        with self._lock:
+            claim = self._claims.get(session_id)
+            if claim is None:
+                return
+            if (
+                claim.boot_id != boot_id
+                or claim.scope != scope
+                or claim.kind not in {"recording", "recording_warm"}
+            ):
+                raise HomeKitOperationError("session_conflict")
+            claim.retired = True
+        await self._retire((claim,))
+        with self._lock:
+            if self._claims.get(session_id) is claim:
+                raise HomeKitOperationError("cleanup_pending")
 
     async def _open(self, boot_id, scope, kind, session_id):
         claim, created = self._reserve(boot_id, scope, kind, session_id, ACQUIRE_SECONDS)
@@ -348,19 +402,31 @@ class HomeKitController:
     async def _acquire(self, claim):
         try:
             async with asyncio.timeout(ACQUIRE_SECONDS):
-                method = (
-                    self._backend.acquire_live
-                    if claim.kind == "live"
-                    else self._backend.open_speaker
-                )
-                claim.resource = await method(claim.scope, admission=lambda: self._admission(claim))
+                if claim.kind in {"recording", "recording_warm"}:
+                    claim.resource = await self._backend.acquire_recording(
+                        claim.scope,
+                        admission=lambda: self._admission(claim),
+                        warm=claim.kind == "recording_warm",
+                    )
+                else:
+                    method = (
+                        self._backend.acquire_live
+                        if claim.kind == "live"
+                        else self._backend.open_speaker
+                    )
+                    claim.resource = await method(
+                        claim.scope, admission=lambda: self._admission(claim)
+                    )
             if not self._admission(claim):
                 raise HomeKitOperationError("authority_changed")
-            claim.handle = (
-                NativeLiveHandle(self, claim)
+            handle = (
+                NativeLiveHandle
                 if claim.kind == "live"
-                else NativeSpeakerHandle(self, claim)
+                else NativeRecordingHandle
+                if claim.kind in {"recording", "recording_warm"}
+                else NativeSpeakerHandle
             )
+            claim.handle = handle(self, claim)
             return claim.handle
         except BaseException as exc:
             claim.retired = True
@@ -469,6 +535,15 @@ class HomeKitController:
 
     def _start_cleanup(self, claim) -> asyncio.Task:
         with self._lock:
+            if (
+                claim.kind in {"recording", "recording_warm"}
+                and claim.cleanup is not None
+                and claim.cleanup.done()
+                and (claim.cleanup.cancelled() or claim.cleanup.exception() is not None)
+            ):
+                # Recording owners explicitly retry retained cleanup. Never
+                # replace a still-running native release behind a timeout.
+                claim.cleanup = None
             if claim.cleanup is None:
                 claim.retired = True
                 claim.cleanup = asyncio.create_task(self._cleanup(claim))
@@ -489,7 +564,7 @@ class HomeKitController:
                 # finally block may itself await handle.close().
                 await settle_owned(asyncio.gather(*(finished.wait() for _, finished in work)))
             if claim.resource is not None:
-                if claim.kind == "live":
+                if claim.kind in {"live", "recording", "recording_warm"}:
                     await owned_thread(claim.resource.close)
                 else:
                     await claim.resource.close()
@@ -550,6 +625,9 @@ class HomeKitController:
 
 
 class NativeLiveHandle:
+    _recording = False
+    _audio_permission = "live_audio"
+
     def __init__(self, controller: HomeKitController, claim: _Claim):
         self._controller, self._claim = controller, claim
         self._cursor = None
@@ -593,7 +671,7 @@ class NativeLiveHandle:
         task = self._controller._begin_work(self._claim)
         try:
             async with self._audio_reading:
-                self._controller.authorize(self._claim.boot_id, self.scope, "live_audio")
+                self._controller.authorize(self._claim.boot_id, self.scope, self._audio_permission)
                 if not self.is_current():
                     raise HomeKitOperationError("authority_changed")
                 buffer = getattr(self._claim.resource, "original_audio_buffer", None)
@@ -602,7 +680,7 @@ class NativeLiveHandle:
                 batch = await owned_thread(
                     buffer.read, after_sequence=self._audio_cursor, timeout=timeout
                 )
-                self._controller.authorize(self._claim.boot_id, self.scope, "live_audio")
+                self._controller.authorize(self._claim.boot_id, self.scope, self._audio_permission)
                 if not self.is_current():
                     raise HomeKitOperationError("authority_changed")
                 epoch = self.capture_epoch
@@ -613,7 +691,13 @@ class NativeLiveHandle:
                 self._audio_epoch = epoch
                 if batch.packets:
                     self._audio_cursor = batch.packets[-1].sequence
-                return BufferRead(batch.packets, batch.resynchronized or changed, epoch)
+                packets = batch.packets
+                if self._recording:
+                    floor = self._controller.recording_floor(
+                        self._claim.boot_id, self.scope, audio=True
+                    )
+                    packets = tuple(packet for packet in packets if packet.received_at > floor)
+                return BufferRead(packets, batch.resynchronized or changed, epoch)
         finally:
             self._controller._finish_work(self._claim, task)
 
@@ -627,11 +711,16 @@ class NativeLiveHandle:
             async with self._reading:
                 if not self.is_current():
                     raise HomeKitOperationError("authority_changed")
+                if self._recording:
+                    self._controller.authorize(self._claim.boot_id, self.scope, "recording")
                 batch = await owned_thread(
                     self._claim.resource.buffer.read, after_sequence=self._cursor, timeout=timeout
                 )
                 if not self.is_current():
                     raise HomeKitOperationError("authority_changed")
+                if self._recording and batch.capture_epoch != self.capture_epoch:
+                    self._cursor, self._capture_epoch = None, self.capture_epoch
+                    return BufferRead((), True, self._capture_epoch)
                 epoch_changed = (
                     self._capture_epoch is not None and self._capture_epoch != batch.capture_epoch
                 )
@@ -640,6 +729,17 @@ class NativeLiveHandle:
                     self._cursor = None
                 if batch.packets:
                     self._cursor = batch.packets[-1].sequence
+                if self._recording:
+                    floor = self._controller.recording_floor(self._claim.boot_id, self.scope)
+                    return BufferRead(
+                        tuple(
+                            packet
+                            for packet in batch.packets
+                            if packet.stream is MediaStreamKind.VIDEO and packet.received_at > floor
+                        ),
+                        batch.resynchronized or epoch_changed,
+                        batch.capture_epoch,
+                    )
                 entry = self._controller._cameras[self.scope.source_key]
                 audio = (
                     entry.policy.permits("live_audio")
@@ -662,6 +762,23 @@ class NativeLiveHandle:
 
     async def close(self) -> None:
         await self._controller._retire((self._claim,))
+
+
+class NativeRecordingHandle(NativeLiveHandle):
+    """Recording-only source access; no streaming or live-audio authority."""
+
+    _recording = True
+    _audio_permission = "recording_audio"
+
+    @property
+    def video_configuration(self):
+        if not self.is_current():
+            raise HomeKitOperationError("authority_changed")
+        callback = getattr(self._claim.resource, "video_configuration_callback", None)
+        result = callback() if callback is not None else None
+        if not self.is_current() or (result is not None and result[0] != self.capture_epoch):
+            raise HomeKitOperationError("authority_changed")
+        return result
 
 
 class NativeSpeakerHandle:
@@ -729,6 +846,8 @@ def _identifier(value):
 def _permission(kind):
     return {
         "live": "streaming",
+        "recording": "recording",
+        "recording_warm": "recording",
         "snapshot": "snapshots",
         "speaker": "talkback",
         "control": "controls",

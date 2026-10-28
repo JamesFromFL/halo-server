@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import base64
 import contextlib
-import os
 import struct
 import sys
 import threading
@@ -14,6 +13,7 @@ from pathlib import Path
 
 from halo_server.media.jpeg import MAX_JPEG_BYTES, JpegError, SnapshotConfiguration, inspect_jpeg
 from halo_server.media.manager import settle_owned
+from halo_server.media.worker_limits import worker_environment
 
 MAX_WORKERS = 2
 CONVERT_SECONDS = 2.0
@@ -65,6 +65,7 @@ class SnapshotWorker:
         global _WORKERS
         if self._closed:
             raise SnapshotCodecError("cleanup_pending")
+        environment = worker_environment()
         with _COUNT_LOCK:
             if _WORKERS >= MAX_WORKERS:
                 raise SnapshotCodecError("busy")
@@ -80,11 +81,7 @@ class SnapshotWorker:
                 stderr=asyncio.subprocess.DEVNULL,
                 limit=65536,
                 umask=0o077,
-                env={
-                    "LANG": os.environ.get("LANG", "C.UTF-8"),
-                    "OPENBLAS_NUM_THREADS": "1",
-                    "OMP_NUM_THREADS": "1",
-                },
+                env=environment,
             )
         )
         self._process = await asyncio.shield(self._spawn)

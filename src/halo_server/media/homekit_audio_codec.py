@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
-import os
 import struct
 import sys
 import threading
@@ -22,6 +21,7 @@ from halo_server.media.opus import (
     parse_opus,
     repacketize,
 )
+from halo_server.media.worker_limits import worker_environment
 
 MAX_WORKERS = 4
 START_SECONDS = 3.0
@@ -70,6 +70,7 @@ class AudioWorker:
                 raise AudioTransformError("Audio worker is retired")
             if self._process is not None:
                 return
+            environment = worker_environment()
             with _COUNT_LOCK:
                 if _WORKERS >= MAX_WORKERS:
                     raise AudioTransformError("Audio converter capacity is exhausted")
@@ -85,7 +86,7 @@ class AudioWorker:
                     stderr=asyncio.subprocess.DEVNULL,
                     limit=65536,
                     umask=0o077,
-                    env={"LANG": os.environ.get("LANG", "C.UTF-8"), "OPENBLAS_NUM_THREADS": "1"},
+                    env=environment,
                 )
             )
             self._spawn = spawn

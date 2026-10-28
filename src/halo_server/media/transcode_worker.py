@@ -7,6 +7,7 @@ process. The parent owns per-request wall deadlines and termination/reaping.
 from __future__ import annotations
 
 import contextlib
+import importlib.util
 import json
 import math
 import os
@@ -14,6 +15,15 @@ import resource
 import struct
 import sys
 from fractions import Fraction
+from pathlib import Path
+
+if __name__ == "__main__":
+    _limits_spec = importlib.util.spec_from_file_location(
+        "_halo_worker_limits", Path(__file__).with_name("worker_limits.py")
+    )
+    _limits = importlib.util.module_from_spec(_limits_spec)
+    _limits_spec.loader.exec_module(_limits)
+    _limits.apply_child_cpu_limit()
 
 import av
 

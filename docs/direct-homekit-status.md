@@ -6,7 +6,8 @@ Engineering record, 2026-10-28. Foundation committed locally as
 `7b735aaf13638decb1ad839bc3c5099658e72748`. S07 is committed locally as
 `d89ad9436a0e3cd354cb8b9870e867ff81071559`. S08 is committed locally as
 `90c8832f8ef317117e9dc633f51f194b1df7ae76`. S09 is committed locally as
-`17077c7182e863b1dd0881f526fb92e433ccf136`. S10 builds on those commits.
+`17077c7182e863b1dd0881f526fb92e433ccf136`. S10 is committed locally as
+`e115f11344edf1ea08fce474163f5410c37b3da1`. S11 builds on those commits.
 
 The approved architecture keeps Python as the sole Ring account, push-event,
 shared capture and speaker owner. A supervised Node adapter uses released public
@@ -72,8 +73,8 @@ owner-only regular files, no-follow directory traversal, atomic replacement,
 file/directory fsync and visible corruption/conflict/uncertain-durability errors.
 The future settings interface will use this store; no TUI editor is added here.
 `homekit` and `dual` report `control_ready` with
-`recording_not_implemented` once the control child and native video
-qualification are ready; missing compiled
+`recording_transport_unavailable` once control and native sample qualifications
+are ready (`recording_output_unavailable` if the native recording probe fails); missing compiled
 resources remain visibly degraded. Selected accessories can publish only after native output qualification. The
 complete owner pairing/settings interface is still S13.
 
@@ -395,3 +396,60 @@ its client password/refresh flow. CI exceptions are limited to those reviewed
 provider paths and the exact locked version; raw reports remain visible and new
 findings fail the gate. This is not a zero-advisory package claim. Tooling findings
 are audited separately, with no exceptions.
+
+## S11 recording capture and native fragmented MP4
+
+Recording has its own scoped handle and recording/audio permissions, separate
+from live viewing. One active recording and one explicitly authorized warm
+collector per camera share the existing upstream; each purpose allows two
+globally. Lease renewal has finite absolute limits. Failed cleanup stays charged.
+Public plugin v2/v3 TTL objects retain their original five fields. In direct
+HomeKit mode, an unsolicited Ring event no longer acquires the compatibility
+prewarm lease; event publication remains independent of capture. Dual mode keeps
+its separate legacy event consumer.
+
+An authorized collector retains bounded real video/original-Opus history and
+frozen SPS/PPS independently of rolling packet eviction. Actual capture/config
+epochs, receipt and source timestamps, pressure and gaps fence old history.
+Recording permission changes establish receipt floors so earlier live footage
+cannot be replayed under newly enabled recording authority. Audio-off recordings
+have no audio track. Warm history requires explicit trusted owner opt-in,
+positive mains evidence and current recording permission; a false battery flag
+is insufficient evidence. Production warm capture is not enabled in S11.
+
+Strict recording admission requires at least four seconds of actual pre-event
+history at the frozen event boundary. Waiting after the event cannot invent
+pre-roll. Cold capture can be used only through an explicit internal experimental
+reduced-history choice, with truthful coverage/status. The original two-second
+live Opus lane remains unchanged. A recording's independent source lease survives
+closing its warm collector.
+
+The fixed PyAV worker copies compatible, proven no-reorder H.264 or performs
+bounded native adaptation, and converts original Opus to AAC-LC when recording
+audio is authorized. Recording AAC uses an explicitly supported VBR target;
+strict CBR is rejected rather than inferred from an average encoder bitrate.
+Source sender-report clocks share a frozen A/V origin;
+missing valid anchors are labeled receipt estimates. PTS is not blindly treated
+as DTS for arbitrary input. A bounded MP4 inspector verifies init tracks and
+complete keyframe-starting fragments, offsets, sample sizes, sequence and every
+track's duration against the 4000ms container maximum. Two-second encoder GOPs
+leave room for AAC frame boundaries; hard cuts never manufacture decodable IDRs.
+
+One input request at a time and at most two staged output packets preserve pull
+backpressure. Two killable native recording workers, finite bytes/deadlines and
+owned TERM/KILL/reap bound conversion. Every feed, queued result and final
+dequeue checks full authority and actual capture/config epoch. EOS freezes and
+drains an admitted source cursor; later footage cannot extend it indefinitely.
+
+A common worker bootstrap also constrains each isolated Linux child to one of
+the service's allowed CPUs before importing PyAV. Parent affinity is unchanged
+and CPUs are selected round-robin. This constrains automatic resampler graph
+threads as well as explicit codec threads. Codec thread_count alone did not
+bound the automatic graph in the pinned PyAV version.
+
+These are recording sample/ownership capabilities. HKSV publication remains
+disabled: released HAP2.2.3 lacks awaited bounded HDS output, pre-allocation
+physical connection admission and proven hard-close ownership. A separate
+review-only transport proposal exists; no HAP fork, beta upgrade, cryptography
+replacement or FFmpeg executable backend is adopted. Owner administration,
+release/service packaging and real Apple/Ring qualification remain later gates.

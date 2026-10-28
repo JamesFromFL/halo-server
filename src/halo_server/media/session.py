@@ -25,6 +25,7 @@ from halo_server.media.leases import (
     MediaLeaseCoordinator,
 )
 from halo_server.media.opus import OpusError, OriginalOpusBuffer
+from halo_server.media.recording_capture import RecordingSourceBuffer
 from halo_server.media.ring_media import (
     EncodedFrameAdapterError,
     MediaCompatibilityError,
@@ -98,7 +99,12 @@ class CameraMediaSession:
         self._leases = lease_coordinator or MediaLeaseCoordinator(clock=clock)
         self._buffer = buffer or EncodedMediaBuffer(clock=clock)
         self._original_audio_buffer = OriginalOpusBuffer(clock=clock)
+        self._recording_video_buffer = RecordingSourceBuffer(clock=clock)
         self._source_clocks = {}
+        self._video_configuration_epoch = 0
+        self._video_sps = self._video_pps = None
+        self._video_configuration_floor = 0.0
+        self._recording_seen_idr = False
         self._receiver_supervisor = receiver_supervisor
         self._on_raw_audio = on_raw_audio
         self._audio_encoder_factory = audio_encoder_factory
@@ -130,6 +136,10 @@ class CameraMediaSession:
     def original_audio_buffer(self) -> OriginalOpusBuffer:
         return self._original_audio_buffer
 
+    @property
+    def recording_video_buffer(self):
+        return self._recording_video_buffer
+
     def source_clock_snapshot(self):
         with self._lock:
             epoch = self._buffer.capture_epoch
@@ -140,10 +150,27 @@ class CameraMediaSession:
                 and 0 <= self._clock() - observation.received_at <= 30
             )
 
+    def video_configuration_snapshot(self):
+        """Current bounded codec metadata, independent of rolling media age."""
+        with self._lock:
+            if self._video_sps is None or self._video_pps is None:
+                return None
+            return (
+                self._buffer.capture_epoch,
+                self._video_configuration_epoch,
+                self._video_sps,
+                self._video_pps,
+                self._video_configuration_floor,
+            )
+
     def _clear_media_locked(self):
         self._buffer.clear()
         self._original_audio_buffer.clear(capture_epoch=self._buffer.capture_epoch)
+        self._recording_video_buffer.clear(capture_epoch=self._buffer.capture_epoch)
         self._source_clocks.clear()
+        self._video_configuration_epoch = 0
+        self._video_sps = self._video_pps = None
+        self._recording_seen_idr = False
 
     def _source_clock(self, generation, observation):
         with self._lock:
@@ -553,6 +580,29 @@ class CameraMediaSession:
             else:
                 self._failure = "receiver_restarting"
 
+    def _observe_video_configuration_locked(self, payload, received_at):
+        from halo_server.media.h264 import MAX_SPS_BYTES, H264Error, split_annexb
+
+        try:
+            nals = split_annexb(payload)
+        except H264Error:
+            return
+        sps = next((nal for nal in reversed(nals) if nal[0] & 31 == 7), None)
+        pps = next((nal for nal in reversed(nals) if nal[0] & 31 == 8), None)
+        if any(nal is not None and len(nal) > MAX_SPS_BYTES for nal in (sps, pps)):
+            return
+        changed = False
+        if sps is not None and sps != self._video_sps:
+            self._video_sps, self._video_pps = bytes(sps), None
+            changed = True
+        if pps is not None and pps != self._video_pps:
+            self._video_pps = bytes(pps)
+            changed = True
+        if changed:
+            self._video_configuration_epoch += 1
+            self._video_configuration_floor = received_at
+            self._recording_seen_idr = False
+
     def _encoded_video(self, generation: int, payload: bytes, timestamp: int) -> bool:
         with self._lock:
             if not self._accepts_media_locked(generation):
@@ -578,7 +628,23 @@ class CameraMediaSession:
                     self._stop.set()
                 _log.warning("Rejected encoded Ring video for %s: %s", self._device.name, exc)
                 return False
-            useful = self._buffer.ready and bool(packet.h264_nal_types & {1, 5})
+            self._observe_video_configuration_locked(payload, packet.received_at)
+            self._recording_video_buffer.append(packet)
+            if (
+                5 in packet.h264_nal_types
+                and self._video_sps is not None
+                and self._video_pps is not None
+            ):
+                self._recording_seen_idr = True
+            recording_ready = self._recording_seen_idr and any(
+                lease.purpose
+                in {LeasePurpose.HOMEKIT_RECORDING, LeasePurpose.HOMEKIT_RECORDING_WARM}
+                and lease.expires_at > now
+                for lease in self._leases.snapshot().leases
+            )
+            useful = (self._buffer.ready or recording_ready) and bool(
+                packet.h264_nal_types & {1, 5}
+            )
             if not useful:
                 return False
             self._media_recovered_locked()
