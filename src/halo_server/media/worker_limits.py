@@ -12,6 +12,8 @@ _NEXT = 0
 
 def worker_environment() -> dict[str, str]:
     """Select one currently allowed CPU round-robin for a new isolated child."""
+    from halo_server.release_guard import inherited_guard_environment
+
     global _NEXT
     allowed = tuple(sorted(os.sched_getaffinity(0)))
     if not allowed:
@@ -20,6 +22,7 @@ def worker_environment() -> dict[str, str]:
         selected = allowed[_NEXT % len(allowed)]
         _NEXT += 1
     return {
+        **inherited_guard_environment(),
         "LANG": os.environ.get("LANG", "C.UTF-8"),
         "OPENBLAS_NUM_THREADS": "1",
         "OMP_NUM_THREADS": "1",

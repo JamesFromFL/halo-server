@@ -128,6 +128,7 @@ class OwnerAdministration:
             "recording_samples_ready",
             "recording_delivery_ready",
             "pairing_maintenance_available",
+            "pairing_storage_recovery_required",
         )
         count_keys = (
             "selected_cameras",
@@ -197,6 +198,12 @@ class OwnerAdministration:
                             "bad_params", "Server configuration parameters are invalid"
                         )
                     proposed = replace(saved, **value)
+                    from halo_server.release_execution import validate_operating_mode
+
+                    try:
+                        validate_operating_mode(proposed)
+                    except ConfigurationError as error:
+                        raise AdminProtocolError("managed_mode_unsupported", str(error)) from error
                     task = asyncio.create_task(
                         owned_thread(self.configuration.save, proposed, expected_revision=revision),
                         name="owner-configuration-save",

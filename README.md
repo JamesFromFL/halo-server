@@ -11,7 +11,8 @@ HKSV H.264/AAC recording delivery are implemented through a supervised HAP adapt
 Explicit camera selection, protected stable pairing identities, owner configuration,
 setup reveal/reset, warm-recording opt-in and diagnostics are available through the
 local CLI/TUI. Native output and encrypted recording transport are tested locally;
-real Apple/Ring device qualification and release installation remain unfinished.
+real Apple/Ring device qualification remains pending. Verified offline release
+packaging, explicit user-service installation and controlled upgrades are implemented.
 The plugin/RTSP path remains available as optional compatibility mode. See the
 [owner administration guide](docs/owner-administration.md) for setup and commands, and
 [direct HomeKit engineering status](docs/direct-homekit-status.md) for validation boundaries.
@@ -44,7 +45,7 @@ Implemented:
 Not implemented yet:
 
 - TLS-protected remote plugin and media access
-- operating-system service installers and atomic upgrades
+- real Ring/Apple Home hub acceptance and measured end-to-end performance
 
 ## Platform Support
 
@@ -211,13 +212,14 @@ the installed CLI, media dependency contract, and packaged protocol resources. T
 records its Git commit and SHA-256 artifact checksums; publishing and deployment remain
 separate, explicitly authorized release steps.
 
-No service unit is shipped yet. A reliable Linux installer must create an immutable,
-versioned virtual environment with `/usr/bin/python3 --system-site-packages`, point a user
-systemd service at an absolute launcher path, preserve the XDG state directory, switch releases
-atomically, and retain a rollback target. That layout works across Arch, Fedora, and
-Debian/Ubuntu without compiling PyGObject inside a private Python environment. A unit file
-without that installer would contain a host-specific executable path and is therefore not a
-portable package.
+Managed offline releases bundle the locked Python dependencies, production HomeKit
+adapter and official Node runtime. First installation includes an explicit user
+unit; verified launchers, revision-checked atomic selection, a monotonic reader
+floor and inherited lifetime locks protect upgrades and compatible code rollback.
+The initial archive is qualified for its exact Linux host/interpreter/library
+hashes. See [managed releases](docs/managed-releases.md) and
+[activation and rollback](docs/managed-release-activation.md). Real Ring/Apple
+qualification follows the [acceptance runbook](docs/homekit-acceptance.md).
 
 Halo Server owns the canonical plugin wire contract under
 `src/halo_server/api/protocol/v3`. Protocol v2 remains immutable for compatibility history.

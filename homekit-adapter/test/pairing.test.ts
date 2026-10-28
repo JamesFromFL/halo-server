@@ -4,7 +4,7 @@ import { chmodSync, closeSync, constants, existsSync, fsyncSync, mkdtempSync, op
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test, type TestContext } from "node:test";
-import { HAPFileStorage, HAPStorage } from "@homebridge/hap-nodejs";
+import { AccessoryEventTypes, HAPFileStorage, HAPStorage } from "@homebridge/hap-nodejs";
 import { AccessoryManager, type AccessoryPublisher } from "../src/accessories.js";
 import { decodeResetInput, resetPairing, type ResetInput } from "../src/pairing-reset.js";
 import { PairingStore, pairingRevision, readPairingManifest } from "../src/storage.js";
@@ -36,9 +36,13 @@ const owner: PairingIdentity = {scope:{profile_id:"00000000-0000-0000-0000-00000
 const camera = (): NativeCamera => ({scope:{...owner.scope},name:"Front",family:"fixture",kind:"fixture",model:"Fixture",
   capabilities:{video:true,audio:false,snapshot:false,talkback:false,light:false,siren:false,doorbell:false,battery:false,evidence:["halo:video"]},
   connection_state:null,battery_percent:null,observed_format:null});
-async function managerFixture(context: TestContext, paired=false) {
+async function managerFixture(context: TestContext, paired=false, events=true) {
   const value=fixture(context,paired);let quiesced=0;
-  const publisher:AccessoryPublisher={mediaReady:true,async publish(){},async unpublish(){}};
+  const publisher:AccessoryPublisher={mediaReady:true,async publish(camera){
+    if(!events)return;
+    camera.accessory.emit(AccessoryEventTypes.LISTENING,12345,"fixture");
+    camera.accessory.emit(AccessoryEventTypes.ADVERTISED);
+  },async unpublish(){}};
   const session={cameras:()=>[camera()],inventoryComplete:true,accountScope:{profile_id:owner.scope.profile_id,account_generation:1},quiesce:()=>{quiesced++;}};
   const manager=new AccessoryManager({session,store:value.store,publisher,syncEvents:async()=>({scope:session.accountScope,epoch:"e",sequence:0,accepted:true,code:"ok"})});
   await manager.configure({scope:session.accountScope,revision:1,generation:1,page_index:0,total_pages:1,entries:[{camera_id:"front",accessory_id:id,username,doorbell:false,audio:null}],media_ready:true});
@@ -73,6 +77,21 @@ test("an already paired accessory does not reveal a reusable setup secret",async
   const value=await managerFixture(context,true);const status=value.manager.pairingStatus(owner);
   assert.equal(status.paired,true);assert.equal(status.paired_clients,1);
   assert.equal(value.manager.pairingReveal({...owner,pairing_revision:status.pairing_revision!}).code,"policy-denied");
+});
+
+test("pairing status and reveal require advertised public HAP evidence, while reset can quiesce an unadvertised claim",async context=>{
+  const value=await managerFixture(context,false,false),camera=value.manager.accessories()[0]!;
+  const status=value.manager.pairingStatus(owner);
+  assert.equal(status.accepted,true);assert.equal(status.published,false);
+  assert.equal(value.manager.pairingReveal({...owner,pairing_revision:status.pairing_revision!}).accepted,false);
+  camera.accessory.emit(AccessoryEventTypes.LISTENING,12345,"fixture");
+  assert.equal(value.manager.pairingStatus(owner).published,false);
+  camera.accessory.emit(AccessoryEventTypes.ADVERTISED);
+  assert.equal(value.manager.pairingStatus(owner).published,true);
+  value.manager.invalidate();
+  assert.equal(value.manager.pairingStatus(owner).published,false);
+  const reset=await value.manager.preparePairingReset({...owner,pairing_revision:status.pairing_revision!});
+  assert.equal(reset.accepted,true);assert.equal(reset.quiesced,true);
 });
 
 test("prepare reset quiesces permanently before unpublish and rejects a pairing change during cleanup",async context=>{

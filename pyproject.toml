@@ -36,6 +36,7 @@ dependencies = [
 
 [project.scripts]
 halo-server = "halo_server.cli:main"
+halo-release = "halo_server.release_operator:main"
 
 [build-system]
 requires = ["hatchling==1.33.0"]

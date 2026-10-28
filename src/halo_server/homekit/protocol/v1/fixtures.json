@@ -26,7 +26,8 @@
           "classic-camera-control-v1",
           "bulk-cancel-v1",
           "hksv-recording-v1",
-          "owner-admin-v1"
+          "owner-admin-v1",
+          "publication-status-v1"
         ],
         "pid": 123
       }
@@ -3534,6 +3535,37 @@
         "code": "conflict",
         "light": null,
         "siren": null
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_status",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1,
+        "generation": 1,
+        "configured": 2,
+        "published": 2,
+        "advertised": 1
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_status",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": null,
+        "revision": 0,
+        "generation": 1,
+        "configured": 0,
+        "published": 0,
+        "advertised": 0
       }
     }
   ],
@@ -24747,6 +24779,275 @@
         "accessory_id": "00000000-0000-0000-0000-000000000004",
         "username": "02:00:00:00:00:04\n"
       }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_status",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "revision": 1,
+        "generation": 1,
+        "configured": 2,
+        "published": 2,
+        "advertised": 1
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_status",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "generation": 1,
+        "configured": 2,
+        "published": 2,
+        "advertised": 1
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_status",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1,
+        "configured": 2,
+        "published": 2,
+        "advertised": 1
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_status",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1,
+        "generation": 1,
+        "published": 2,
+        "advertised": 1
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_status",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1,
+        "generation": 1,
+        "configured": 2,
+        "advertised": 1
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_status",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1,
+        "generation": 1,
+        "configured": 2,
+        "published": 2
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_status",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1,
+        "generation": 1,
+        "configured": 2,
+        "published": 2,
+        "advertised": 1,
+        "secret": "no"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_status",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "revision": 0,
+        "generation": 1,
+        "configured": 0,
+        "published": 0,
+        "advertised": 0
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_status",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": null,
+        "generation": 1,
+        "configured": 0,
+        "published": 0,
+        "advertised": 0
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_status",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": null,
+        "revision": 0,
+        "configured": 0,
+        "published": 0,
+        "advertised": 0
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_status",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": null,
+        "revision": 0,
+        "generation": 1,
+        "published": 0,
+        "advertised": 0
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_status",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": null,
+        "revision": 0,
+        "generation": 1,
+        "configured": 0,
+        "advertised": 0
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_status",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": null,
+        "revision": 0,
+        "generation": 1,
+        "configured": 0,
+        "published": 0
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_status",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": null,
+        "revision": 0,
+        "generation": 1,
+        "configured": 0,
+        "published": 0,
+        "advertised": 0,
+        "secret": "no"
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_status",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1,
+        "generation": 0,
+        "configured": 2,
+        "published": 2,
+        "advertised": 1
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_status",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1,
+        "generation": 1,
+        "configured": 257,
+        "published": 2,
+        "advertised": 1
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_status",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1,
+        "generation": 1,
+        "configured": 2,
+        "published": true,
+        "advertised": 1
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_status",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": null,
+        "revision": 0,
+        "generation": 1,
+        "configured": 1,
+        "published": 1,
+        "advertised": 1
+      }
     }
   ],
   "semantic_invalid": [
@@ -25614,6 +25915,40 @@
           "identifier_cache": null,
           "controller_storage": null
         }
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_status",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1,
+        "generation": 1,
+        "configured": 1,
+        "published": 2,
+        "advertised": 1
+      }
+    },
+    {
+      "v": 1,
+      "kind": "accessory_status",
+      "boot_id": "00000000-0000-0000-0000-000000000001",
+      "request_id": "00000000-0000-0000-0000-000000000002",
+      "payload": {
+        "scope": {
+          "profile_id": "00000000-0000-0000-0000-000000000003",
+          "account_generation": 1
+        },
+        "revision": 1,
+        "generation": 1,
+        "configured": 2,
+        "published": 2,
+        "advertised": 3
       }
     }
   ],

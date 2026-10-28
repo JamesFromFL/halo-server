@@ -15,7 +15,11 @@ HAP APIs for HomeKit. Native media will be delivered directly from Python rather
 than through RTSP. The existing plugin/RTSP integration remains functional during
 development. Direct video, negotiated Opus audio and shared talkback are implemented as development paths.
 S12 adds scoped HKSV delivery through the approved bounded HAP transport extension.
-Owner pairing administration, release packaging and real Apple qualification remain later gates.
+S13 implements owner pairing administration. S14 implements verified offline
+release packaging, controlled installation/upgrades and durable pairing storage.
+Real Apple/Ring qualification remains S15; the per-slice descriptions below retain
+their historical validation boundaries. See [managed releases](managed-releases.md),
+[activation](managed-release-activation.md), and [acceptance](homekit-acceptance.md).
 
 ## Implemented foundation
 
@@ -354,21 +358,19 @@ content, independent decode, public HAP callbacks, real IPC/bulk, cancellation,
 partial frames, privacy retirement and source/native cleanup failure. Real Apple
 and Ring device qualification remains S15.
 
-## Remaining implementation
+## Remaining acceptance
 
-S04 still needs the final distribution/runtime capability gates. S05–S10 implement service/configuration/contracts, operational private IPC,
-identity/accessory/events, direct H264 live video, negotiated Opus, shared talkback and bounded snapshots. Build identity remains correlation, not independent provenance; immutable
-bundled-resource manifests and release packaging belong in S14.
+S01–S14 core software slices are implemented. Current software includes direct
+H.264/Opus live delivery, shared talkback, bounded snapshots, AAC/fMP4 recording,
+bounded HDS transport, scoped events, owner administration and verified installed
+releases. S15 requires actual Ring capture, Apple pairing, local/remote playback,
+Home hub HKSV, privacy/restart/unattended checks and latency/quality measurements.
+Software fixtures and local native probes do not replace that acceptance.
 
-S11–S15 remain: timed recording samples and an
-isolated fMP4 worker; HDS delivery; CLI/TUI management; packaged installation and
-rollback; authorized Ring/Apple Home acceptance and measured performance.
+Conditional HEVC/modern HomeKit slices S16–S19 remain separately gated. TLS for
+remote compatibility-plugin access is outside direct HomeKit core delivery.
 
-JPEG download byte limits do not establish decoded pixel or CPU limits. Network
-read-ahead and bounded temporary copies do not establish a process RSS ceiling.
-The later image-worker and bulk-channel slices must preserve these distinctions.
-
-## Decisions before recording release
+## Historical decisions before recording release (resolved in S12–S14)
 
 Released HAP 2.2.3 does not expose a bounded HDS send/drain/cancel API. IPC credits
 cannot make its internal socket writes strictly bounded. A reviewed upstream API
@@ -501,3 +503,33 @@ are tested software/transport capabilities; actual Ring capture, Apple pairing,
 Home timeline playback and performance remain S15 acceptance work. S13 closes
 owner CLI/TUI/diagnostics and controls; S14 closes installed resources, service
 packaging and pairing/revocation durability before real acceptance.
+
+## S14: installed releases, durable pairing and actual publication readiness
+
+The exact-host Linux release bundles locked Python wheels, production adapter
+resources and official signed-upstream-verified Node. A complete immutable
+manifest is checked before imports. Offline assembly does not build or download
+at startup. Stable launchers and a separately authorized user unit bind the exact
+canonical state directory. Activation holds a whole-operation canonical lock,
+stops the old service, verifies actual retirement, writes a monotonic reader
+floor, atomically selects compatible code and checks local software health.
+Rollback never restores older mutable state or lowers that floor.
+
+Every source/installed service and its adapter/native/helper children retain a
+shared lifetime lock, including failed cleanup. Managed TUI/client processes also
+hold it and must close before an upgrade. Legacy migration checks an authenticated
+owner socket and actual pidfd exit without killing unmanaged processes; already
+orphaned pre-guard children cannot be inferred from a parent's exit.
+
+The approved narrow dependency is now HAP2.2.3-halo.2. HAPFileStorage and existing
+cryptography/discovery remain. Private exclusive writes fsync file and directory;
+a durable generic write-intent marker precedes target mutation. I/O failure
+latches fatal state, synchronously fences session/camera admission and terminates
+the adapter. Incomplete intent is preserved and blocks subsequent startup.
+It contains no target key, so generic automatic target repair is unavailable.
+Fault-injection tests do not establish actual physical power-cut behavior.
+
+HomeKit camera readiness requires complete current-generation configuration and
+actual public LISTENING and ADVERTISED events, with final configuration ACK fencing.
+Transport HELLO alone is insufficient. Real Ring/Apple qualification remains false
+until S15. The acceptance runbook lists the required device tests and measurements.

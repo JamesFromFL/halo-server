@@ -130,6 +130,21 @@ test("direction checks reject authority sent from the wrong peer including bulk 
   }
 });
 
+test("publication notices are scoped, bounded HAP-only evidence with ordered counts", async () => {
+  const {validateDirection} = await import("../src/protocol.js");
+  const notice: Envelope = {...ping, kind: "accessory_status", payload: {
+    scope: {profile_id: "00000000-0000-0000-0000-000000000002", account_generation: 1},
+    revision: 0, generation: 1, configured: 256, published: 255, advertised: 254}};
+  assert.deepEqual(validateDirection(notice, "hap"), notice);
+  assert.throws(() => validateDirection(notice, "python"), ProtocolError);
+  for (const changes of [{configured: 257}, {configured: true}, {published: 257}, {advertised: 256},
+    {configured: -1}, {generation: 0}, {revision: 2 ** 53}, {scope: null}, {extra: 1}]) {
+    assert.throws(() => encodeEnvelope({...notice, payload: {...notice.payload, ...changes}}), ProtocolError);
+  }
+  const retired = {...notice, payload: {...notice.payload, scope: null, configured: 0, published: 0, advertised: 0}};
+  assert.deepEqual(decodeEnvelope(encodeEnvelope(retired).subarray(4)), retired);
+});
+
 test("reply correlation fences boot/request identity, full privacy scope and each owned handle", async () => {
   const {REPLY_KINDS, validateReply} = await import("../src/protocol.js");
   const samples = new Map([...fixtures.valid].reverse().map(value => [value.kind, value]));

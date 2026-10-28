@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { test } from "node:test";
-import { Accessory, Characteristic, DoorbellController, HAPStatus, Service, StreamRequestTypes } from "@homebridge/hap-nodejs";
+import { Accessory, AccessoryEventTypes, Characteristic, DoorbellController, HAPStatus, Service, StreamRequestTypes } from "@homebridge/hap-nodejs";
 import { AccessoryManager, hapPublisher, type AccessoryConfigurationPage, type AccessoryPublisher } from "../src/accessories.js";
 import { CameraAccessory, unavailableStreamingDelegate, type AccessoryIdentity } from "../src/camera.js";
-import type { AccountScope, JsonObject, MediaScope } from "../src/protocol.js";
+import type { AccountScope, AccessoryPublicationStatus, JsonObject, MediaScope } from "../src/protocol.js";
 import type { NativeCamera } from "../src/session.js";
 import type { PairingStore } from "../src/storage.js";
 
@@ -30,23 +30,33 @@ class FakePublisher implements AccessoryPublisher {
   published: CameraAccessory[] = [];
   unpublished: CameraAccessory[] = [];
   publishBarrier: Promise<void> | null = null;
+  autoEvents = true;
   failClose = false;
-  async publish(value: CameraAccessory): Promise<void> { this.published.push(value); await this.publishBarrier; }
+  async publish(value: CameraAccessory): Promise<void> {
+    this.published.push(value); await this.publishBarrier;
+    if (this.autoEvents) {
+      value.accessory.emit(AccessoryEventTypes.LISTENING, 12345, "fixture");
+      value.accessory.emit(AccessoryEventTypes.ADVERTISED);
+    }
+  }
   async unpublish(value: CameraAccessory): Promise<void> {
     this.unpublished.push(value);
     if (this.failClose) throw new Error("synthetic cleanup failure");
   }
 }
-function harness(options: {publisher?: AccessoryPublisher; sync?: () => Promise<JsonObject>; noStore?: boolean; clock?: () => number} = {}) {
+function harness(options: {publisher?: AccessoryPublisher; sync?: () => Promise<JsonObject>; noStore?: boolean; clock?: () => number;
+  status?: (status: AccessoryPublicationStatus) => Promise<void>} = {}) {
   const session = {cameras: () => [current], inventoryComplete: true, accountScope: {...account} as AccountScope | null};
   let current = camera();
   const publisher = options.publisher ?? new FakePublisher();
   let preflights = 0, closes = 0;
+  const statuses: AccessoryPublicationStatus[] = [];
   const store = {preflight: () => { preflights++; }, close: () => { closes++; }} as unknown as PairingStore;
   const manager = new AccessoryManager({session, ...(options.noStore ? {} : {store}), publisher,
     ...(options.clock === undefined ? {} : {monotonicNow: options.clock}),
+    onStatus: async status => { statuses.push(status); await options.status?.(status); },
     syncEvents: options.sync ?? (async () => ({scope: account, epoch: "epoch-a", sequence: 10, accepted: true, code: "ok"}))});
-  return {manager, session, publisher, store, setCamera: (value: NativeCamera) => { current = value; },
+  return {manager, session, publisher, store, statuses, setCamera: (value: NativeCamera) => { current = value; },
     get preflights() { return preflights; }, get closes() { return closes; }};
 }
 const motion = (value: CameraAccessory): unknown => value.controller.motionService!.getCharacteristic(Characteristic.MotionDetected).value;
@@ -82,6 +92,94 @@ test("media delegates fail clearly and STOP remains an idempotent release", () =
     assert.match(error!.message, /media-not-ready/); assert.equal(endpoint, undefined);
   });
   delegate.handleStreamRequest({type: StreamRequestTypes.STOP, sessionID: randomUUID()}, error => assert.equal(error, undefined));
+});
+
+test("successful publish return cannot substitute for public listening and advertisement evidence", async () => {
+  const publisher = new FakePublisher(); publisher.autoEvents = false;
+  const value = harness({publisher});
+  await value.manager.configure(page({media_ready: true}));
+  const current = value.manager.accessories()[0]!, counts = () => {
+    const {configured, published, advertised} = value.manager.publicationStatus!;
+    return {configured, published, advertised};
+  };
+  assert.equal(value.manager.publishedCount, 1); // Cleanup ownership only.
+  assert.deepEqual(counts(), {configured: 1, published: 0, advertised: 0});
+  current.accessory.emit(AccessoryEventTypes.ADVERTISED);
+  assert.deepEqual(counts(), {configured: 1, published: 0, advertised: 0});
+  current.accessory.emit(AccessoryEventTypes.LISTENING, 12345, "fixture");
+  assert.deepEqual(counts(), {configured: 1, published: 1, advertised: 0});
+  current.accessory.emit(AccessoryEventTypes.ADVERTISED);
+  assert.deepEqual(counts(), {configured: 1, published: 1, advertised: 1});
+  await tick();
+  assert.deepEqual(value.statuses.at(-1), {scope: account, revision: 1, generation: 1,
+    configured: 1, published: 1, advertised: 1});
+  await value.manager.close();
+});
+
+test("invalidation, incomplete generations and retirement clear publication synchronously", async () => {
+  const value = harness();
+  await value.manager.configure(page({media_ready: true}));
+  const original = value.manager.accessories()[0]!;
+  assert.equal(value.manager.publicationStatus!.advertised, 1);
+  value.session.inventoryComplete = false; value.manager.invalidate();
+  assert.equal(value.manager.publicationStatus!.configured, 0);
+  original.accessory.emit(AccessoryEventTypes.ADVERTISED);
+  assert.equal(value.manager.publicationStatus!.advertised, 0);
+  await value.manager.reconcile();
+  assert.equal(value.manager.publicationStatus!.configured, 0);
+  value.session.inventoryComplete = true; await value.manager.reconcile();
+  assert.equal(value.manager.publicationStatus!.advertised, 1);
+  await value.manager.configure(page({generation: 2, total_pages: 2, media_ready: true}));
+  assert.equal(value.manager.publicationStatus!.generation, 2);
+  assert.equal(value.manager.publicationStatus!.configured, 0);
+  original.accessory.emit(AccessoryEventTypes.LISTENING, 12345, "fixture");
+  original.accessory.emit(AccessoryEventTypes.ADVERTISED);
+  assert.equal(value.manager.publicationStatus!.advertised, 0);
+  await value.manager.configure(page({generation: 2, total_pages: 2, page_index: 1, entries: [], media_ready: true}));
+  assert.equal(value.manager.publicationStatus!.advertised, 1);
+  const closing = value.manager.close();
+  assert.equal(value.manager.publicationStatus!.configured, 0);
+  await closing;
+  original.accessory.emit(AccessoryEventTypes.ADVERTISED);
+  assert.equal(value.manager.publicationStatus!.advertised, 0);
+});
+
+test("configuration acknowledgement without a selected inventory row does not claim a graph", async () => {
+  const value = harness(); value.session.cameras = () => [];
+  await value.manager.configure(page({media_ready: true}));
+  assert.deepEqual(value.manager.publicationStatus, {scope: account, revision: 1, generation: 1,
+    configured: 0, published: 0, advertised: 0});
+  await value.manager.configure(page({generation: 2, scope: null, entries: []}));
+  assert.deepEqual(value.manager.publicationStatus, {scope: null, revision: 1, generation: 2,
+    configured: 0, published: 0, advertised: 0});
+  await value.manager.close();
+});
+
+test("publication status coalesces a stalled sender to one in-flight and the latest bounded snapshot", async () => {
+  const barrier = deferred<void>();
+  const value = harness({status: () => barrier.promise});
+  await value.manager.configure(page({media_ready: true}));
+  assert.equal(value.statuses.length, 1);
+  for (let generation = 2; generation <= 100; generation++) {
+    await value.manager.configure(page({generation, scope: null, entries: []}));
+  }
+  assert.equal(value.statuses.length, 1);
+  barrier.resolve(); await tick();
+  assert.equal(value.statuses.length, 2);
+  assert.deepEqual(value.statuses[1], {scope: null, revision: 1, generation: 100,
+    configured: 0, published: 0, advertised: 0});
+  await value.manager.close();
+});
+
+test("failed status delivery closes software readiness rather than continuing with cached publication", async () => {
+  const barrier = deferred<void>(), value = harness({status: () => barrier.promise});
+  await value.manager.configure(page({media_ready: true}));
+  assert.equal(value.manager.publicationStatus!.advertised, 1);
+  barrier.reject(new Error("synthetic status failure")); await tick();
+  assert.equal(value.manager.isFailed, true);
+  assert.equal(value.manager.publicationStatus!.configured, 0);
+  await assert.rejects(value.manager.configure(page({generation: 2})), /accessory-manager-retired/);
+  await value.manager.close();
 });
 
 test("configuration pages apply atomically and only the complete parent configuration enables publication", async context => {

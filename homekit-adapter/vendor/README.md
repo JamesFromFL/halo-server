@@ -1,13 +1,13 @@
-# Halo's bounded HAP transport dependency
+# Halo's bounded HAP transport and durable storage dependency
 
-`hap-nodejs-2.2.3-halo.1.tgz` is a private, immutable build of official
+`hap-nodejs-2.2.3-halo.2.tgz` is a private, immutable build of official
 [`@homebridge/hap-nodejs` 2.2.3](https://github.com/homebridge/HAP-NodeJS/releases/tag/v2.2.3),
 based on commit `25e8bea26a64309a47184dec478479483fbdd50c`. It is installed by
 the adapter's ordinary `npm ci` through a local file dependency and lock integrity.
 It is not an official upstream release and is not published to npm.
 
 The adjacent patch, provenance manifest and original Apache-2.0 license describe
-the complete divergence. Pairing formats, HAP storage, mDNS, keys, crypto
+the complete divergence. Pairing formats, the existing storage layout, mDNS, keys, crypto
 primitives, nonce order and encrypted framing remain unchanged. The exact
 encryption block and full `hapCrypto.ts` source are checked against the official
 commit; the transport tests independently reproduce the expected ciphertext.
@@ -61,6 +61,52 @@ inbound frames, kernel TCP buffers and allocator behavior have separate budgets.
 Real Home hub compatibility and end-to-end Ring acceptance require the later
 hardware qualification; synthetic tests do not claim those results.
 
+## Existing storage durability and explicit recovery
+
+This version retains HAPFileStorage, raw filenames and bare compact JSON. It
+adds no database. Every mutation writes an exclusive no-follow 0600 temporary
+file, fully writes UTF-8 with finite progress, fsyncs and closes it, renames it,
+and fsyncs the pinned directory. Removal fsyncs the directory as well.
+Filesystem mutation failures latch HAPStorageError; cached reads and further
+mutations refuse the same error. Argument/serialization failures before I/O
+preserve the old readable cache and target.
+
+Halo must call the public HAPStorage.setFailureHandler(handler) and
+HAPStorage.setDurabilityGuard(true) before the first model/storage access.
+The synchronous handler must close acquisition, fence all cached model authority,
+and terminate the child; its parent owns actual exit/reap. Throwing alone does
+not retire already held AccessoryInfo or active HAP connections. Direct storage
+users can supply equivalent HAPFileStorage construction options. Handler and
+guard are optional for unrelated upstream-style consumers; the guard defaults
+off because a fixed directory marker requires exclusive ownership, unlike
+upstream child bridges that may share one folder across processes.
+
+Guarded writes durably create `.hap-storage-intent` before touching the target:
+marker file fsync, directory fsync, target write/removal and sync, marker unlink,
+then directory fsync. The marker contains only a version and operation name.
+Any existing marker refuses initialization; incomplete markers are preserved,
+never repaired or removed automatically. Halo's existing private preflight also
+refuses this unexpected entry before HAP can load state. A post-mutation failure
+cannot silently reload an older revoked pairing after restart. Once the target
+is durable, failure clearing/syncing the marker still fails closed, although the
+confirmed target itself is already safe. A marker does not identify a target;
+owner recovery must not guess that an arbitrary camera reset can clear it.
+
+Target serialization, pairing keys/format and crypto are unchanged. The backend
+retains upstream's generic read semantics; Halo's strict pinned-file/JSON/key
+preflight remains mandatory. The qualified environment is Linux/Node26.12.1
+with supported local filesystem fsync semantics. Initial private-directory
+creation and state/release rollback authority are installation/launcher gates.
+Tests prove syscall ordering and injected failures, not survival of faulty disks
+or a physical power-cut experiment.
+
+The storage fault suite covers short and zero-progress writes, all meaningful
+sync/rename/remove/close failure points, durable removal intent, startup refusal,
+private permissions, existing symlinks, redacted callback errors and the first
+fatal latch. One official rename-failure assertion intentionally changes from
+reading undefined to requiring the latched error. No ordinary unpublish or
+selection operation calls destructive reset.
+
 ## Reproduce and maintain
 
 With the qualified Node 26.12.1/npm 12.2.1 toolchain:
@@ -75,7 +121,7 @@ uses the official dependency lock with install scripts disabled, compiles, and
 normalizes tar/gzip ownership and timestamps. It does not patch the installed
 runtime. Two clean builds produced identical bytes; their hash is in provenance.
 
-The official suite passed all 908 tests in the 25 suites supported on this host.
+The supported-host suite passed 926 tests in 26 suites, including 18 new durability tests. One original rename-failure cached-read assertion was strengthened as documented above.
 Three unmodified `eventedhttp.spec.ts` tests explicitly dial `::1` and fail with
 `EADDRNOTAVAIL` here; that host limitation is retained in evidence. `--test` runs
 the complete upstream suite without silently filtering those cases.
@@ -84,4 +130,4 @@ When updating, review only the transport divergence, increment the local suffix,
 regenerate provenance and the adapter lock, rerun upstream and Halo tests, and
 retain pairing/crypto compatibility checks. Follow official upstream releases
 and remove the divergence once equivalent supported APIs are qualified. Do not
-add unrelated backend, dependency or storage changes to this patch.
+add unrelated backend or dependency changes; review storage and transport independently.

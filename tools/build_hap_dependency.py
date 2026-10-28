@@ -19,7 +19,7 @@ from pathlib import Path
 
 UPSTREAM = "https://github.com/homebridge/HAP-NodeJS.git"
 COMMIT = "25e8bea26a64309a47184dec478479483fbdd50c"
-VERSION = "2.2.3-halo.1"
+VERSION = "2.2.3-halo.2"
 ROOT = Path(__file__).resolve().parents[1]
 VENDOR = ROOT / "homekit-adapter" / "vendor"
 PATCH = VENDOR / f"hap-nodejs-{VERSION}.patch"

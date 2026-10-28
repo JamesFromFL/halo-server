@@ -22,8 +22,16 @@ class ServerPaths:
     @classmethod
     def from_environment(cls) -> ServerPaths:
         state_home = _xdg_path("XDG_STATE_HOME", Path.home() / ".local" / "state")
+        state_directory = state_home / "halo-server"
+        managed_state = os.environ.get("HALO_RELEASE_STATE_DIRECTORY")
+        if managed_state is not None:
+            from halo_server.release_guard import ReleaseGuardError, inherited_guard_fds
+
+            state_directory = Path(managed_state)
+            if not inherited_guard_fds(state_directory=state_directory):
+                raise ReleaseGuardError("Managed state has no inherited release owner")
         return cls(
-            state_directory=state_home / "halo-server",
+            state_directory=state_directory,
             runtime_directory=_runtime_directory(),
         )
 

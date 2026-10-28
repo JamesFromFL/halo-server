@@ -23,6 +23,7 @@ from halo_server.homekit.ipc import (
 )
 from halo_server.homekit.storage_owner import PairingDirectoryOwner
 from halo_server.media.manager import settle_owned
+from halo_server.release_guard import inherited_guard_environment, inherited_guard_fds
 
 MAX_PENDING_REQUESTS = 32
 MAX_CHILD_REQUESTS = 16
@@ -345,6 +346,8 @@ class HomeKitRuntime:
     async def _launch(self) -> None:
         from halo_server.homekit.bulk import BulkChannel
 
+        guard_fds = inherited_guard_fds()
+        guard_environment = inherited_guard_environment()
         if not Path(self._command[0]).is_file() or not Path(self._command[1]).is_file():
             raise _AdapterArtifactsUnavailable("Bundled HomeKit adapter artifacts are unavailable")
         if self._pairing_directory is not None:
@@ -365,6 +368,7 @@ class HomeKitRuntime:
         # Do not forward Ring credentials, user import paths, Node options or
         # runtime injection from the daemon's environment into the child.
         env = {name: os.environ[name] for name in ("LANG", "LC_ALL", "TZ") if name in os.environ}
+        env.update(guard_environment)
         env.update(
             {
                 "HALO_CONTROL_FD": str(child.fileno()),
@@ -372,7 +376,7 @@ class HomeKitRuntime:
                 "HALO_PARENT_PID": str(os.getpid()),
             }
         )
-        inherited = (child.fileno(), bulk_child.fileno())
+        inherited = (child.fileno(), bulk_child.fileno(), *guard_fds)
         if self._pairing_owner is not None:
             env["HALO_PAIRING_FD"] = str(self._pairing_owner.directory_fd)
             env["HALO_PAIRING_LOCK_FD"] = str(self._pairing_owner.lock_fd)
@@ -533,7 +537,7 @@ class HomeKitRuntime:
                 raise HomeKitProtocolError("HomeKit adapter is stopping")
             if message["kind"] not in REPLY_KINDS:
                 if self._on_notice is None:
-                    if message["kind"] in {"status", "error"}:
+                    if message["kind"] in {"status", "error", "accessory_status"}:
                         return
                     raise HomeKitProtocolError("unsupported HomeKit adapter notice")
                 await self._on_notice(message)

@@ -49,7 +49,7 @@ control.on('data', chunk=> {
     if(message.kind==='hello') {
       boot=message.boot_id;
       send({...message,kind:'hello_ack',payload:{role:'hap',build_id:message.payload.build_id,
-        protocol:1,features:['classic-camera-control-v1','bulk-cancel-v1','hksv-recording-v1','owner-admin-v1'],pid:process.pid}});
+        protocol:1,features:['classic-camera-control-v1','bulk-cancel-v1','hksv-recording-v1','owner-admin-v1','publication-status-v1'],pid:process.pid}});
     } else if(message.kind==='shutdown') {
       send({...message,kind:'shutdown_ack',payload:{}});
       control.end();bulk.destroy();

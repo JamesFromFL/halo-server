@@ -35,6 +35,7 @@ from halo_server.homekit.settings import (
 )
 from halo_server.media.manager import owned_thread, settle_owned
 from halo_server.media.recording_policy import RecordingAuthority, RecordingPolicyOwner
+from halo_server.paths import PathSecurityError, open_private_directory
 
 
 @dataclass(frozen=True)
@@ -54,11 +55,16 @@ class AdapterResources:
 
 
 def development_resources() -> AdapterResources:
-    """Resolve an already-built source tree; never install or build on startup.
+    """Resolve verified installed resources or an already-built development tree.
 
-    Release resource manifests and immutable installed runtime selection are S14.
-    A wheel without bundled adapter resources reports degraded local status.
+    Ordinary launch never downloads, builds, installs or resolves npm packages.
+    A standalone Python wheel without the managed adapter remains unavailable.
     """
+    from halo_server.release_execution import managed_context
+
+    release = managed_context()
+    if release is not None:
+        return AdapterResources(release.node, release.entry, build_id=release.build_id)
     source = Path(__file__).resolve().parents[3]
     if not (source / "pyproject.toml").is_file():
         raise FileNotFoundError("HomeKit adapter resources are not installed")
@@ -125,6 +131,7 @@ class HomeKitBridge:
         self._registry_lock = asyncio.Lock()
         self._config_generation = 0
         self._config_signature = None
+        self._publication_status = None
         self._events = (
             EventPump(
                 journal,
@@ -359,9 +366,11 @@ class HomeKitBridge:
         await self._broker.ready(boot)
         await self._recording_policy.ready(boot)
         self._config_signature = None
+        self._publication_status = None
         await self._configure()
 
     async def _retired(self, boot):
+        self._publication_status = None
         from halo_server.media.homekit_audio_codec import retire_audio_workers
         from halo_server.media.recording import retire_recording_workers
         from halo_server.media.snapshot_codec import retire_snapshot_workers
@@ -521,6 +530,25 @@ class HomeKitBridge:
         await self._broker.replied(message, reply)
 
     async def _notice(self, message):
+        if message["kind"] == "accessory_status":
+            data = message["payload"]
+            inventory = self._backend.inventory()
+            scope = (
+                None
+                if inventory.profile_id is None
+                else {
+                    "profile_id": inventory.profile_id,
+                    "account_generation": inventory.account_generation,
+                }
+            )
+            if (
+                message["boot_id"] == self._broker.boot_id
+                and data["scope"] == scope
+                and data["revision"] == self._registry.revision
+                and data["generation"] == self._config_generation
+            ):
+                self._publication_status = (message["boot_id"], dict(data))
+            return
         if message["kind"] in {"status", "error"}:
             return  # Never elevate media readiness from a peer's generic status.
         await self._broker.notice(message)
@@ -597,6 +625,8 @@ class HomeKitBridge:
         signature = (scope, registry.revision, entries, media_ready)
         if signature == self._config_signature:
             return
+        self._publication_status = None
+        self._config_signature = None
         self._config_generation += 1
         generation = self._config_generation
         pages = [entries[index : index + 32] for index in range(0, len(entries), 32)] or [[]]
@@ -911,6 +941,24 @@ class HomeKitBridge:
             reason = "audio_output_unavailable"
         if not reason and transport_ready and not self._snapshots.ready:
             reason = "snapshot_output_unavailable"
+        storage_recovery = False
+        if self._paths is not None:
+            try:
+                directory = open_private_directory(self._paths.homekit_pairing_directory)
+            except (PathSecurityError, OSError):
+                pass
+            else:
+                try:
+                    os.stat(".hap-storage-intent", dir_fd=directory, follow_symlinks=False)
+                except FileNotFoundError:
+                    pass
+                except OSError:
+                    reason = "pairing_storage_unavailable"
+                else:
+                    storage_recovery = True
+                    reason = "storage_recovery_required"
+                finally:
+                    os.close(directory)
         selected = self._broker.controller.inventory().cameras
         warm = tuple(self._recording_policy.status(camera.scope) for camera in selected)
         recording_enabled = any(
@@ -935,9 +983,46 @@ class HomeKitBridge:
             if recording_enabled
             else "recording_disabled"
         )
+        publication = None
+        if self._config_signature is not None and self._publication_status is not None:
+            notice_boot, notice = self._publication_status
+            expected_scope, expected_revision, expected_entries, expected_media = (
+                self._config_signature
+            )
+            inventory = self._backend.inventory()
+            current_scope = (
+                None
+                if inventory.profile_id is None
+                else {
+                    "profile_id": inventory.profile_id,
+                    "account_generation": inventory.account_generation,
+                }
+            )
+            if (
+                transport_ready
+                and notice_boot == runtime.boot_id == self._broker.boot_id
+                and notice["scope"] == expected_scope == current_scope
+                and notice["revision"] == expected_revision == self._registry.revision
+                and notice["generation"] == self._config_generation
+            ):
+                publication = notice
+        else:
+            expected_entries, expected_media = [], False
+        camera_ready = bool(
+            publication is not None
+            and self._publication_enabled
+            and expected_media
+            and expected_entries
+            and not reason
+            and publication["configured"]
+            == publication["published"]
+            == publication["advertised"]
+            == len(expected_entries)
+        )
         return {
             "requested": True,
             "boot_id": runtime.boot_id if runtime is not None else None,
+            "pairing_storage_recovery_required": storage_recovery,
             "pairing_maintenance_pending": sum(
                 row.phase != "completed" for row in self._pairing_admin.journal.entries
             ),
@@ -945,7 +1030,11 @@ class HomeKitBridge:
             "state": "degraded" if reason else "control_ready" if transport_ready else self.state,
             "reason": reason or fallback,
             "transport_ready": transport_ready,
-            "camera_ready": False,
+            "camera_ready": camera_ready,
+            "publication_configured": publication["configured"] if publication is not None else 0,
+            "publication_listening": publication["published"] if publication is not None else 0,
+            "publication_advertised": publication["advertised"] if publication is not None else 0,
+            "real_ring_apple_qualified": False,
             "live_video_ready": self._live.ready,
             "live_video_resources": self._live.pending_resources,
             "live_video_cleanup_failures": self._live.cleanup_failures,

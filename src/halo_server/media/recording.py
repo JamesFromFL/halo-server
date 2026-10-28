@@ -6,7 +6,6 @@ import asyncio
 import contextlib
 import json
 import struct
-import sys
 import threading
 from dataclasses import asdict, dataclass
 from fractions import Fraction
@@ -17,6 +16,8 @@ from halo_server.media.manager import settle_owned
 from halo_server.media.mp4 import MAX_FRAGMENT_BYTES, MAX_INIT_BYTES, inspect_fragment, inspect_init
 from halo_server.media.opus import MAX_OPUS_PACKET, parse_opus
 from halo_server.media.worker_limits import worker_environment
+from halo_server.release_execution import python_worker_command
+from halo_server.release_guard import inherited_guard_fds
 
 MAX_WORKERS = 2
 START_SECONDS = 3.0
@@ -178,6 +179,8 @@ class RecordingWorker:
             if self._process is not None:
                 return
             environment = worker_environment()
+            command = python_worker_command(Path(__file__).with_name("recording_worker.py"))
+            inherited = inherited_guard_fds()
             with _LOCK:
                 if _WORKERS >= MAX_WORKERS:
                     raise RecordingError("busy")
@@ -186,9 +189,8 @@ class RecordingWorker:
                 _OWNED.add(self)
             spawn = asyncio.create_task(
                 asyncio.create_subprocess_exec(
-                    sys.executable,
-                    "-I",
-                    str(Path(__file__).with_name("recording_worker.py")),
+                    *command,
+                    pass_fds=inherited,
                     stdin=asyncio.subprocess.PIPE,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.DEVNULL,

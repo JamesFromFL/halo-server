@@ -6,7 +6,6 @@ import asyncio
 import contextlib
 import json
 import struct
-import sys
 import threading
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -26,6 +25,8 @@ from halo_server.media.h264 import (
 )
 from halo_server.media.manager import settle_owned
 from halo_server.media.worker_limits import worker_environment
+from halo_server.release_execution import python_worker_command
+from halo_server.release_guard import inherited_guard_fds
 
 MAX_ENCODERS = 4
 START_SECONDS = 5.0
@@ -84,6 +85,8 @@ class VideoWorker:
             if self._process is not None:
                 return
             environment = worker_environment()
+            command = python_worker_command(Path(__file__).with_name("transcode_worker.py"))
+            inherited = inherited_guard_fds()
             with _COUNT_LOCK:
                 if _ENCODERS >= MAX_ENCODERS:
                     raise VideoTransformError("Video encoder capacity is exhausted")
@@ -91,9 +94,8 @@ class VideoWorker:
                 self._reserved = True
             spawn = asyncio.create_task(
                 asyncio.create_subprocess_exec(
-                    sys.executable,
-                    "-I",
-                    str(Path(__file__).with_name("transcode_worker.py")),
+                    *command,
+                    pass_fds=inherited,
                     stdin=asyncio.subprocess.PIPE,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.DEVNULL,

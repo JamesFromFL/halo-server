@@ -2,7 +2,7 @@
   "name": "@halo/homekit-adapter",
   "version": "0.1.0",
   "private": true,
-  "description": "Private supervised Halo HAP adapter; synthetic control lifecycle only",
+  "description": "Private supervised Halo HAP adapter",
   "license": "GPL-3.0-or-later",
   "type": "module",
   "engines": {
@@ -15,7 +15,7 @@
     "check": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@homebridge/hap-nodejs": "file:vendor/hap-nodejs-2.2.3-halo.1.tgz"
+    "@homebridge/hap-nodejs": "file:vendor/hap-nodejs-2.2.3-halo.2.tgz"
   },
   "devDependencies": {
     "@types/node": "26.2.0",

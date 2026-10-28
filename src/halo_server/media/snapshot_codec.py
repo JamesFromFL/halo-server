@@ -6,7 +6,6 @@ import asyncio
 import base64
 import contextlib
 import struct
-import sys
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -14,6 +13,8 @@ from pathlib import Path
 from halo_server.media.jpeg import MAX_JPEG_BYTES, JpegError, SnapshotConfiguration, inspect_jpeg
 from halo_server.media.manager import settle_owned
 from halo_server.media.worker_limits import worker_environment
+from halo_server.release_execution import python_worker_command
+from halo_server.release_guard import inherited_guard_fds
 
 MAX_WORKERS = 2
 CONVERT_SECONDS = 2.0
@@ -66,6 +67,8 @@ class SnapshotWorker:
         if self._closed:
             raise SnapshotCodecError("cleanup_pending")
         environment = worker_environment()
+        command = python_worker_command(Path(__file__).with_name("snapshot_worker.py"))
+        inherited = inherited_guard_fds()
         with _COUNT_LOCK:
             if _WORKERS >= MAX_WORKERS:
                 raise SnapshotCodecError("busy")
@@ -73,9 +76,8 @@ class SnapshotWorker:
             self._reserved = True
         self._spawn = asyncio.create_task(
             asyncio.create_subprocess_exec(
-                sys.executable,
-                "-I",
-                str(Path(__file__).with_name("snapshot_worker.py")),
+                *command,
+                pass_fds=inherited,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.DEVNULL,

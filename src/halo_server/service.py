@@ -172,6 +172,9 @@ class HaloService:
     ) -> None:
         self.paths = paths
         self.configuration = configuration or ServerConfiguration()
+        from halo_server.release_execution import validate_operating_mode
+
+        validate_operating_mode(self.configuration)
         from halo_server.owner_admin import OwnerAdministration
 
         self._owner_admin = OwnerAdministration(self)
@@ -249,6 +252,7 @@ class HaloService:
         self._last_account_error: str | None = None
         self._account_integrations_ready = False
         self._shutdown_complete = True
+        self._source_guard_lease = None
         self._restore_retry_initial = max(0.01, restore_retry_initial)
         self._restore_retry_max = max(self._restore_retry_initial, restore_retry_max)
         self._plugin_events.bind_scope(self._current_account_scope)
@@ -296,14 +300,28 @@ class HaloService:
         """Start the admin plane, then restore Ring state in the background loop."""
         if self._started_at is not None:
             return
+        from halo_server.release_execution import validate_runtime_state
+
+        if self._source_guard_lease is not None:
+            raise RuntimeError("Previous source release retirement is incomplete")
         for camera_id in tuple(self._captures.retiring):
             self._captures.can_admit(camera_id)
         if self._captures.retiring:
             raise RuntimeError("Previous Ring camera teardown is still pending")
         validate_media_compatibility()
         self.paths.prepare()
-        if self.configuration.homekit_enabled:
-            self.paths.prepare_homekit()
+        from halo_server.release_guard import acquire_source_guard
+
+        lease = acquire_source_guard(self.paths.state_directory)
+        self._source_guard_lease = lease
+        try:
+            validate_runtime_state(self.paths.state_directory)
+            if self.configuration.homekit_enabled:
+                self.paths.prepare_homekit()
+        except BaseException:
+            lease.close()
+            self._source_guard_lease = None
+            raise
         self._main_loop = asyncio.get_running_loop()
         self._stop_requested.clear()
         self._repair_requested = False
@@ -318,17 +336,28 @@ class HaloService:
             if self._plugin_api is not None:
                 await self._plugin_api.start()
         except BaseException:
+            cleanup_failed = False
             if self._plugin_api is not None:
-                with contextlib.suppress(Exception):
+                try:
                     await self._plugin_api.stop()
+                except BaseException:
+                    cleanup_failed = True
             if self._rtsp_gateway is not None:
-                with contextlib.suppress(Exception):
+                try:
                     await asyncio.to_thread(self._rtsp_gateway.stop)
-            with contextlib.suppress(Exception):
+                except BaseException:
+                    cleanup_failed = True
+            try:
                 await self._admin.stop()
+            except BaseException:
+                cleanup_failed = True
             self._restoring = False
             self._started_at = None
             self._main_loop = None
+            self._shutdown_complete = not cleanup_failed
+            if not cleanup_failed:
+                lease.close()
+                self._source_guard_lease = None
             raise
         self._tick_task = asyncio.create_task(self._tick_incidents(), name="incident-timer")
         self._inventory_task = asyncio.create_task(
@@ -420,6 +449,9 @@ class HaloService:
         self._shutdown_complete = not failures
         if failures:
             raise ExceptionGroup("Halo Server shutdown failed", failures)
+        if self._source_guard_lease is not None:
+            self._source_guard_lease.close()
+            self._source_guard_lease = None
 
     async def _try_restore_ring_session(self) -> bool:
         """Attempt a cached login and report whether a later retry is warranted."""
@@ -790,7 +822,10 @@ class HaloService:
             if (snapshot := session.snapshot()).lease_count > 0
             or snapshot.state is not MediaSessionState.IDLE
         }
+        from halo_server.release_execution import release_status
+
         return {
+            "release": release_status(),
             "version": __version__,
             "service": "running" if self._started_at is not None else "stopped",
             "shutdown_complete": self._shutdown_complete,

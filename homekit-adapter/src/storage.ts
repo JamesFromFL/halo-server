@@ -1,10 +1,11 @@
 import { createHash, createPrivateKey, createPublicKey, randomInt } from "node:crypto";
 import { closeSync, constants, fstatSync, openSync, opendirSync, readSync } from "node:fs";
 import { TextDecoder } from "node:util";
-import { HAPStorage } from "@homebridge/hap-nodejs";
+import { HAPStorage, HAP_STORAGE_INTENT } from "@homebridge/hap-nodejs";
 import { ProtocolError, pairingManifestRevision, type PairingManifest } from "./protocol.js";
 
 export const MAX_PAIRING_FILES = 1024;
+export const STORAGE_RECOVERY_REQUIRED = "storage_recovery_required";
 export const MAX_PAIRING_FILE_BYTES = 1024 * 1024;
 export const MAX_PAIRING_BYTES = 32 * 1024 * 1024;
 const basename = /^(AccessoryInfo|IdentifierCache|ControllerStorage)\.([0-9A-F]{12})\.json$/;
@@ -170,6 +171,7 @@ export class PairingStore {
         }
       } finally { listing.closeSync(); }
       for (const name of entries) {
+        if (name === HAP_STORAGE_INTENT) throw new ProtocolError(STORAGE_RECOVERY_REQUIRED);
         const match = basename.exec(name);
         if (!match && !temporary.test(name)) throw new Error();
         const descriptor = openSync(`${this.path}/${name}`, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);

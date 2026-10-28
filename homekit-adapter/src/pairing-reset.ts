@@ -5,6 +5,7 @@ import { pathToFileURL } from "node:url";
 import { pairingDescriptors } from "./main.js";
 import { PairingStore, pairingRevision, readPairingManifest } from "./storage.js";
 import { verifyPublicApi } from "./public-api.js";
+import { enablePairingDurability } from "./storage-boundary.js";
 import type { PairingManifest } from "./protocol.js";
 
 export interface ResetInput {
@@ -61,6 +62,8 @@ async function run(): Promise<number> {
   const descriptors = pairingDescriptors(process.env, 0, 1);
   if (descriptors.pairing === undefined || descriptors.pairingLock === undefined) throw new Error("invalid-bootstrap");
   verifyPublicApi();
+  // This helper has no media/model authority; its parent already reaped the adapter.
+  enablePairingDurability(() => {});
   const chunks: Buffer[] = [];let length = 0;
   const deadline = setTimeout(() => {process.stdin.destroy(new Error("timeout"));}, 5000);
   let input: ResetInput;

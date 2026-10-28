@@ -1,6 +1,6 @@
-import { Categories } from "@homebridge/hap-nodejs";
+import { AccessoryEventTypes, Categories } from "@homebridge/hap-nodejs";
 import { CameraAccessory, type AccessoryIdentity, type MotionState } from "./camera.js";
-import { ProtocolError, type AccountScope, type JsonObject, type MediaScope, type PairingIdentity, type PairingStatus, type PairingReveal, type PairingReset } from "./protocol.js";
+import { ProtocolError, type AccountScope, type AccessoryPublicationStatus, type JsonObject, type MediaScope, type PairingIdentity, type PairingStatus, type PairingReveal, type PairingReset } from "./protocol.js";
 import { pairingSnapshot } from "./pairing.js";
 import { pairingRevision } from "./storage.js";
 import type { AdapterSession } from "./session.js";
@@ -31,7 +31,7 @@ export function hapPublisher(store: PairingStore): AccessoryPublisher {
 
 interface Configuration extends Omit<AccessoryConfigurationPage, "page_index" | "total_pages"> { }
 interface PendingConfiguration { header: AccessoryConfigurationPage; pages: Map<number, AccessoryConfigurationPage> }
-interface Managed { camera: CameraAccessory; published: boolean; stateTimer: NodeJS.Timeout | null }
+interface Managed { camera: CameraAccessory; published: boolean; listening: boolean; advertised: boolean; stateTimer: NodeJS.Timeout | null }
 interface EventState extends MotionState { scope: MediaScope; epoch: string; sequence: number; ttl_ms: number; expires_at_ms: number }
 interface ReceivedEventState extends EventState { expiresAt: number }
 interface CameraEvent { scope: MediaScope; epoch: string; sequence: number; event_id: string; type: "doorbell"; ttl_ms: number; expires_at_ms: number }
@@ -42,6 +42,7 @@ export interface AccessoryManagerOptions {
   publisher?: AccessoryPublisher;
   syncEvents: (scope: AccountScope | null, epoch: string | null, sequence: number) => Promise<JsonObject>;
   onFailure?: (error: ProtocolError) => void;
+  onStatus?: (status: AccessoryPublicationStatus) => Promise<void>;
   monotonicNow?: () => number;
 }
 const sameAccount = (left: AccountScope | null, right: AccountScope | null): boolean =>
@@ -74,6 +75,10 @@ export class AccessoryManager {
   private eventBaseline = 0;
   private eventSynchronized = false;
   private eventToken = 0;
+  private publicationFenced = true;
+  private statusLatest: AccessoryPublicationStatus | null = null;
+  private statusDirty = false;
+  private statusSending = false;
 
   constructor(private readonly options: AccessoryManagerOptions) { }
   private now(): number { return this.options.monotonicNow?.() ?? Number(process.hrtime.bigint() / 1_000_000n); }
@@ -81,6 +86,65 @@ export class AccessoryManager {
   get publishedCount(): number { return [...this.managed.values()].filter(value => value.published).length; }
   get isFailed(): boolean { return this.failed; }
   accessories(): CameraAccessory[] { return [...this.managed.values()].map(value => value.camera); }
+
+  /** Cleanup claims are distinct from public HAP listener/advertisement evidence. */
+  get publicationStatus(): AccessoryPublicationStatus | null {
+    const header = this.pending?.header ?? this.configuration;
+    if (!header) return null;
+    const result: AccessoryPublicationStatus = {scope: structuredClone(header.scope), revision: header.revision,
+      generation: header.generation, configured: 0, published: 0, advertised: 0};
+    const config = this.configuration, session = this.options.session;
+    if (this.closed || this.failed || this.publicationFenced || this.pending || !config?.scope ||
+        config.generation !== this.generation || !session.inventoryComplete || !sameAccount(config.scope, session.accountScope)) return result;
+    const cameras = new Map(session.cameras().map(camera => [camera.scope.camera_id, camera]));
+    for (const identity of config.entries) {
+      const managed = this.managed.get(identity.camera_id), camera = cameras.get(identity.camera_id);
+      if (!managed || !camera || managed.camera.isRetired || !sameIdentity(identity, managed.camera.identity) ||
+          key(managed.camera.scope) !== key(camera.scope) || !sameAccount(camera.scope, config.scope)) continue;
+      result.configured++;
+      if (managed.published && managed.listening) {
+        result.published++;
+        if (managed.advertised) result.advertised++;
+      }
+    }
+    return result;
+  }
+
+  /** At most one write plus one replacement snapshot; no per-accessory tasks. */
+  private notifyStatus(): void {
+    if (!this.options.onStatus) return;
+    const latest = this.publicationStatus;
+    if (!latest || JSON.stringify(latest) === JSON.stringify(this.statusLatest)) return;
+    this.statusLatest = latest; this.statusDirty = true;
+    this.startStatus();
+  }
+  private startStatus(): void {
+    if (this.statusSending) return;
+    this.statusSending = true;
+    void (async () => {
+      while (this.statusDirty) {
+        this.statusDirty = false;
+        await this.options.onStatus!(structuredClone(this.statusLatest!));
+      }
+    })().catch(() => {
+      this.failed = true; this.publicationFenced = true;
+      this.options.onFailure?.(new ProtocolError("accessory-status-failed"));
+    }).finally(() => {
+      this.statusSending = false;
+      if (this.statusDirty && !this.failed) this.startStatus();
+    });
+  }
+
+  private observePublication(id: string, managed: Managed): void {
+    managed.camera.accessory.on(AccessoryEventTypes.LISTENING, () => {
+      if (this.managed.get(id) !== managed || managed.camera.isRetired || !managed.published) return;
+      managed.listening = true; this.notifyStatus();
+    });
+    managed.camera.accessory.on(AccessoryEventTypes.ADVERTISED, () => {
+      if (this.managed.get(id) !== managed || managed.camera.isRetired || !managed.published || !managed.listening) return;
+      managed.advertised = true; this.notifyStatus();
+    });
+  }
 
   private pairingTarget(identity: PairingIdentity): Managed {
     const config = this.configuration, managed = this.managed.get(identity.scope.camera_id);
@@ -97,7 +161,7 @@ export class AccessoryManager {
       paired: null, paired_clients: null, pairing_revision: null, pairing_manifest: null};
     try {
       const managed = this.pairingTarget(identity), snapshot = pairingSnapshot(this.options.store!, identity.username);
-      return {...result, accepted: true, code: "ok", published: managed.published, paired: snapshot.paired,
+      return {...result, accepted: true, code: "ok", published: !this.publicationFenced && managed.published && managed.listening && managed.advertised, paired: snapshot.paired,
         paired_clients: snapshot.paired_clients, pairing_revision: snapshot.pairing_revision, pairing_manifest: snapshot.pairing_manifest};
     } catch {return result;}
   }
@@ -105,7 +169,7 @@ export class AccessoryManager {
     const result: PairingReveal = {...identity, accepted: false, code: "not-ready", pincode: null, setup_uri: null, ttl_ms: 0};
     try {
       const managed = this.pairingTarget(identity);
-      if (!managed.published) return result;
+      if (this.publicationFenced || !managed.published || !managed.listening || !managed.advertised) return result;
       const snapshot = pairingSnapshot(this.options.store!, identity.username);
       if (snapshot.pairing_revision !== identity.pairing_revision) return {...result, code: "conflict"};
       if (snapshot.paired || snapshot.pincode === null) return {...result, code: "policy-denied"};
@@ -185,6 +249,7 @@ export class AccessoryManager {
 
   /** Fence events synchronously before any queued graph mutation or IPC await. */
   invalidate(): void {
+    this.publicationFenced = true; this.notifyStatus();
     this.eventToken++; this.eventSynchronized = false; this.states.clear(); this.lastPress.clear();
     for (const managed of this.managed.values()) {
       if (managed.stateTimer) clearTimeout(managed.stateTimer);
@@ -200,6 +265,7 @@ export class AccessoryManager {
   }
   private async reconcileNow(): Promise<void> {
     if (this.failed) throw new ProtocolError("accessory-cleanup-pending");
+    this.publicationFenced = true; this.notifyStatus();
     const config = this.configuration;
     const session = this.options.session;
     if (this.closed || config === null || config.scope === null || !sameAccount(config.scope, session.accountScope)) {
@@ -235,8 +301,9 @@ export class AccessoryManager {
         managed = {camera: new CameraAccessory(identity, camera, {
           ...(native === undefined ? {} : {native}),
           failure: () => { this.failed = true; this.invalidate(); this.options.onFailure?.(new ProtocolError("video-cleanup-failed")); },
-        }), published: false, stateTimer: null};
+        }), published: false, listening: false, advertised: false, stateTimer: null};
         this.managed.set(identity.camera_id, managed);
+        this.observePublication(identity.camera_id, managed);
       } else {
         managed.camera.update(camera);
         await managed.camera.updateAudio(identity.audio ?? null);
@@ -256,16 +323,18 @@ export class AccessoryManager {
           // publish may have opened sockets before rejecting. Retain this claim
           // until compensating unpublish succeeds.
           await this.options.publisher.unpublish(managed.camera);
-          managed.published = false;
+          managed.published = false; managed.listening = false; managed.advertised = false;
           throw error;
         }
         if (this.closed || generation !== this.generation) await this.retire(identity.camera_id, managed);
       }
     }
+    this.publicationFenced = false; this.notifyStatus();
     if (!this.closed && this.managed.size && !this.eventSynchronized && !this.syncing) void this.synchronizeEvents().catch(() => {});
   }
   private async retire(id: string, managed: Managed): Promise<void> {
     managed.camera.retire();
+    managed.listening = false; managed.advertised = false; this.notifyStatus();
     await managed.camera.closeStreams();
     if (managed.stateTimer) clearTimeout(managed.stateTimer);
     managed.stateTimer = null;

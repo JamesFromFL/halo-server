@@ -29,7 +29,8 @@
     "owner-admin-v1 is required in ordered hello ACK features. Pairing metadata, explicit secret reveal, and quiescence are separate commands; full scope/registry/accessory/username/revision and boot/request identity must correlate. Status metadata never carries secrets; secret reveal lifetime60000ms is a display limit, not PIN expiry.",
     "Accepted status pairing_revision and accepted prepare quiesced_revision equal SHA256 of bytes halo-pairing-manifest-v1\\0 plus sorted compact JSON manifest. Exact file-byte hashes are opaque metadata, never file contents. Prepare compares expected revision again after quiescence. Durable reset journal/FD lock authority belongs to Python; no child command deletes pairings.",
     "Recording settings expected_revision and accessory_recording.revision are per-camera preference CAS tokens. Global owner revision remains distinct. Tokens change on each actual preference mutation, protecting concurrent cameras and rejecting stale same-camera and ABA writes.",
-    "control_state_result only returns fresh normalized observed light/siren state from current trusted scope; unknown is null. Accepted control_request is admission, never proof desired state was observed. No HAP startup/restore invokes Ring controls."
+    "control_state_result only returns fresh normalized observed light/siren state from current trusted scope; unknown is null. Accepted control_request is admission, never proof desired state was observed. No HAP startup/restore invokes Ring controls.",
+    "publication-status-v1 is required. accessory_status counts satisfy advertised<=published<=configured<=256, all zero for null scope. Counts describe only the current complete configuration graph and public HAP listening/advertised events. Python compares exact boot/account/revision/generation and completed config before software readiness; no Ring/Apple acceptance claim or media authority is granted."
   ],
   "x-binary-transfer": {
     "implemented": true,
@@ -837,7 +838,8 @@
             "classic-camera-control-v1",
             "bulk-cancel-v1",
             "hksv-recording-v1",
-            "owner-admin-v1"
+            "owner-admin-v1",
+            "publication-status-v1"
           ]
         },
         "pid": {
@@ -4933,6 +4935,79 @@
           }
         }
       ]
+    },
+    "accessory_status_payload": {
+      "type": "object",
+      "required": [
+        "scope",
+        "revision",
+        "generation",
+        "configured",
+        "published",
+        "advertised"
+      ],
+      "properties": {
+        "scope": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/account_scope"
+            }
+          ]
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "configured": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 256
+        },
+        "published": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 256
+        },
+        "advertised": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 256
+        }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "scope": {
+                "type": "null"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "configured": {
+                "const": 0
+              },
+              "published": {
+                "const": 0
+              },
+              "advertised": {
+                "const": 0
+              }
+            }
+          }
+        }
+      ]
     }
   },
   "oneOf": [
@@ -7011,6 +7086,37 @@
       },
       "additionalProperties": false,
       "x-sender": "python",
+      "x-reply-kind": null
+    },
+    {
+      "type": "object",
+      "required": [
+        "v",
+        "kind",
+        "boot_id",
+        "request_id",
+        "payload"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "integer"
+        },
+        "kind": {
+          "const": "accessory_status"
+        },
+        "boot_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "request_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "payload": {
+          "$ref": "#/$defs/accessory_status_payload"
+        }
+      },
+      "additionalProperties": false,
+      "x-sender": "hap",
       "x-reply-kind": null
     }
   ],

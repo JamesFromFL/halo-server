@@ -16,7 +16,13 @@ from typing import Any
 from halo_server.homekit.text import literal_text
 
 PROTOCOL_VERSION = 1
-FEATURES = ("classic-camera-control-v1", "bulk-cancel-v1", "hksv-recording-v1", "owner-admin-v1")
+FEATURES = (
+    "classic-camera-control-v1",
+    "bulk-cancel-v1",
+    "hksv-recording-v1",
+    "owner-admin-v1",
+    "publication-status-v1",
+)
 MAX_CONTROL_BYTES = 65536
 MAX_JSON_DEPTH = 32
 IO_TIMEOUT_SECONDS = 5.0
@@ -695,7 +701,22 @@ def _control_state_result(value):
     )
 
 
+def _accessory_status(value):
+    return _object(
+        scope=_nullable(_account),
+        revision=_revision,
+        generation=_positive,
+        configured=_integer(0, 256),
+        published=_integer(0, 256),
+        advertised=_integer(0, 256),
+    )(value) and (
+        value["advertised"] <= value["published"] <= value["configured"]
+        and (value["scope"] is not None or value["configured"] == 0)
+    )
+
+
 PAYLOAD_VALIDATORS = {
+    "accessory_status": _accessory_status,
     "pairing_status_request": _object(**_PAIRING_IDENTITY),
     "pairing_status_result": _pairing_status_result,
     "pairing_reveal_request": _object(**_PAIRING_IDENTITY, pairing_revision=_hash),
@@ -905,6 +926,7 @@ PYTHON_KINDS = frozenset(
 )
 HAP_KINDS = frozenset(
     {
+        "accessory_status",
         "pairing_status_result",
         "pairing_reveal_result",
         "pairing_reset_prepare_result",

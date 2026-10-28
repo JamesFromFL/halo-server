@@ -6,7 +6,7 @@ export const MAX_FRAME_BYTES = 65_536;
 export const MAX_JSON_DEPTH = 32;
 export const MAX_FRAMES_PER_CHUNK = 256;
 export const FEATURE = "classic-camera-control-v1";
-export const FEATURES = [FEATURE, "bulk-cancel-v1", "hksv-recording-v1", "owner-admin-v1"] as const;
+export const FEATURES = [FEATURE, "bulk-cancel-v1", "hksv-recording-v1", "owner-admin-v1", "publication-status-v1"] as const;
 
 export const KINDS = [
   "pairing_status_request", "pairing_status_result", "pairing_reveal_request", "pairing_reveal_result", "pairing_reset_prepare", "pairing_reset_prepare_result",
@@ -15,7 +15,7 @@ export const KINDS = [
   "recording_next", "recording_next_result", "recording_stop", "recording_stop_result",
   "audio_settings_update", "audio_settings_result",
   "video_prepare", "video_prepare_result", "video_start", "video_start_result", "video_reconfigure", "video_reconfigure_result", "video_stop", "video_stop_result", "video_ended",
-  "accessory_config", "accessory_config_ack", "event_sync", "event_sync_ack", "event_state", "camera_event",
+  "accessory_config", "accessory_config_ack", "accessory_status", "event_sync", "event_sync_ack", "event_state", "camera_event",
   "hello", "hello_ack", "ping", "pong", "shutdown", "shutdown_ack", "status", "error",
   "inventory_reset", "inventory_request", "inventory_page", "camera_status", "policy_update", "policy_ack",
   "lease_request", "lease_result", "lease_renew", "lease_renew_result", "lease_stop", "lease_stop_result",
@@ -84,6 +84,10 @@ export const RESULT_CODES = [
   "cancelled", "invalid-request", "not-found", "conflict", "source-failed", "expired", "protocol-error", "invalidated", "not-ready",
 ] as const;
 export interface AccountScope { profile_id: string; account_generation: number }
+export interface AccessoryPublicationStatus {
+  scope: AccountScope | null; revision: number; generation: number;
+  configured: number; published: number; advertised: number;
+}
 export interface MediaScope extends AccountScope { camera_id: string; device_generation: number; privacy_generation: number }
 export interface PairingManifest { accessory_info: string | null; identifier_cache: string | null; controller_storage: string | null }
 export function pairingManifestRevision(manifest: PairingManifest): string {
@@ -344,6 +348,10 @@ const payloadValidators: Record<Kind, Check> = {
   video_ended:object({...resource,code}),
   accessory_config: accessoryConfig,
   accessory_config_ack: object({scope:nullable(account),revision,generation:positive,page_index:integer(0,7),accepted:bool,code}),
+  accessory_status: value => object({scope:nullable(account),revision,generation:positive,
+    configured:integer(0,256),published:integer(0,256),advertised:integer(0,256)})(value) && record(value) &&
+    (value.advertised as number) <= (value.published as number) && (value.published as number) <= (value.configured as number) &&
+    (value.scope !== null || value.configured === 0 && value.published === 0 && value.advertised === 0),
   event_sync: object({scope:nullable(account),epoch:nullable(epoch),sequence:revision}),
   event_sync_ack: object({scope:nullable(account),epoch,sequence:revision,accepted:bool,code}),
   event_state: object({scope,epoch,sequence:revision,motion:nullable(bool),ttl_ms:integer(0,30000),expires_at_ms:revision,source_state:choice("connected","connecting","offline"),synchronized:bool}),
@@ -375,7 +383,7 @@ const payloadValidators: Record<Kind, Check> = {
   transfer_result: object({...transfer, status: choice("complete", "cancelled", "rejected"), code}),
 };
 const pythonKinds: readonly Kind[] = ["pairing_status_request", "pairing_reveal_request", "pairing_reset_prepare", "control_state_result", "recording_settings_result", "recording_open_result", "recording_next_result", "recording_stop_result", "audio_settings_result", "video_prepare_result", "video_start_result", "video_reconfigure_result", "video_stop_result", "video_ended", "accessory_config", "event_sync_ack", "event_state", "camera_event", "hello", "ping", "shutdown", "inventory_reset", "inventory_page", "camera_status", "policy_ack", "lease_result", "lease_renew_result", "lease_stop_result", "snapshot_result", "talkback_result", "control_result"];
-const hapKinds: readonly Kind[] = ["pairing_status_result", "pairing_reveal_result", "pairing_reset_prepare_result", "control_state_request", "recording_settings_update", "recording_open", "recording_next", "recording_stop", "audio_settings_update", "video_prepare", "video_start", "video_reconfigure", "video_stop", "accessory_config_ack", "event_sync", "hello_ack", "pong", "shutdown_ack", "inventory_request", "policy_update", "lease_request", "lease_renew", "lease_stop", "snapshot_request", "snapshot_cancel", "talkback_request", "control_request"];
+const hapKinds: readonly Kind[] = ["pairing_status_result", "pairing_reveal_result", "pairing_reset_prepare_result", "control_state_request", "recording_settings_update", "recording_open", "recording_next", "recording_stop", "audio_settings_update", "video_prepare", "video_start", "video_reconfigure", "video_stop", "accessory_config_ack", "accessory_status", "event_sync", "hello_ack", "pong", "shutdown_ack", "inventory_request", "policy_update", "lease_request", "lease_renew", "lease_stop", "snapshot_request", "snapshot_cancel", "talkback_request", "control_request"];
 export function validateScope(value: unknown): MediaScope {
   if (!scope(value)) throw new ProtocolError("invalid-scope");
   return value as MediaScope;

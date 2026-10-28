@@ -1215,8 +1215,11 @@ async def test_service_does_not_retry_without_cached_credentials(tmp_path):
 @pytest.mark.asyncio
 async def test_service_releases_remaining_resources_when_one_stop_fails(tmp_path):
     class FailingPluginApi:
+        fail = True
+
         async def stop(self):
-            raise RuntimeError("plugin stop failed")
+            if self.fail:
+                raise RuntimeError("plugin stop failed")
 
     paths = ServerPaths(tmp_path / "state", tmp_path / "runtime")
     sessions = FakeSessions()
@@ -1239,6 +1242,11 @@ async def test_service_releases_remaining_resources_when_one_stop_fails(tmp_path
     assert sessions.shutdown_called is True
     assert service._started_at is None
     assert service._main_loop is None
+
+    assert service._source_guard_lease is not None
+    service._plugin_api.fail = False
+    await service.stop()
+    assert service._source_guard_lease is None
 
 
 @pytest.mark.asyncio

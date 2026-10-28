@@ -10,15 +10,17 @@ settings and four seconds of actual decodable pre-event history. It defaults off
 
 The adapter uses the approved narrow transport extension to pinned HAP-NodeJS.
 It requires neither Scrypted nor Homebridge and imports no private HAP paths.
-The `classic-camera-control-v1`, `bulk-cancel-v1` and `hksv-recording-v1` markers
+The `classic-camera-control-v1`, `bulk-cancel-v1`, `hksv-recording-v1`,
+`owner-admin-v1` and `publication-status-v1` markers
 negotiate private protocol support; they do not prove successful Apple pairing or
-Home timeline playback. Owner setup, immutable release packaging and actual
-Apple/Ring acceptance remain separate implementation/qualification gates.
+Home timeline playback. Owner setup and immutable release packaging live in the
+parent application; [actual Apple/Ring acceptance](../docs/homekit-acceptance.md)
+remains a separate device qualification gate.
 
 ## Pinned toolchain
 
 - Node **26.12.1**; npm **12.2.1**.
-- `@homebridge/hap-nodejs` **2.2.3-halo.1** (Apache-2.0), immutable vendored tarball and lock integrity. [Patch, license and provenance](vendor/) accompany the dependency; `tools/build_hap_dependency.py` rebuilds the exact official source pin plus patch.
+- `@homebridge/hap-nodejs` **2.2.3-halo.2** (Apache-2.0), immutable vendored tarball and lock integrity. [Patch, license and provenance](vendor/) accompany the dependency; `tools/build_hap_dependency.py` rebuilds the exact official source pin plus patch.
 - TypeScript **6.0.3** and `@types/node` **26.2.0**.
 
 `package-lock.json` fixes transitive versions and integrity. `.npmrc` disables lifecycle scripts, automatic audit/network extras and floating direct saves. A normal daemon launch never runs npm or resolves dependencies. The current package is private development groundwork, not a complete release installer or a bundled Node binary.
@@ -56,8 +58,8 @@ Tests exercise canonical Python fixtures, split/coalesced frames, exact frame li
 
 ## Explicit later gates
 
-- HAP's released storage uses temporary-write/rename without fsync durability, can treat invalid JSON as missing and follows file symlinks during reads. S07 now validates private pinned paths, exact records/key consistency and exclusive inherited ownership before HAP reads. Power-loss durability and revocation recovery remain S14 gates; unsafe existing state is preserved and refused.
-- Released HDS `sendEvent` has no public awaited drain/queued-byte bound. IPC credits alone cannot guarantee bounded HDS output. A maintained supported extension decision and stalled-controller measurements are mandatory before reliable HKSV claims; no private socket monkeypatch is included.
+- The existing HAP reader can treat invalid JSON as missing and follows file symlinks. Halo validates pinned private paths, exact records and exclusive inherited ownership before HAP reads. The approved durability correction adds fsync, a durable intent and a fatal process boundary; an incomplete intent remains refused for explicit owner recovery.
+- The approved maintained extension supplies bounded public HDS output and durable storage while preserving crypto and pairing formats. IPC credits remain separate from HDS bounds. Real Ring/Home hub acceptance remains a hardware qualification gate; no private socket monkeypatch is included.
 - Public API imports and synthetic controller objects do not prove live SRTP, valid clips, audio-off privacy, Apple notification timing, actual source resolution, HEVC/HKSV3, real pairing, unattended install or platform support. Keep those acceptance gates separate.
 - `npm audit` must be reviewed as evidence about this exact locked graph/date; do not silently upgrade HAP or hide advisories to obtain a clean result.
 
@@ -77,6 +79,19 @@ state plus a cursor; doorbell edges are never reconstructed from replay. Both TT
 and absolute monotonic expiry are checked, including after delayed consumption.
 Python `time.monotonic()` and Node `process.hrtime.bigint()` were bracket-probed on
 the qualified Linux runtime; other operating systems require qualification.
+
+`accessory_status` reports current configuration scope/revision/generation and
+bounded configured/listening/advertised counts. A publish return or retained
+cleanup claim cannot prove listening: only the public HAP `listening` event does.
+Only the subsequent public `advertised` event proves local advertisement. Counts
+clear synchronously on invalidation, retirement or a new configuration generation;
+unchanged listener evidence can be reused after that same graph is revalidated.
+Incomplete pages, incomplete inventory and stale full scopes never count as a
+ready graph. Status output retains at most one in-flight write and one latest
+snapshot. Pairing status/reveal require advertisement evidence too, while reset
+may quiesce an unadvertised retained cleanup claim. These facts prove software
+publication, not a working Ring source, Apple pairing, Home hub delivery or a clip
+in Apple's timeline.
 
 ## S08 live delegates
 
@@ -158,3 +173,32 @@ jobs globally, one job per camera. Failed cleanup remains charged. Finite warm
 lease rollover closes the old claim before rebuffering. Readiness reports actual
 history and capacity; native sample qualification is separate from Apple HKSV
 interoperability. No normal daemon launch installs dependencies or patches HAP.
+
+
+## Durable pairing storage and failure retirement
+
+The adapter and offline reset helper enable the public durability guard and
+register the public fatal callback before the first HAP storage access. The
+existing raw-key, compact JSON backend remains in place. Private exclusive
+temporary writes are fully written, fsynced, closed, renamed and followed by a
+directory fsync. Removal is followed by a directory fsync too.
+
+Before a target changes, guarded storage durably creates `.hap-storage-intent`;
+it clears and syncs that marker only after the target is durable. A retained
+marker produces `storage_recovery_required` and is preserved. No daemon start,
+reset retry or release rollback silently erases it. Ordinary upstream-style
+consumers may leave the guard disabled, but Halo requires exclusive ownership
+and always enables it.
+
+A filesystem failure latches a typed error. Its callback synchronously closes
+new admission and retires local graph authority, then immediately exits the
+child. The parent owns actual EOF, native-resource retirement and process reap.
+This boundary also runs if diagnostic output or a local fence throws; cached
+HAP model objects never continue after storage failure. The helper likewise
+cannot report a successful reset after a failed commit.
+
+Tests cover actual child failure with a video PREPARE pending over private IPC,
+parent retirement, a preserved intent and refused restart; helper failure emits
+no success. Separate storage tests inject short/zero writes and failures at
+write, close, rename, unlink and fsync boundaries. They verify syscall ordering
+and explicit uncertainty, rather than claiming a physical power-cut test.

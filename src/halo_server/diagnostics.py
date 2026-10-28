@@ -14,6 +14,8 @@ from typing import TYPE_CHECKING
 
 from halo_server.media.manager import settle_owned
 from halo_server.paths import PathSecurityError, ServerPaths, open_private_directory
+from halo_server.release_execution import python_probe_command
+from halo_server.release_guard import inherited_guard_environment, inherited_guard_fds
 
 if TYPE_CHECKING:
     from halo_server.homekit.bridge import AdapterResources
@@ -49,7 +51,13 @@ async def _probe(command: list[str]) -> bytes:
             stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            env={"LANG": "C.UTF-8", "OPENBLAS_NUM_THREADS": "1", "OMP_NUM_THREADS": "1"},
+            env={
+                "LANG": "C.UTF-8",
+                "OPENBLAS_NUM_THREADS": "1",
+                "OMP_NUM_THREADS": "1",
+                **inherited_guard_environment(),
+            },
+            pass_fds=inherited_guard_fds(),
             start_new_session=True,
             limit=PROBE_OUTPUT_LIMIT + 1,
         )
@@ -143,6 +151,15 @@ async def local_doctor(
         except (OSError, PathSecurityError):
             check(name, "fail", "unsafe-path")
         else:
+            if name == "pairing-directory":
+                try:
+                    os.stat(".hap-storage-intent", dir_fd=descriptor, follow_symlinks=False)
+                except FileNotFoundError:
+                    check("pairing-storage", "pass", "no-recovery-marker")
+                except OSError:
+                    check("pairing-storage", "fail", "storage-unavailable")
+                else:
+                    check("pairing-storage", "fail", "storage-recovery-required")
             os.close(descriptor)
             check(name, "pass", "private")
     if resources is None:
@@ -184,7 +201,7 @@ async def local_doctor(
             check("node-probe", "unverified", "unavailable")
         if supported:
             try:
-                body = json.loads(await _probe([sys.executable, "-I", "-c", _NATIVE_PROBE]))
+                body = json.loads(await _probe(python_probe_command(_NATIVE_PROBE)))
                 good = body == {
                     "codecs": dict.fromkeys(("libx264", "aac", "libopus", "mjpeg"), True)
                 }

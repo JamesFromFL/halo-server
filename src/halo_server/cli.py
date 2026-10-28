@@ -135,7 +135,14 @@ def main(argv: list[str] | None = None) -> int:
         parser.print_help()
         return 0
     _require_native_platform(parser)
-    paths = _paths_from_args(args)
+    try:
+        paths = _paths_from_args(args)
+        from halo_server.release_execution import validate_runtime_state
+
+        validate_runtime_state(paths.state_directory)
+    except (RuntimeError, OSError, ValueError) as error:
+        print(f"halo-server: {error}", file=sys.stderr)
+        return 1
     if args.command == "daemon":
         from halo_server.logging_setup import configure_logging
 
@@ -203,7 +210,11 @@ def _configuration_from_args(paths: ServerPaths, args: argparse.Namespace) -> Se
         for name in ("mode", "plugin_host", "plugin_port", "rtsp_host", "rtsp_port")
         if (value := getattr(args, name)) is not None
     }
-    return replace(stored, **overrides)
+    proposed = replace(stored, **overrides)
+    from halo_server.release_execution import validate_operating_mode
+
+    validate_operating_mode(proposed)
+    return proposed
 
 
 def _loopback_host(value: str) -> str:

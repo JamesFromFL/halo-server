@@ -16,6 +16,7 @@ from halo_server.homekit.storage_owner import PairingDirectoryOwner
 from halo_server.homekit.text import literal_text
 from halo_server.media.manager import settle_owned
 from halo_server.private_json import MAX_REVISION, PrivateJsonError, PrivateJsonStore
+from halo_server.release_guard import inherited_guard_environment, inherited_guard_fds
 
 MANIFEST_KEYS = {"accessory_info", "identifier_cache", "controller_storage"}
 DIGEST = re.compile(r"[a-f0-9]{64}\Z")
@@ -344,8 +345,9 @@ class MaintenanceOwner:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
             limit=4097,
-            pass_fds=(self.directory_fd, self.lock_fd),
+            pass_fds=(self.directory_fd, self.lock_fd, *inherited_guard_fds()),
             env={
+                **inherited_guard_environment(),
                 "LANG": "C.UTF-8",
                 "LC_ALL": "C.UTF-8",
                 "TZ": "UTC",

@@ -7,7 +7,8 @@ import { ControlChannel } from "./ipc.js";
 import { BulkChannel } from "./bulk.js";
 import { AdapterSession } from "./session.js";
 import { AccessoryManager, hapPublisher, type AccessoryConfigurationPage } from "./accessories.js";
-import { PairingStore } from "./storage.js";
+import { PairingStore, STORAGE_RECOVERY_REQUIRED } from "./storage.js";
+import { enablePairingDurability } from "./storage-boundary.js";
 import { FEATURES, ProtocolError, validateDirection, type Envelope, type PairingIdentity } from "./protocol.js";
 import { verifyPublicApi } from "./public-api.js";
 
@@ -75,15 +76,20 @@ export function inheritedDescriptors(environment: NodeJS.ProcessEnv, parentPid: 
 async function run(): Promise<number> {
   if (process.version !== "v26.12.1") throw new ProtocolError("node-version-mismatch");
   const descriptors = inheritedDescriptors(process.env, process.ppid);
-  const store = descriptors.pairing === undefined ? undefined : new PairingStore(descriptors.pairing);
+  let session: AdapterSession | null = null;
+  let accessories: AccessoryManager | null = null;
   verifyPublicApi();
+  enablePairingDurability(() => {
+    session?.quiesce();
+    accessories?.invalidate();
+    for (const camera of accessories?.accessories() ?? []) camera.retire();
+  });
+  const store = descriptors.pairing === undefined ? undefined : new PairingStore(descriptors.pairing);
   const control = new Socket({ fd: descriptors.control, readable: true, writable: true });
   const bulk = new Socket({ fd: descriptors.bulk, readable: true, writable: true });
   const channel = new ControlChannel(control);
   let boot: string | null = null;
-  let session: AdapterSession | null = null;
   let transfer: BulkChannel | null = null;
-  let accessories: AccessoryManager | null = null;
   let ending = false;
   let failed = false;
   let idle: NodeJS.Timeout | null = null;
@@ -146,6 +152,10 @@ async function run(): Promise<number> {
         accessories = new AccessoryManager({session: adapterSession,
           ...(store === undefined ? {} : {store, publisher: hapPublisher(store)}),
           syncEvents: (scope, epoch, sequence) => adapterSession.synchronizeEvents(scope, epoch, sequence),
+          onStatus: status => {
+            if (boot === null || ending) return Promise.resolve();
+            return channel.send({v: 1, kind: "accessory_status", boot_id: boot, request_id: randomUUID(), payload: {...status}});
+          },
           onFailure: () => fail("accessory-reconciliation-failed")});
         transfer.start();
         return;
@@ -224,8 +234,9 @@ async function run(): Promise<number> {
 
 // Importing helpers in tests must not launch a process or attach descriptors.
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
-  void run().then(code => { process.exitCode = code; }).catch(() => {
-    process.stderr.write("Halo HAP adapter: bootstrap-failed\n");
+  void run().then(code => { process.exitCode = code; }).catch(error => {
+    const code = error instanceof ProtocolError && error.code === STORAGE_RECOVERY_REQUIRED ? STORAGE_RECOVERY_REQUIRED : "bootstrap-failed";
+    process.stderr.write(`Halo HAP adapter: ${code}\n`);
     process.exitCode = 1;
   });
 }
