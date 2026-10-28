@@ -75,12 +75,14 @@ class AudioTrack:
         clock=time.monotonic,
         adapter_factory=None,
         decoder_factory=None,
+        diagnostic_failure=None,
     ):
         self.request = request
         self._check, self._epoch, self._failure = check, epoch, failure
         self._clock, self._presentation = clock, presentation
         self._touch_feedback, self._last_seen = touch_feedback, last_feedback
         self._adapter_factory, self._decoder_factory = adapter_factory, decoder_factory
+        self._diagnostic_failure = diagnostic_failure
         self._controller, self._boot, self._scope = controller, boot, scope
         self._retired = False
         self.socket = socket.socket(family, socket.SOCK_DGRAM)
@@ -149,6 +151,23 @@ class AudioTrack:
     @property
     def cleanup_failed(self):
         return self.talkback is not None and self.talkback.cleanup_failed
+
+    @property
+    def sent_packets(self):
+        return self._packets
+
+    @property
+    def sent_octets(self):
+        return self._octets
+
+    def _failed(self, stage, code, error):
+        self.failure = code
+        if self._diagnostic_failure is not None:
+            with contextlib.suppress(BaseException):
+                # The owner emits fixed metadata only. Diagnostics cannot
+                # interrupt the existing whole-session retirement callback.
+                self._diagnostic_failure(stage, code, error)
+        self._failure(code)
 
     def _may(self, permission):
         if self._retired:
@@ -321,9 +340,8 @@ class AudioTrack:
                         self._next_packet_at = target + output.duration / 48000
         except asyncio.CancelledError:
             raise
-        except Exception:
-            self.failure = "audio_output_failed"
-            self._failure(self.failure)
+        except Exception as exc:
+            self._failed("audio_send", "audio_output_failed", exc)
 
     async def _receive(self):
         from halo_server.media.opus import parse_opus
@@ -372,9 +390,8 @@ class AudioTrack:
                 )
         except asyncio.CancelledError:
             raise
-        except Exception:
-            self.failure = "audio_feedback_failed"
-            self._failure(self.failure)
+        except Exception as exc:
+            self._failed("audio_feedback", "audio_feedback_failed", exc)
 
     async def _reports(self):
         try:
@@ -406,9 +423,8 @@ class AudioTrack:
                     )
         except asyncio.CancelledError:
             raise
-        except Exception:
-            self.failure = "audio_report_failed"
-            self._failure(self.failure)
+        except Exception as exc:
+            self._failed("audio_reports", "audio_report_failed", exc)
 
     def fence(self):
         self._retired = True

@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import ipaddress
+import logging
+import math
 import secrets
 import socket
 import time
@@ -40,6 +42,89 @@ MAX_STOP_TOMBSTONES = 512
 STOP_TOMBSTONE_SECONDS = 60.0
 MAX_FRAME_AGE = 0.5
 MAX_ACCESS_UNIT_SECONDS = 1.0
+_log = logging.getLogger(__name__)
+_TRACE_STAGES = frozenset(
+    {
+        "start",
+        "stop",
+        "lifecycle",
+        "video_send",
+        "video_feedback",
+        "video_reports",
+        "audio_send",
+        "audio_feedback",
+        "audio_reports",
+    }
+)
+_TRACE_REASONS = frozenset(
+    {
+        "media_failed",
+        "feedback_failed",
+        "receiver_closed",
+        "receiver_timeout",
+        "authority_changed",
+        "prepare_expired",
+        "audio_output_failed",
+        "audio_feedback_failed",
+        "audio_report_failed",
+        "stop_request",
+        "boot_retired",
+        "start_failed",
+        "retirement",
+    }
+)
+_TRACE_ERRORS = frozenset(
+    {
+        "HomeKitOperationError",
+        "H264Error",
+        "VideoTransformError",
+        "RtpError",
+        "SrtpError",
+        "AudioTransformError",
+        "OpusError",
+        "OSError",
+        "ConnectionRefusedError",
+        "ConnectionResetError",
+        "BrokenPipeError",
+        "TimeoutError",
+        "IncompleteReadError",
+        "ValueError",
+        "RuntimeError",
+        "CancelledError",
+    }
+)
+_TRACE_ERROR_CODES = frozenset(
+    {
+        "media_saturated",
+        "media_failed",
+        "source_timeout",
+        "receiver_timeout",
+        "authority_changed",
+        "policy_denied",
+        "scope_changed",
+        "stale_scope",
+        "boot_changed",
+        "closed",
+        "not_ready",
+        "invalid_request",
+        "busy",
+        "timeout",
+        "expired",
+        "cancelled",
+        "backend_failed",
+        "cleanup_pending",
+    }
+)
+
+
+def _trace_label(value, allowed):
+    return value if type(value) is str and value in allowed else "other"
+
+
+def _trace_age(now, observed):
+    if type(observed) not in (int, float) or not observed or not math.isfinite(observed):
+        return None
+    return min(3_600_000, round(max(0, now - observed) * 1000))
 
 
 class _SourceChanged(RuntimeError):
@@ -106,6 +191,8 @@ class _Session:
     last_pli: float = 0
     clock_anchor: tuple | None = None
     timing_mode: str = "receiver_estimated"
+    trace_first_frame: bool = False
+    trace_terminal: bool = False
 
 
 def _uuid(value):
@@ -228,6 +315,74 @@ class HomeKitLiveManager:
         self._current(session)
         if permission is not None:
             self.controller.authorize(session.boot, session.scope, permission)
+
+    def _trace_start(self, session):
+        try:
+            config, audio = session.config, session.audio_config
+            _log.info(
+                "HomeKit live start width=%d height=%d fps=%d profile=%s level=%s "
+                "bitrate_kbps=%d mtu=%d payload_type=%d audio=%s audio_rate=%s "
+                "audio_packet_ms=%s audio_bitrate_kbps=%s",
+                config.width,
+                config.height,
+                config.fps,
+                _trace_label(config.profile, {"baseline", "main", "high"}),
+                _trace_label(config.level, {"3.1", "3.2", "4.0"}),
+                config.max_bit_rate,
+                config.mtu,
+                config.payload_type,
+                audio is not None,
+                audio.sample_rate if audio is not None else None,
+                audio.packet_time if audio is not None else None,
+                audio.max_bit_rate if audio is not None else None,
+            )
+        except Exception:
+            pass  # Diagnostic output must never change admission or retirement.
+
+    def _trace_terminal(self, session, stage, reason, error=None):
+        if session.trace_terminal:
+            return
+        session.trace_terminal = True
+        try:
+            now = self._clock()
+            error_class = (
+                _trace_label(type(error).__name__, _TRACE_ERRORS) if error is not None else "none"
+            )
+            error_code = (
+                _trace_label(error.code, _TRACE_ERROR_CODES)
+                if isinstance(error, HomeKitOperationError)
+                else "none"
+            )
+            number = getattr(error, "errno", None) if isinstance(error, OSError) else None
+            number = number if type(number) is int and 0 <= number <= 4095 else None
+            mode = _trace_label(
+                getattr(session.adapter, "mode", None), {"waiting", "copy", "adapt"}
+            )
+            _log.info(
+                "HomeKit live terminal stage=%s reason=%s error_class=%s error_code=%s "
+                "errno=%s state=%s mode=%s first_frame=%s video_packets=%d video_octets=%d "
+                "audio_packets=%d audio_octets=%d elapsed_ms=%s "
+                "source_age_ms=%s feedback_age_ms=%s",
+                _trace_label(stage, _TRACE_STAGES),
+                _trace_label(reason, _TRACE_REASONS),
+                error_class,
+                error_code,
+                number,
+                _trace_label(
+                    session.state, {"prepared", "starting", "active", "failed", "stopped"}
+                ),
+                mode,
+                session.trace_first_frame,
+                session.packets,
+                session.octets,
+                session.audio.sent_packets if session.audio is not None else 0,
+                session.audio.sent_octets if session.audio is not None else 0,
+                _trace_age(now, session.prepared_at),
+                _trace_age(now, session.last_source),
+                _trace_age(now, session.last_feedback),
+            )
+        except Exception:
+            pass
 
     def _lookup(self, boot, scope, session_id):
         _uuid(boot)
@@ -355,6 +510,9 @@ class HomeKitLiveManager:
                     boot=boot,
                     scope=scope,
                     failure=lambda code: self._end(session, code),
+                    diagnostic_failure=lambda stage, code, error: self._trace_terminal(
+                        session, stage, code, error
+                    ),
                     presentation=lambda kind, timestamp, received_at: self._presentation_time(
                         session, kind, timestamp, received_at
                     ),
@@ -426,6 +584,7 @@ class HomeKitLiveManager:
             session.config = config
             session.audio_config, session.speaker_volume = audio_config, speaker_volume
             session.state = "starting"
+            self._trace_start(session)
             session.start_task = asyncio.create_task(
                 self._start(session), name="homekit-video-start"
             )
@@ -467,7 +626,8 @@ class HomeKitLiveManager:
             session.reports = asyncio.create_task(self._reports(session), name="homekit-video-sr")
             for task in (session.sender, session.receiver, session.reports):
                 task.add_done_callback(_observed)
-        except BaseException:
+        except BaseException as exc:
+            self._trace_terminal(session, "start", "start_failed", exc)
             session.retired = True
             raise
 
@@ -633,8 +793,8 @@ class HomeKitLiveManager:
                                 break
         except asyncio.CancelledError:
             raise
-        except Exception:
-            self._end(session, "media_failed")
+        except Exception as exc:
+            self._end(session, "media_failed", stage="video_send", error=exc)
 
     async def _access_unit(self, session, output, epoch, *, received_at=None):
         if len(output.payload) > MAX_ACCESS_UNIT_BYTES:
@@ -683,6 +843,19 @@ class HomeKitLiveManager:
             )
             session.retransmit_bytes += len(protected)
             self._prune_retransmit(session)
+        if not session.trace_first_frame:
+            session.trace_first_frame = True
+            with contextlib.suppress(Exception):
+                _log.info(
+                    "HomeKit live first_frame mode=%s keyframe=%s bytes=%d video_packets=%d "
+                    "elapsed_ms=%s source_age_ms=%s",
+                    _trace_label(output.mode, {"copy", "adapt"}),
+                    output.is_keyframe is True,
+                    len(output.payload),
+                    session.packets,
+                    _trace_age(self._clock(), session.prepared_at),
+                    _trace_age(self._clock(), received_at),
+                )
         return True
 
     async def _paced_send(self, session, protected, *, epoch, deadline=None):
@@ -735,7 +908,7 @@ class HomeKitLiveManager:
                 now = self._clock()
                 session.last_feedback = now
                 if feedback.bye:
-                    self._end(session, "receiver_closed")
+                    self._end(session, "receiver_closed", stage="video_feedback")
                     return
                 if feedback.pli and now - session.last_pli >= 0.5:
                     session.last_pli = now
@@ -757,8 +930,8 @@ class HomeKitLiveManager:
                         session.nack_count += 1
         except asyncio.CancelledError:
             raise
-        except Exception:
-            self._end(session, "feedback_failed")
+        except Exception as exc:
+            self._end(session, "feedback_failed", stage="video_feedback", error=exc)
 
     async def _reports(self, session):
         try:
@@ -780,12 +953,13 @@ class HomeKitLiveManager:
                     await self._send(session, session.secure.protect_rtcp(report))
         except asyncio.CancelledError:
             raise
-        except Exception:
-            self._end(session, "receiver_timeout")
+        except Exception as exc:
+            self._end(session, "receiver_timeout", stage="video_reports", error=exc)
 
-    def _end(self, session, code):
+    def _end(self, session, code, *, stage="lifecycle", error=None):
         if session.retired:
             return
+        self._trace_terminal(session, stage, code, error)
         session.retired = True
         self._close_socket(session)
         task = asyncio.create_task(self._ended(session, code), name="homekit-video-ended")
@@ -849,6 +1023,7 @@ class HomeKitLiveManager:
             self._stopped[boot, session_id] = self._clock() + STOP_TOMBSTONE_SECONDS
         if session is None:
             return
+        self._trace_terminal(session, "stop", "stop_request")
         await self._settle_retirement(session)
 
     def _prune_stopped(self):
@@ -857,6 +1032,7 @@ class HomeKitLiveManager:
                 del self._stopped[key]
 
     async def _settle_retirement(self, session):
+        self._trace_terminal(session, "lifecycle", "retirement")
         session.retired = True
         self._close_socket(session)
         if session.cleanup is None or session.cleanup.done() and session.failure is not None:
@@ -918,6 +1094,7 @@ class HomeKitLiveManager:
         sessions = [item for item in self._sessions.values() if item.boot == boot]
         # Revoke every socket before waiting for one potentially slow worker.
         for session in sessions:
+            self._trace_terminal(session, "lifecycle", "boot_retired")
             session.retired = True
             self._close_socket(session)
         failures = []
