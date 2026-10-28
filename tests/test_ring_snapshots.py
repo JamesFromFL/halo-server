@@ -535,3 +535,43 @@ async def test_public_request_and_post_contexts_keep_snapshot_caps(monkeypatch):
                 await response.read()
     assert all(response.content.position == 17 and response.closed for response in responses)
     await transport.close()
+
+
+@pytest.mark.asyncio
+async def test_revoked_snapshot_fresh_failure_never_falls_back_to_cached_http():
+    reader, transport, session, device = fixture([])
+    permitted = True
+
+    async def fresh_then_revoked(**kwargs):
+        nonlocal permitted
+        permitted = False
+        raise SnapshotError("synthetic fresh failure")
+
+    device.async_get_snapshot = fresh_then_revoked
+    try:
+        assert await reader.fetch(device, fresh=True, admission=lambda: permitted) is None
+        assert session.calls == []
+        assert not reader._tasks
+    finally:
+        await reader.close()
+        await transport.close()
+
+
+@pytest.mark.asyncio
+async def test_snapshot_http_transport_rechecks_admission_at_request_entry():
+    reader, transport, session, device = fixture([])
+    checks = 0
+
+    def admission():
+        nonlocal checks
+        checks += 1
+        return checks == 1
+
+    try:
+        assert await reader.fetch(device, fresh=True, admission=admission) is None
+        assert checks >= 2
+        assert session.calls == []
+        assert not reader._tasks
+    finally:
+        await reader.close()
+        await transport.close()

@@ -1,6 +1,6 @@
 # Halo private HAP adapter groundwork
 
-This package implements **S04 dependency/public-API checks and S06 synthetic control lifecycle**. It does not publish an accessory, open a HAP/mDNS listener, initialize pairing storage, authenticate to Ring, deliver media, or provide a working camera/HKSV integration. A `hello_ack` and the feature marker `classic-camera-control-v1` mean only that this initial private control protocol is understood.
+This package implements **S04 dependency/public-API checks, S05 private contracts and S06 synthetic control lifecycle**. It does not publish an accessory, open a HAP/mDNS listener, initialize pairing storage, authenticate to Ring, deliver media, or provide a working camera/HKSV integration. A `hello_ack` and the feature marker `classic-camera-control-v1` mean only that this initial private control protocol is understood.
 
 The Python daemon remains the Ring/session owner. The intended future adapter uses the released HAP public API; it does not embed Scrypted, require Homebridge, or import HAP private paths. Stable accessories, protected pairing stores, privacy/media delegates, snapshots, live transport and HKSV are later slices. No unpublished scratchpad dependency or HAP fork is used here.
 
@@ -25,9 +25,11 @@ The compiled supervised entry is `dist/src/main.js`. Generated `dist/` and `node
 
 The canonical schema and shared fixtures live in `../src/halo_server/homekit/protocol/v1/`. A four-byte unsigned big-endian length precedes strict UTF-8 JSON. Body length is 1–65536 bytes; JSON depth is at most 32, keys cannot repeat, numbers must be finite, IDs are canonical lowercase UUIDs, and envelope/payload fields and message directions are allowlisted. No Ring credentials, arbitrary commands, images or media bytes are valid in control JSON.
 
-The child requires distinct inherited stream socket descriptors at least 3 in `HALO_CONTROL_FD` and `HALO_BULK_FD`, plus `HALO_PARENT_PID` matching its actual parent. It creates no control listener. The reserved bulk descriptor currently accepts no data. Future bulk transfer needs its own bounded typed contract before use.
+The child requires distinct inherited stream socket descriptors at least 3 in `HALO_CONTROL_FD` and `HALO_BULK_FD`, plus `HALO_PARENT_PID` matching its actual parent. It creates no control listener. The reserved bulk descriptor currently accepts no data. S05 defines and cross-validates its separate 32-byte typed binary header and finite credit/size limits; S06 must implement the actual sender, ownership and credit/cancel state machine before use.
 
 The first message is Python `hello`; Node echoes boot/request/build correlation with `hello_ack`. The build string is currently a parent-supplied correlation marker, **not independent proof of the compiled artifact's identity**. Actual package provenance must be verified from frozen manifest/resource hashes or a later independently checked child-local release manifest.
+
+The shared S05 decoder also validates inventory, privacy, lease, snapshot, talkback, control and transfer metadata with scoped reply correlation. These additional shapes are not wired into the synthetic child. Inventory must paginate by encoded bytes as well as the 32-camera page limit to remain below the control byte cap.
 
 After hello, only same-boot `ping` and `shutdown` are accepted from the parent, replying `pong` and `shutdown_ack`. Repeated hello, stale boot, unknown direction or malformed frame closes the channel. Shutdown acknowledgment is flushed before descriptor closure. Child startup handshake and partial-frame budgets are 5 s; partial deadlines do not extend with each received byte. Writes have a 5 s whole queue/flush budget, at most 32 pending messages and 256 KiB retained output. The parent's specified heartbeat interval is 5 s; child idle expiry is 15 s. Parent identity is rechecked periodically. EOF, signals, framing/I/O failure and parent retirement close owned channels and timers; Python owns escalation/reap and retires that boot's work.
 

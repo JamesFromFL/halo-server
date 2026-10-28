@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
-import stat
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -39,29 +39,93 @@ class ServerPaths:
     def integration_directory(self) -> Path:
         return self.state_directory / "integrations"
 
+    @property
+    def configuration_file(self) -> Path:
+        return self.state_directory / "configuration.json"
+
+    @property
+    def homekit_directory(self) -> Path:
+        return self.state_directory / "homekit"
+
+    @property
+    def homekit_configuration_file(self) -> Path:
+        return self.homekit_directory / "config.json"
+
+    @property
+    def homekit_registry_file(self) -> Path:
+        return self.homekit_directory / "registry.json"
+
+    @property
+    def homekit_pairing_directory(self) -> Path:
+        return self.homekit_directory / "pairings"
+
+    @property
+    def homekit_runtime_directory(self) -> Path:
+        return self.runtime_directory / "homekit"
+
     def prepare(self) -> None:
         ensure_private_directory(self.state_directory)
         ensure_private_directory(self.runtime_directory)
 
+    def prepare_homekit(self) -> None:
+        """Prepare owner-only directories, without opening any HAP state files."""
+        self.prepare()
+        for path in (
+            self.homekit_directory,
+            self.homekit_pairing_directory,
+            self.homekit_runtime_directory,
+        ):
+            ensure_private_directory(path)
+
 
 def ensure_private_directory(path: Path) -> None:
-    """Create and validate an owner-only directory without following a symlink."""
+    """Create/secure an owned directory using pinned, no-follow directory FDs."""
+    descriptor = open_private_directory(path, create=True, repair_permissions=True)
+    os.close(descriptor)
+
+
+def open_private_directory(
+    path: Path, *, create: bool = False, repair_permissions: bool = False
+) -> int:
+    """Return an owned FD; reject symlinks in every component of the path.
+
+    Ancestors may be ordinary system/user directories. Only the requested private
+    leaf must be current-owner/private, and only that leaf may be chmodded.
+    The caller owns and must close the returned descriptor.
+    """
+    absolute = Path(os.path.abspath(path.expanduser()))
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+    descriptor = -1
     try:
-        path.mkdir(parents=True, exist_ok=True, mode=0o700)
-        path_stat = path.lstat()
+        descriptor = os.open(absolute.anchor, flags)
+        for component in absolute.parts[1:]:
+            try:
+                child = os.open(component, flags, dir_fd=descriptor)
+            except FileNotFoundError:
+                if not create:
+                    raise
+                with contextlib.suppress(FileExistsError):
+                    os.mkdir(component, mode=0o700, dir_fd=descriptor)
+                child = os.open(component, flags, dir_fd=descriptor)
+            os.close(descriptor)
+            descriptor = child
+        path_stat = os.fstat(descriptor)
+        if path_stat.st_uid != os.getuid():
+            raise PathSecurityError("Private directory is not owned by this user")
+        if repair_permissions:
+            os.fchmod(descriptor, 0o700)
+            path_stat = os.fstat(descriptor)
+        if path_stat.st_mode & 0o077:
+            raise PathSecurityError("Private directory permits group or other access")
+        result, descriptor = descriptor, -1
+        return result
     except OSError as exc:
-        raise PathSecurityError(f"Cannot prepare private directory: {path}") from exc
-    if not stat.S_ISDIR(path_stat.st_mode):
-        raise PathSecurityError(f"Private path is not a directory: {path}")
-    if path_stat.st_uid != os.getuid():
-        raise PathSecurityError(f"Private directory is not owned by this user: {path}")
-    try:
-        path.chmod(0o700)
-        path_stat = path.lstat()
-    except OSError as exc:
-        raise PathSecurityError(f"Cannot secure private directory: {path}") from exc
-    if path_stat.st_mode & 0o077:
-        raise PathSecurityError(f"Private directory permits group or other access: {path}")
+        raise PathSecurityError(
+            "Private path is not a directory or cannot be opened safely"
+        ) from exc
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
 
 
 def _xdg_path(variable: str, fallback: Path) -> Path:

@@ -87,3 +87,112 @@ test("burst output from one feed is bounded", () => {
   const decoder = new FrameDecoder();
   assert.throws(() => decoder.feed(Buffer.concat(Array(257).fill(encodeEnvelope(ping)))), /frame-burst/);
 });
+
+test("semantic and raw corpus cases fail actual Node decoder", () => {
+  const data = fixtures as unknown as {semantic_invalid: unknown[]; raw_invalid_hex: string[]};
+  for (const message of data.semantic_invalid) {
+    assert.throws(() => decodeEnvelope(Buffer.from(JSON.stringify(message))), ProtocolError);
+  }
+  for (const hex of data.raw_invalid_hex) assert.throws(() => decodeEnvelope(Buffer.from(hex, "hex")), ProtocolError);
+});
+
+test("fixed bulk headers agree byte-for-byte and reject malformed headers before body allocation", async () => {
+  const {encodeBulkHeader, decodeBulkHeader, BULK_HEADER_BYTES} = await import("../src/protocol.js");
+  const data = fixtures as unknown as {bulk_valid: {header: import("../src/protocol.js").BulkHeader; hex: string}[]; bulk_invalid_hex: string[]};
+  for (const item of data.bulk_valid) {
+    const header = Buffer.from(item.hex, "hex");
+    assert.equal(header.length, BULK_HEADER_BYTES);
+    assert.deepEqual(encodeBulkHeader(item.header), header);
+    assert.deepEqual(decodeBulkHeader(header), item.header);
+  }
+  for (const hex of data.bulk_invalid_hex) assert.throws(() => decodeBulkHeader(Buffer.from(hex, "hex")), ProtocolError);
+  const header = data.bulk_valid[0]!.header;
+  for (const mutation of [{sequence: true}, {sequence: -1}, {length: 0}, {length: 65537}]) {
+    assert.throws(() => encodeBulkHeader({...header, ...mutation} as import("../src/protocol.js").BulkHeader), ProtocolError);
+  }
+});
+
+test("direction checks reject authority sent from the wrong peer including bulk producer reversal", async () => {
+  const {validateDirection} = await import("../src/protocol.js");
+  const samples = new Map(fixtures.valid.map(value => [value.kind, value]));
+  for (const kind of ["inventory_page", "camera_status", "policy_ack", "lease_result", "snapshot_result", "control_result"] as const) {
+    validateDirection(samples.get(kind), "python");
+    assert.throws(() => validateDirection(samples.get(kind), "hap"), ProtocolError);
+  }
+  for (const kind of ["inventory_request", "policy_update", "lease_request", "lease_stop", "snapshot_request", "talkback_request", "control_request"] as const) {
+    validateDirection(samples.get(kind), "hap");
+    assert.throws(() => validateDirection(samples.get(kind), "python"), ProtocolError);
+  }
+  for (const message of fixtures.valid.filter(item => item.kind === "transfer_open")) {
+    const producer = message.payload.kind === "talkback_pcm" ? "hap" : "python";
+    validateDirection(message, producer);
+    assert.throws(() => validateDirection(message, producer === "hap" ? "python" : "hap"), ProtocolError);
+  }
+});
+
+test("reply correlation fences boot/request identity, full privacy scope and each owned handle", async () => {
+  const {REPLY_KINDS, validateReply} = await import("../src/protocol.js");
+  const samples = new Map([...fixtures.valid].reverse().map(value => [value.kind, value]));
+  for (const [kind, replyKind] of Object.entries(REPLY_KINDS)) {
+    const request = samples.get(kind as Envelope["kind"])!, reply = samples.get(replyKind)!;
+    assert.deepEqual(validateReply(request, reply), reply);
+    for (const key of ["boot_id", "request_id"] as const) {
+      assert.throws(() => validateReply(request, {...reply, [key]: "00000000-0000-0000-0000-999999999999"}), ProtocolError);
+    }
+    for (const key of ["session_id", "job_id", "operation_id", "transfer_id"]) {
+      if (Object.hasOwn(request.payload, key)) {
+        assert.throws(() => validateReply(request, {...reply, payload: {...reply.payload, [key]: "00000000-0000-0000-0000-999999999999"}}), ProtocolError);
+      }
+    }
+    const original = request.payload.scope as Record<string, unknown> | undefined;
+    if (original) for (const key of Object.keys(original)) {
+      const value = original[key];
+      const scope = {...original, [key]: typeof value === "number" ? value + 1 : "00000000-0000-0000-0000-999999999999"};
+      assert.throws(() => validateReply(request, {...reply, payload: {...reply.payload, scope}}), ProtocolError);
+    }
+  }
+  const request = structuredClone(samples.get("inventory_request")!);
+  request.payload.revision = 50;
+  assert.throws(() => validateReply(request, samples.get("inventory_page")), ProtocolError);
+});
+
+test("every nested DTO boundary rejects unknown fields", () => {
+  const mutate = (message: Envelope, node: unknown, path: (string | number)[] = []): void => {
+    if (Array.isArray(node)) { node.forEach((child, index) => mutate(message, child, [...path, index])); return; }
+    if (node === null || typeof node !== "object") return;
+    const value = node as Record<string, unknown>;
+    const mutation = structuredClone(message);
+    let target: unknown = mutation;
+    for (const key of path) target = (target as Record<string | number, unknown>)[key];
+    (target as Record<string, unknown>).unrecognized = null;
+    assert.throws(() => decodeEnvelope(Buffer.from(JSON.stringify(mutation))), ProtocolError);
+    for (const [key, child] of Object.entries(value)) mutate(message, child, [...path, key]);
+  };
+  for (const message of fixtures.valid) mutate(message, message);
+});
+
+test("control cap counts UTF8 bytes even when a maximum-count inventory page needs splitting", () => {
+  const maximal = fixtures.valid.find(item => item.kind === "inventory_page" &&
+    (item.payload.devices as {observed_format: unknown}[]).some(device => device.observed_format !== null))!;
+  const page = structuredClone(maximal);
+  const devices = page.payload.devices as Record<string, unknown>[];
+  const device = devices[0]!;
+  device.family = device.kind = device.model = "😀".repeat(128);
+  page.payload.total = 32;
+  page.payload.devices = Array.from({length: 32}, (_, index) => ({...structuredClone(device),
+    scope: {...device.scope as Record<string, unknown>, camera_id: String(index)}}));
+  assert.ok(Buffer.byteLength(JSON.stringify(page)) > MAX_FRAME_BYTES);
+  assert.throws(() => encodeEnvelope(page), ProtocolError);
+});
+
+test("literal text acceptance is pinned to the same Unicode16 ranges as Python and schema", async () => {
+  const {FORBIDDEN_TEXT_RANGES} = await import("../src/protocol.js");
+  const ranges = (fixtures as unknown as {unicode16_forbidden_ranges: [number, number][]}).unicode16_forbidden_ranges;
+  assert.deepEqual(FORBIDDEN_TEXT_RANGES, ranges);
+  const sample = fixtures.valid.find(message => message.kind === "policy_ack")!;
+  for (const [start, end] of ranges) for (const point of new Set([start, end])) {
+    const message = structuredClone(sample);
+    message.payload.scope = {...message.payload.scope as Record<string, unknown>, camera_id: `a${String.fromCodePoint(point)}b`};
+    assert.throws(() => encodeEnvelope(message), ProtocolError);
+  }
+});

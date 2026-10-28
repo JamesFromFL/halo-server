@@ -11,6 +11,7 @@ import asyncio
 import json
 import re
 import ssl
+from collections.abc import Callable
 from contextvars import ContextVar
 from dataclasses import dataclass
 from importlib.metadata import version
@@ -31,6 +32,7 @@ _TLS_CONTEXT = ssl.create_default_context()
 class _SnapshotScope:
     image_remaining: int
     metadata_remaining: int
+    admission: Callable[[], bool] | None = None
 
 
 _snapshot_scope: ContextVar[_SnapshotScope | None] = ContextVar("halo_snapshot_scope", default=None)
@@ -179,6 +181,8 @@ class SnapshotHttpSession:
     async def _request(self, method, url, **kwargs):
         limit = _endpoint(url, method.upper())
         budget = _snapshot_scope.get()
+        if budget is not None and budget.admission is not None and not budget.admission():
+            raise SnapshotError("Snapshot authority was retired")
         image = limit == MAX_SNAPSHOT_BYTES
         if limit is None:
             if budget is None:
@@ -222,7 +226,15 @@ class SnapshotReader:
         self._tasks: set[asyncio.Task] = set()
         self._closed = False
 
-    async def fetch(self, device, *, fresh: bool = False) -> bytes | None:
+    async def fetch(
+        self,
+        device,
+        *,
+        fresh: bool = False,
+        admission: Callable[[], bool] | None = None,
+    ) -> bytes | None:
+        if admission is not None and not admission():
+            return None
         if self._closed or len(self._tasks) >= MAX_SNAPSHOT_REQUESTS:
             return None
         # A missing transport must fail closed, never use the SDK's raw reader.
@@ -233,7 +245,7 @@ class SnapshotReader:
         task = asyncio.current_task()
         self._tasks.add(task)
         scope_token = _snapshot_scope.set(
-            _SnapshotScope(MAX_SNAPSHOT_BYTES, 4 * MAX_TIMESTAMP_BYTES)
+            _SnapshotScope(MAX_SNAPSHOT_BYTES, 4 * MAX_TIMESTAMP_BYTES, admission)
         )
         try:
             async with asyncio.timeout(SNAPSHOT_TOTAL_SECONDS):
@@ -251,6 +263,8 @@ class SnapshotReader:
                         pass
                 from ring_doorbell.const import SNAPSHOT_ENDPOINT
 
+                if admission is not None and not admission():
+                    return None
                 response = await self._ring.async_query(SNAPSHOT_ENDPOINT.format(api_id))
                 if response.status_code == 200:
                     return validated_snapshot_bytes(response.content)

@@ -4,13 +4,21 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import ipaddress
 import json
+import os
 import signal
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 from halo_server import __version__
+from halo_server.configuration import (
+    ConfigurationError,
+    ConfigurationStore,
+    ServerConfiguration,
+    ServerMode,
+    is_loopback_host,
+)
 from halo_server.paths import ServerPaths
 
 
@@ -30,28 +38,34 @@ def build_parser() -> argparse.ArgumentParser:
         default="INFO",
     )
     daemon.add_argument(
+        "--mode",
+        choices=tuple(mode.value for mode in ServerMode),
+        default=None,
+        help="Override saved operating mode (HomeKit camera publication is not implemented yet)",
+    )
+    daemon.add_argument(
         "--plugin-host",
         type=_loopback_host,
-        default="127.0.0.1",
-        help="Plugin API loopback bind address",
+        default=None,
+        help="Override saved plugin API loopback bind address",
     )
     daemon.add_argument(
         "--plugin-port",
         type=_tcp_port,
-        default=18443,
-        help="Plugin API TCP port",
+        default=None,
+        help="Override saved plugin API TCP port (0 selects an ephemeral port)",
     )
     daemon.add_argument(
         "--rtsp-host",
         type=_loopback_host,
-        default="127.0.0.1",
-        help="RTSP media loopback bind address",
+        default=None,
+        help="Override saved RTSP media loopback bind address",
     )
     daemon.add_argument(
         "--rtsp-port",
         type=_tcp_port,
-        default=18554,
-        help="RTSP media TCP port",
+        default=None,
+        help="Override saved RTSP media TCP port (0 selects an ephemeral port)",
     )
 
     tui = subparsers.add_parser("tui", help="Open the local administration interface")
@@ -77,15 +91,12 @@ def main(argv: list[str] | None = None) -> int:
         from halo_server.logging_setup import configure_logging
 
         configure_logging(args.log_level)
-        return asyncio.run(
-            _run_daemon(
-                paths,
-                plugin_host=args.plugin_host,
-                plugin_port=args.plugin_port,
-                rtsp_host=args.rtsp_host,
-                rtsp_port=args.rtsp_port,
-            )
-        )
+        try:
+            configuration = _configuration_from_args(paths, args)
+        except ConfigurationError as exc:
+            print(f"halo-server: {exc}", file=sys.stderr)
+            return 1
+        return asyncio.run(_run_daemon(paths, configuration=configuration))
     if args.command == "tui":
         from halo_server.tui.app import HaloTui
         from halo_server.tui.client import AdminClient
@@ -115,17 +126,24 @@ def _paths_from_args(args: argparse.Namespace) -> ServerPaths:
     defaults = ServerPaths.from_environment()
     state = args.state_directory or defaults.state_directory
     runtime = args.runtime_directory or defaults.runtime_directory
-    return ServerPaths(state.expanduser().resolve(), runtime.expanduser().resolve())
+    # Normalize lexically: resolving would silently follow a sensitive-path symlink.
+    return ServerPaths(
+        Path(os.path.abspath(state.expanduser())), Path(os.path.abspath(runtime.expanduser()))
+    )
+
+
+def _configuration_from_args(paths: ServerPaths, args: argparse.Namespace) -> ServerConfiguration:
+    stored = ConfigurationStore(paths.configuration_file).load()
+    overrides = {
+        name: value
+        for name in ("mode", "plugin_host", "plugin_port", "rtsp_host", "rtsp_port")
+        if (value := getattr(args, name)) is not None
+    }
+    return replace(stored, **overrides)
 
 
 def _loopback_host(value: str) -> str:
-    if value == "localhost":
-        return value
-    try:
-        is_loopback = ipaddress.ip_address(value).is_loopback
-    except ValueError:
-        is_loopback = False
-    if not is_loopback:
+    if not is_loopback_host(value):
         raise argparse.ArgumentTypeError(
             "plugin host must be a loopback address until TLS is configured"
         )
@@ -156,19 +174,17 @@ def _require_native_platform(parser: argparse.ArgumentParser) -> None:
 async def _run_daemon(
     paths: ServerPaths,
     *,
-    plugin_host: str,
-    plugin_port: int,
-    rtsp_host: str,
-    rtsp_port: int,
+    configuration: ServerConfiguration,
 ) -> int:
     from halo_server.service import HaloService
 
     service = HaloService(
         paths,
-        plugin_host=plugin_host,
-        plugin_port=plugin_port,
-        rtsp_host=rtsp_host,
-        rtsp_port=rtsp_port,
+        configuration=configuration,
+        plugin_host=configuration.plugin_host if configuration.compatibility_enabled else None,
+        plugin_port=configuration.plugin_port,
+        rtsp_host=configuration.rtsp_host if configuration.compatibility_enabled else None,
+        rtsp_port=configuration.rtsp_port,
     )
     loop = asyncio.get_running_loop()
     for signum in (signal.SIGINT, signal.SIGTERM):

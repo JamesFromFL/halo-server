@@ -1,34 +1,1823 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:halo:homekit-control:1",
-  "x-halo-max-control-bytes": 65536,
-  "x-halo-max-json-depth": 32,
+  "title": "Private Halo HomeKit control IPC v1 (not plugin public v2/v3)",
+  "x-max-control-bytes": 65536,
+  "x-max-json-depth": 32,
+  "x-runtime-invariants": [
+    "Decode strict UTF-8; reject duplicate keys, nonfinite numbers, >32 container levels, unsafe integers and >65536 byte control bodies before authority.",
+    "S06 must compare boot_id to the current child boot and enforce sender direction. Structural validity does not grant account/device/session authority.",
+    "Every new request and result is scoped; match profile/account/device/privacy generations at both admission and delivery. Request_id is unique per outstanding request and replies echo it; session/job/operation UUIDs are opaque per-boot owned handles, never SDK IDs or bearer capabilities.",
+    "Policy update is complete replacement of all eight booleans. Node closes local admission/delivery immediately, sends the newly selected privacy generation, and accepts only an ACK echoing that exact full scope. Old scopes, missing ACK or unsynchronized policy remain fail closed.",
+    "Inventory cursor is opaque, server-issued and bound to account scope plus revision. Request revision0/cursor null starts a snapshot. A page echoes its input cursor; next_cursor null is terminal. Complete describes authority of the whole frozen inventory revision, not merely a page; reconcile removals only after all pages of the same scope/revision and complete true. Total is exact snapshot device count and <=256; <=32 per page, fewer when needed to fit bytes. No mutation/codec is inferred from capability flags.",
+    "Runtime semantic validation additionally enforces page device scope equals page account scope, unique camera_id within each page, page length<=total, progress for next_cursor; across pages S06 must reject repetition, duplicates, revision changes, excess totals and expired cursors.",
+    "Observed video frame_rate_num/frame_rate_den<=240 when present; values are evidence, not selected output. Snapshot request width*height<=8000000. These are request ceilings, not guarantees of transform support. No image bytes, base64, credentials, SRTP material or raw SDK records appear in control JSON.",
+    "Lease purpose is only homekit_live. TTL<=30000ms never extends the separately enforced absolute lifetime; lease/session ownership survives neither scope nor boot retirement.",
+    "Control accepted means request acceptance only, not physical effect. Camera status is an observation; unknown/source absence does not invent online or media metadata."
+  ],
+  "x-binary-transfer": {
+    "implemented": false,
+    "channel": "separate inherited bulk socket; control envelopes never carry media bytes",
+    "header_bytes": 32,
+    "header_layout": "network byte order: HBLK(4),version1(u8),kind(u8),reserved0(u16),transfer_uuid(16),sequence(u32),length(u32)",
+    "kind_ids": {
+      "snapshot": 1,
+      "recording_init": 2,
+      "recording_fragment": 3,
+      "talkback_pcm": 4
+    },
+    "max_chunk_bytes": 65536,
+    "max_window_chunks": 2,
+    "max_window_bytes": 131072,
+    "max_transfer_bytes": {
+      "snapshot": 8388608,
+      "recording_init": 1048576,
+      "recording_fragment": 8388608,
+      "talkback_pcm": 1920
+    },
+    "rules": [
+      "No bulk bytes until transfer_open has matched a live scoped operation and receiver-issued credit. Python produces snapshots/recording; HAP produces talkback_pcm. Recording and talkback media support remain unimplemented in S05.",
+      "Credits advertise an absolute allowed sequence window [next_sequence,next_sequence+credits), not additive tokens. Repeated credits cannot enlarge the window; no backwards window, gaps, duplicates, overflow or chunks outside the window. The sender must not enqueue more than two chunks or128KiB outstanding per transfer.",
+      "Chunk sequence starts0, increases exactly1, and aggregate lengths must equal announced total_bytes; chunk length<=chunk_bytes and remaining total. Validate the fixed header before bounded allocation; never allocate total_bytes from untrusted metadata.",
+      "transfer_end announces exact sequence_count and total_bytes; complete result is sent only after exact payload validation/consumption. Transfer descriptor, direction, scope, operation and byte accounting must match for every header/control message.",
+      "Cancel, deadline, scope/boot retirement or socket close revokes credit and discards pending bytes. No new body is enqueued after the synchronized fence; already transmitted/kernel-queued bytes cannot be recalled. Late control/headers cannot revive a retired transfer.",
+      "S06 owns finite transfer registry, aggregate memory/concurrency, deadlines and cancellation. IPC limits do not bound HDS library internal buffers or prove HKSV delivery."
+    ]
+  },
+  "$defs": {
+    "uuid": {
+      "type": "string",
+      "minLength": 36,
+      "maxLength": 36,
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "code": {
+      "enum": [
+        "ok",
+        "unavailable",
+        "unsupported",
+        "unauthorized",
+        "stale-scope",
+        "policy-denied",
+        "busy",
+        "timeout",
+        "cancelled",
+        "invalid-request",
+        "not-found",
+        "conflict",
+        "source-failed",
+        "expired",
+        "protocol-error",
+        "invalidated",
+        "not-ready"
+      ]
+    },
+    "account_scope": {
+      "type": "object",
+      "required": [
+        "profile_id",
+        "account_generation"
+      ],
+      "properties": {
+        "profile_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "account_generation": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        }
+      },
+      "additionalProperties": false
+    },
+    "media_scope": {
+      "type": "object",
+      "required": [
+        "profile_id",
+        "camera_id",
+        "account_generation",
+        "device_generation",
+        "privacy_generation"
+      ],
+      "properties": {
+        "profile_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "camera_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[^\u0000-\u001f\u007f-\u009f\u00ad\u0600-\u0605\u061c\u06dd\u070f\u0890-\u0891\u08e2\u180e\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u206f\ud800-\udfff\ufeff\ufff9-\ufffb\ud804\udcbd\ud804\udccd\ud80d\udc30-\ud80d\udc3f\ud82f\udca0-\ud82f\udca3\ud834\udd73-\ud834\udd7a\udb40\udc01\udb40\udc20-\udb40\udc7f]*$",
+          "not": {
+            "pattern": "[\u0000-\u001f\u007f-\u009f\u00ad\u0600-\u0605\u061c\u06dd\u070f\u0890-\u0891\u08e2\u180e\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u206f\ud800-\udfff\ufeff\ufff9-\ufffb\ud804\udcbd\ud804\udccd\ud80d\udc30-\ud80d\udc3f\ud82f\udca0-\ud82f\udca3\ud834\udd73-\ud834\udd7a\udb40\udc01\udb40\udc20-\udb40\udc7f]"
+          }
+        },
+        "account_generation": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "device_generation": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "privacy_generation": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        }
+      },
+      "additionalProperties": false
+    },
+    "policy": {
+      "type": "object",
+      "required": [
+        "synchronized",
+        "streaming",
+        "live_audio",
+        "snapshots",
+        "recording",
+        "recording_audio",
+        "talkback",
+        "controls"
+      ],
+      "properties": {
+        "synchronized": {
+          "type": "boolean"
+        },
+        "streaming": {
+          "type": "boolean"
+        },
+        "live_audio": {
+          "type": "boolean"
+        },
+        "snapshots": {
+          "type": "boolean"
+        },
+        "recording": {
+          "type": "boolean"
+        },
+        "recording_audio": {
+          "type": "boolean"
+        },
+        "talkback": {
+          "type": "boolean"
+        },
+        "controls": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "recording_audio": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "recording": {
+                "const": true
+              }
+            }
+          }
+        }
+      ]
+    },
+    "capabilities": {
+      "type": "object",
+      "required": [
+        "video",
+        "audio",
+        "snapshot",
+        "talkback",
+        "light",
+        "siren",
+        "doorbell",
+        "battery",
+        "evidence"
+      ],
+      "properties": {
+        "video": {
+          "type": "boolean"
+        },
+        "audio": {
+          "type": "boolean"
+        },
+        "snapshot": {
+          "type": "boolean"
+        },
+        "talkback": {
+          "type": "boolean"
+        },
+        "light": {
+          "type": "boolean"
+        },
+        "siren": {
+          "type": "boolean"
+        },
+        "doorbell": {
+          "type": "boolean"
+        },
+        "battery": {
+          "type": "boolean"
+        },
+        "evidence": {
+          "type": "array",
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "sdk:video",
+              "sdk:audio",
+              "sdk:snapshot",
+              "sdk:talkback",
+              "sdk:light",
+              "sdk:siren",
+              "sdk:doorbell",
+              "sdk:battery",
+              "halo:video",
+              "halo:audio",
+              "halo:snapshot",
+              "halo:talkback",
+              "halo:light",
+              "halo:siren",
+              "halo:doorbell",
+              "halo:battery"
+            ]
+          }
+        }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "video": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "evidence": {
+                "contains": {
+                  "enum": [
+                    "sdk:video",
+                    "halo:video"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "audio": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "evidence": {
+                "contains": {
+                  "enum": [
+                    "sdk:audio",
+                    "halo:audio"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "snapshot": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "evidence": {
+                "contains": {
+                  "enum": [
+                    "sdk:snapshot",
+                    "halo:snapshot"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "talkback": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "evidence": {
+                "contains": {
+                  "enum": [
+                    "sdk:talkback",
+                    "halo:talkback"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "light": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "evidence": {
+                "contains": {
+                  "enum": [
+                    "sdk:light",
+                    "halo:light"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "siren": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "evidence": {
+                "contains": {
+                  "enum": [
+                    "sdk:siren",
+                    "halo:siren"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "doorbell": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "evidence": {
+                "contains": {
+                  "enum": [
+                    "sdk:doorbell",
+                    "halo:doorbell"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "battery": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "evidence": {
+                "contains": {
+                  "enum": [
+                    "sdk:battery",
+                    "halo:battery"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "video_format": {
+      "type": "object",
+      "required": [
+        "codec",
+        "width",
+        "height",
+        "profile",
+        "level",
+        "frame_rate_num",
+        "frame_rate_den"
+      ],
+      "properties": {
+        "codec": {
+          "enum": [
+            "h264"
+          ]
+        },
+        "width": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 8192
+            }
+          ]
+        },
+        "height": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 8192
+            }
+          ]
+        },
+        "profile": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": "^[\\x20-\\x7e]{1,32}$",
+              "not": {
+                "pattern": "[^\\x20-\\x7e]"
+              }
+            }
+          ]
+        },
+        "level": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": "^[\\x20-\\x7e]{1,32}$",
+              "not": {
+                "pattern": "[^\\x20-\\x7e]"
+              }
+            }
+          ]
+        },
+        "frame_rate_num": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000000
+            }
+          ]
+        },
+        "frame_rate_den": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000000
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "frame_rate_num": {
+                "type": "null"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "frame_rate_den": {
+                "type": "null"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "frame_rate_den": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1000000
+              }
+            }
+          }
+        }
+      ]
+    },
+    "audio_format": {
+      "type": "object",
+      "required": [
+        "codec",
+        "sample_rate",
+        "channels",
+        "rtp_clock_rate",
+        "packet_time_ms"
+      ],
+      "properties": {
+        "codec": {
+          "enum": [
+            "opus",
+            "aac",
+            "pcm_s16le"
+          ]
+        },
+        "sample_rate": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 192000
+            }
+          ]
+        },
+        "channels": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 2
+            }
+          ]
+        },
+        "rtp_clock_rate": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 192000
+            }
+          ]
+        },
+        "packet_time_ms": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "maximum": 120
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "source_format": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "required": [
+            "video",
+            "audio",
+            "capture_attempt",
+            "config_generation"
+          ],
+          "properties": {
+            "video": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "$ref": "#/$defs/video_format"
+                }
+              ]
+            },
+            "audio": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "$ref": "#/$defs/audio_format"
+                }
+              ]
+            },
+            "capture_attempt": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 9007199254740991
+                }
+              ]
+            },
+            "config_generation": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 9007199254740991
+                }
+              ]
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "device": {
+      "type": "object",
+      "required": [
+        "scope",
+        "name",
+        "family",
+        "kind",
+        "model",
+        "capabilities",
+        "connection_state",
+        "battery_percent",
+        "observed_format"
+      ],
+      "properties": {
+        "scope": {
+          "$ref": "#/$defs/media_scope"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 256,
+          "pattern": "^[^\u0000-\u001f\u007f-\u009f\u00ad\u0600-\u0605\u061c\u06dd\u070f\u0890-\u0891\u08e2\u180e\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u206f\ud800-\udfff\ufeff\ufff9-\ufffb\ud804\udcbd\ud804\udccd\ud80d\udc30-\ud80d\udc3f\ud82f\udca0-\ud82f\udca3\ud834\udd73-\ud834\udd7a\udb40\udc01\udb40\udc20-\udb40\udc7f]*$",
+          "not": {
+            "pattern": "[\u0000-\u001f\u007f-\u009f\u00ad\u0600-\u0605\u061c\u06dd\u070f\u0890-\u0891\u08e2\u180e\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u206f\ud800-\udfff\ufeff\ufff9-\ufffb\ud804\udcbd\ud804\udccd\ud80d\udc30-\ud80d\udc3f\ud82f\udca0-\ud82f\udca3\ud834\udd73-\ud834\udd7a\udb40\udc01\udb40\udc20-\udb40\udc7f]"
+          }
+        },
+        "family": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 128,
+          "pattern": "^[^\u0000-\u001f\u007f-\u009f\u00ad\u0600-\u0605\u061c\u06dd\u070f\u0890-\u0891\u08e2\u180e\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u206f\ud800-\udfff\ufeff\ufff9-\ufffb\ud804\udcbd\ud804\udccd\ud80d\udc30-\ud80d\udc3f\ud82f\udca0-\ud82f\udca3\ud834\udd73-\ud834\udd7a\udb40\udc01\udb40\udc20-\udb40\udc7f]*$",
+          "not": {
+            "pattern": "[\u0000-\u001f\u007f-\u009f\u00ad\u0600-\u0605\u061c\u06dd\u070f\u0890-\u0891\u08e2\u180e\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u206f\ud800-\udfff\ufeff\ufff9-\ufffb\ud804\udcbd\ud804\udccd\ud80d\udc30-\ud80d\udc3f\ud82f\udca0-\ud82f\udca3\ud834\udd73-\ud834\udd7a\udb40\udc01\udb40\udc20-\udb40\udc7f]"
+          }
+        },
+        "kind": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 128,
+          "pattern": "^[^\u0000-\u001f\u007f-\u009f\u00ad\u0600-\u0605\u061c\u06dd\u070f\u0890-\u0891\u08e2\u180e\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u206f\ud800-\udfff\ufeff\ufff9-\ufffb\ud804\udcbd\ud804\udccd\ud80d\udc30-\ud80d\udc3f\ud82f\udca0-\ud82f\udca3\ud834\udd73-\ud834\udd7a\udb40\udc01\udb40\udc20-\udb40\udc7f]*$",
+          "not": {
+            "pattern": "[\u0000-\u001f\u007f-\u009f\u00ad\u0600-\u0605\u061c\u06dd\u070f\u0890-\u0891\u08e2\u180e\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u206f\ud800-\udfff\ufeff\ufff9-\ufffb\ud804\udcbd\ud804\udccd\ud80d\udc30-\ud80d\udc3f\ud82f\udca0-\ud82f\udca3\ud834\udd73-\ud834\udd7a\udb40\udc01\udb40\udc20-\udb40\udc7f]"
+          }
+        },
+        "model": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 128,
+          "pattern": "^[^\u0000-\u001f\u007f-\u009f\u00ad\u0600-\u0605\u061c\u06dd\u070f\u0890-\u0891\u08e2\u180e\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u206f\ud800-\udfff\ufeff\ufff9-\ufffb\ud804\udcbd\ud804\udccd\ud80d\udc30-\ud80d\udc3f\ud82f\udca0-\ud82f\udca3\ud834\udd73-\ud834\udd7a\udb40\udc01\udb40\udc20-\udb40\udc7f]*$",
+          "not": {
+            "pattern": "[\u0000-\u001f\u007f-\u009f\u00ad\u0600-\u0605\u061c\u06dd\u070f\u0890-\u0891\u08e2\u180e\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u206f\ud800-\udfff\ufeff\ufff9-\ufffb\ud804\udcbd\ud804\udccd\ud80d\udc30-\ud80d\udc3f\ud82f\udca0-\ud82f\udca3\ud834\udd73-\ud834\udd7a\udb40\udc01\udb40\udc20-\udb40\udc7f]"
+          }
+        },
+        "capabilities": {
+          "$ref": "#/$defs/capabilities"
+        },
+        "connection_state": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "boolean"
+            }
+          ]
+        },
+        "battery_percent": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100
+            }
+          ]
+        },
+        "observed_format": {
+          "$ref": "#/$defs/source_format"
+        }
+      },
+      "additionalProperties": false
+    },
+    "hello_payload": {
+      "type": "object",
+      "required": [
+        "role",
+        "build_id",
+        "protocol"
+      ],
+      "properties": {
+        "role": {
+          "const": "python"
+        },
+        "build_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[^\\u0000-\\u001f\\ud800-\\udfff]*$",
+          "not": {
+            "pattern": "[\\u0000-\\u001f\\ud800-\\udfff]"
+          }
+        },
+        "protocol": {
+          "const": 1,
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false
+    },
+    "hello_ack_payload": {
+      "type": "object",
+      "required": [
+        "role",
+        "build_id",
+        "protocol",
+        "features",
+        "pid"
+      ],
+      "properties": {
+        "role": {
+          "const": "hap"
+        },
+        "build_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[^\\u0000-\\u001f\\ud800-\\udfff]*$",
+          "not": {
+            "pattern": "[\\u0000-\\u001f\\ud800-\\udfff]"
+          }
+        },
+        "protocol": {
+          "const": 1,
+          "type": "integer"
+        },
+        "features": {
+          "const": [
+            "classic-camera-control-v1"
+          ]
+        },
+        "pid": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        }
+      },
+      "additionalProperties": false
+    },
+    "ping_payload": {
+      "type": "object",
+      "required": [],
+      "properties": {},
+      "additionalProperties": false
+    },
+    "pong_payload": {
+      "type": "object",
+      "required": [],
+      "properties": {},
+      "additionalProperties": false
+    },
+    "shutdown_payload": {
+      "type": "object",
+      "required": [],
+      "properties": {},
+      "additionalProperties": false
+    },
+    "shutdown_ack_payload": {
+      "type": "object",
+      "required": [],
+      "properties": {},
+      "additionalProperties": false
+    },
+    "status_payload": {
+      "type": "object",
+      "required": [
+        "state",
+        "reason"
+      ],
+      "properties": {
+        "state": {
+          "enum": [
+            "ready",
+            "degraded"
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 256,
+          "pattern": "^[^\\u0000-\\u001f\\ud800-\\udfff]*$",
+          "not": {
+            "pattern": "[\\u0000-\\u001f\\ud800-\\udfff]"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "error_payload": {
+      "type": "object",
+      "required": [
+        "code",
+        "message"
+      ],
+      "properties": {
+        "code": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[^\\u0000-\\u001f\\ud800-\\udfff]*$",
+          "not": {
+            "pattern": "[\\u0000-\\u001f\\ud800-\\udfff]"
+          }
+        },
+        "message": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 256,
+          "pattern": "^[^\\u0000-\\u001f\\ud800-\\udfff]*$",
+          "not": {
+            "pattern": "[\\u0000-\\u001f\\ud800-\\udfff]"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "inventory_request_payload": {
+      "type": "object",
+      "required": [
+        "scope",
+        "revision",
+        "cursor"
+      ],
+      "properties": {
+        "scope": {
+          "$ref": "#/$defs/account_scope"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "cursor": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/uuid"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "inventory_page_payload": {
+      "type": "object",
+      "required": [
+        "scope",
+        "revision",
+        "cursor",
+        "next_cursor",
+        "total",
+        "complete",
+        "devices"
+      ],
+      "properties": {
+        "scope": {
+          "$ref": "#/$defs/account_scope"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "cursor": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/uuid"
+            }
+          ]
+        },
+        "next_cursor": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/uuid"
+            }
+          ]
+        },
+        "total": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 256
+        },
+        "complete": {
+          "type": "boolean"
+        },
+        "devices": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "$ref": "#/$defs/device"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "camera_status_payload": {
+      "type": "object",
+      "required": [
+        "scope",
+        "revision",
+        "state",
+        "code"
+      ],
+      "properties": {
+        "scope": {
+          "$ref": "#/$defs/media_scope"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "state": {
+          "enum": [
+            "online",
+            "offline",
+            "unknown"
+          ]
+        },
+        "code": {
+          "$ref": "#/$defs/code"
+        }
+      },
+      "additionalProperties": false
+    },
+    "policy_update_payload": {
+      "type": "object",
+      "required": [
+        "scope",
+        "policy"
+      ],
+      "properties": {
+        "scope": {
+          "$ref": "#/$defs/media_scope"
+        },
+        "policy": {
+          "$ref": "#/$defs/policy"
+        }
+      },
+      "additionalProperties": false
+    },
+    "policy_ack_payload": {
+      "type": "object",
+      "required": [
+        "scope",
+        "accepted",
+        "code"
+      ],
+      "properties": {
+        "scope": {
+          "$ref": "#/$defs/media_scope"
+        },
+        "accepted": {
+          "type": "boolean"
+        },
+        "code": {
+          "$ref": "#/$defs/code"
+        }
+      },
+      "additionalProperties": false
+    },
+    "lease_request_payload": {
+      "type": "object",
+      "required": [
+        "scope",
+        "session_id",
+        "purpose",
+        "ttl_ms"
+      ],
+      "properties": {
+        "scope": {
+          "$ref": "#/$defs/media_scope"
+        },
+        "session_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "purpose": {
+          "enum": [
+            "homekit_live"
+          ]
+        },
+        "ttl_ms": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 30000
+        }
+      },
+      "additionalProperties": false
+    },
+    "lease_result_payload": {
+      "type": "object",
+      "required": [
+        "scope",
+        "session_id",
+        "status",
+        "code",
+        "ttl_ms"
+      ],
+      "properties": {
+        "scope": {
+          "$ref": "#/$defs/media_scope"
+        },
+        "session_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "status": {
+          "enum": [
+            "accepted",
+            "rejected",
+            "expired"
+          ]
+        },
+        "code": {
+          "$ref": "#/$defs/code"
+        },
+        "ttl_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 30000
+        }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "accepted"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "ttl_ms": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 30000
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "ttl_ms": {
+                "const": 0
+              }
+            }
+          }
+        }
+      ]
+    },
+    "lease_renew_payload": {
+      "type": "object",
+      "required": [
+        "scope",
+        "session_id",
+        "ttl_ms"
+      ],
+      "properties": {
+        "scope": {
+          "$ref": "#/$defs/media_scope"
+        },
+        "session_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "ttl_ms": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 30000
+        }
+      },
+      "additionalProperties": false
+    },
+    "lease_renew_result_payload": {
+      "type": "object",
+      "required": [
+        "scope",
+        "session_id",
+        "status",
+        "code",
+        "ttl_ms"
+      ],
+      "properties": {
+        "scope": {
+          "$ref": "#/$defs/media_scope"
+        },
+        "session_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "status": {
+          "enum": [
+            "accepted",
+            "rejected",
+            "expired"
+          ]
+        },
+        "code": {
+          "$ref": "#/$defs/code"
+        },
+        "ttl_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 30000
+        }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "accepted"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "ttl_ms": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 30000
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "ttl_ms": {
+                "const": 0
+              }
+            }
+          }
+        }
+      ]
+    },
+    "lease_stop_payload": {
+      "type": "object",
+      "required": [
+        "scope",
+        "session_id"
+      ],
+      "properties": {
+        "scope": {
+          "$ref": "#/$defs/media_scope"
+        },
+        "session_id": {
+          "$ref": "#/$defs/uuid"
+        }
+      },
+      "additionalProperties": false
+    },
+    "lease_stop_result_payload": {
+      "type": "object",
+      "required": [
+        "scope",
+        "session_id",
+        "status",
+        "code"
+      ],
+      "properties": {
+        "scope": {
+          "$ref": "#/$defs/media_scope"
+        },
+        "session_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "status": {
+          "enum": [
+            "stopped",
+            "rejected"
+          ]
+        },
+        "code": {
+          "$ref": "#/$defs/code"
+        }
+      },
+      "additionalProperties": false
+    },
+    "snapshot_request_payload": {
+      "type": "object",
+      "required": [
+        "scope",
+        "job_id",
+        "width",
+        "height",
+        "reason"
+      ],
+      "properties": {
+        "scope": {
+          "$ref": "#/$defs/media_scope"
+        },
+        "job_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "width": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4096
+        },
+        "height": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4096
+        },
+        "reason": {
+          "enum": [
+            "periodic",
+            "event",
+            "explicit"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "snapshot_result_payload": {
+      "type": "object",
+      "required": [
+        "scope",
+        "job_id",
+        "status",
+        "code",
+        "transfer_id"
+      ],
+      "properties": {
+        "scope": {
+          "$ref": "#/$defs/media_scope"
+        },
+        "job_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "status": {
+          "enum": [
+            "ready",
+            "rejected",
+            "cancelled"
+          ]
+        },
+        "code": {
+          "$ref": "#/$defs/code"
+        },
+        "transfer_id": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/uuid"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "ready"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "transfer_id": {
+                "$ref": "#/$defs/uuid"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "transfer_id": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "snapshot_cancel_payload": {
+      "type": "object",
+      "required": [
+        "scope",
+        "job_id"
+      ],
+      "properties": {
+        "scope": {
+          "$ref": "#/$defs/media_scope"
+        },
+        "job_id": {
+          "$ref": "#/$defs/uuid"
+        }
+      },
+      "additionalProperties": false
+    },
+    "talkback_request_payload": {
+      "type": "object",
+      "required": [
+        "scope",
+        "session_id",
+        "action"
+      ],
+      "properties": {
+        "scope": {
+          "$ref": "#/$defs/media_scope"
+        },
+        "session_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "action": {
+          "enum": [
+            "acquire",
+            "stop"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "talkback_result_payload": {
+      "type": "object",
+      "required": [
+        "scope",
+        "session_id",
+        "status",
+        "code"
+      ],
+      "properties": {
+        "scope": {
+          "$ref": "#/$defs/media_scope"
+        },
+        "session_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "status": {
+          "enum": [
+            "accepted",
+            "stopped",
+            "rejected"
+          ]
+        },
+        "code": {
+          "$ref": "#/$defs/code"
+        }
+      },
+      "additionalProperties": false
+    },
+    "control_request_payload": {
+      "type": "object",
+      "required": [
+        "scope",
+        "operation_id",
+        "control",
+        "enabled"
+      ],
+      "properties": {
+        "scope": {
+          "$ref": "#/$defs/media_scope"
+        },
+        "operation_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "control": {
+          "enum": [
+            "light",
+            "siren"
+          ]
+        },
+        "enabled": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "control_result_payload": {
+      "type": "object",
+      "required": [
+        "scope",
+        "operation_id",
+        "status",
+        "code"
+      ],
+      "properties": {
+        "scope": {
+          "$ref": "#/$defs/media_scope"
+        },
+        "operation_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "status": {
+          "enum": [
+            "accepted",
+            "rejected",
+            "unknown"
+          ]
+        },
+        "code": {
+          "$ref": "#/$defs/code"
+        }
+      },
+      "additionalProperties": false
+    },
+    "transfer_open_payload": {
+      "type": "object",
+      "required": [
+        "scope",
+        "operation_id",
+        "transfer_id",
+        "kind",
+        "total_bytes",
+        "chunk_bytes",
+        "window_chunks"
+      ],
+      "properties": {
+        "scope": {
+          "$ref": "#/$defs/media_scope"
+        },
+        "operation_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "transfer_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "kind": {
+          "enum": [
+            "snapshot",
+            "recording_init",
+            "recording_fragment",
+            "talkback_pcm"
+          ]
+        },
+        "total_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 8388608
+        },
+        "chunk_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65536
+        },
+        "window_chunks": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2
+        }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "snapshot"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "total_bytes": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 8388608
+              },
+              "chunk_bytes": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 65536
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "recording_init"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "total_bytes": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1048576
+              },
+              "chunk_bytes": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 65536
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "recording_fragment"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "total_bytes": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 8388608
+              },
+              "chunk_bytes": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 65536
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "talkback_pcm"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "total_bytes": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1920
+              },
+              "chunk_bytes": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1920
+              }
+            }
+          }
+        }
+      ]
+    },
+    "transfer_credit_payload": {
+      "type": "object",
+      "required": [
+        "scope",
+        "operation_id",
+        "transfer_id",
+        "next_sequence",
+        "credits"
+      ],
+      "properties": {
+        "scope": {
+          "$ref": "#/$defs/media_scope"
+        },
+        "operation_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "transfer_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "next_sequence": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "credits": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2
+        }
+      },
+      "additionalProperties": false
+    },
+    "transfer_end_payload": {
+      "type": "object",
+      "required": [
+        "scope",
+        "operation_id",
+        "transfer_id",
+        "sequence_count",
+        "total_bytes"
+      ],
+      "properties": {
+        "scope": {
+          "$ref": "#/$defs/media_scope"
+        },
+        "operation_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "transfer_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "sequence_count": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4294967295
+        },
+        "total_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 8388608
+        }
+      },
+      "additionalProperties": false
+    },
+    "transfer_cancel_payload": {
+      "type": "object",
+      "required": [
+        "scope",
+        "operation_id",
+        "transfer_id",
+        "code"
+      ],
+      "properties": {
+        "scope": {
+          "$ref": "#/$defs/media_scope"
+        },
+        "operation_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "transfer_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "code": {
+          "enum": [
+            "cancelled",
+            "invalidated",
+            "timeout",
+            "protocol-error"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "transfer_result_payload": {
+      "type": "object",
+      "required": [
+        "scope",
+        "operation_id",
+        "transfer_id",
+        "status",
+        "code"
+      ],
+      "properties": {
+        "scope": {
+          "$ref": "#/$defs/media_scope"
+        },
+        "operation_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "transfer_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "status": {
+          "enum": [
+            "complete",
+            "cancelled",
+            "rejected"
+          ]
+        },
+        "code": {
+          "$ref": "#/$defs/code"
+        }
+      },
+      "additionalProperties": false
+    },
+    "bulk_header": {
+      "type": "object",
+      "required": [
+        "kind",
+        "transfer_id",
+        "sequence",
+        "length"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "snapshot",
+            "recording_init",
+            "recording_fragment",
+            "talkback_pcm"
+          ]
+        },
+        "transfer_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "length": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65536
+        }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "talkback_pcm"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "length": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1920
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
   "oneOf": [
     {
       "type": "object",
-      "properties": {
-        "v": {
-          "const": 1,
-          "type": "integer"
-        },
-        "kind": {
-          "const": "ping"
-        },
-        "boot_id": {
-          "type": "string",
-          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
-        },
-        "request_id": {
-          "type": "string",
-          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
-        },
-        "payload": {
-          "type": "object",
-          "properties": {},
-          "required": [],
-          "additionalProperties": false
-        }
-      },
       "required": [
         "v",
         "kind",
@@ -36,112 +1825,6 @@
         "request_id",
         "payload"
       ],
-      "additionalProperties": false
-    },
-    {
-      "type": "object",
-      "properties": {
-        "v": {
-          "const": 1,
-          "type": "integer"
-        },
-        "kind": {
-          "const": "pong"
-        },
-        "boot_id": {
-          "type": "string",
-          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
-        },
-        "request_id": {
-          "type": "string",
-          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
-        },
-        "payload": {
-          "type": "object",
-          "properties": {},
-          "required": [],
-          "additionalProperties": false
-        }
-      },
-      "required": [
-        "v",
-        "kind",
-        "boot_id",
-        "request_id",
-        "payload"
-      ],
-      "additionalProperties": false
-    },
-    {
-      "type": "object",
-      "properties": {
-        "v": {
-          "const": 1,
-          "type": "integer"
-        },
-        "kind": {
-          "const": "shutdown"
-        },
-        "boot_id": {
-          "type": "string",
-          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
-        },
-        "request_id": {
-          "type": "string",
-          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
-        },
-        "payload": {
-          "type": "object",
-          "properties": {},
-          "required": [],
-          "additionalProperties": false
-        }
-      },
-      "required": [
-        "v",
-        "kind",
-        "boot_id",
-        "request_id",
-        "payload"
-      ],
-      "additionalProperties": false
-    },
-    {
-      "type": "object",
-      "properties": {
-        "v": {
-          "const": 1,
-          "type": "integer"
-        },
-        "kind": {
-          "const": "shutdown_ack"
-        },
-        "boot_id": {
-          "type": "string",
-          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
-        },
-        "request_id": {
-          "type": "string",
-          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
-        },
-        "payload": {
-          "type": "object",
-          "properties": {},
-          "required": [],
-          "additionalProperties": false
-        }
-      },
-      "required": [
-        "v",
-        "kind",
-        "boot_id",
-        "request_id",
-        "payload"
-      ],
-      "additionalProperties": false
-    },
-    {
-      "type": "object",
       "properties": {
         "v": {
           "const": 1,
@@ -151,38 +1834,21 @@
           "const": "hello"
         },
         "boot_id": {
-          "type": "string",
-          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          "$ref": "#/$defs/uuid"
         },
         "request_id": {
-          "type": "string",
-          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          "$ref": "#/$defs/uuid"
         },
         "payload": {
-          "type": "object",
-          "properties": {
-            "role": {
-              "const": "python"
-            },
-            "build_id": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 128,
-              "pattern": "^[^\\u0000-\\u001f\\ud800-\\udfff]*$"
-            },
-            "protocol": {
-              "const": 1,
-              "type": "integer"
-            }
-          },
-          "required": [
-            "role",
-            "build_id",
-            "protocol"
-          ],
-          "additionalProperties": false
+          "$ref": "#/$defs/hello_payload"
         }
       },
+      "additionalProperties": false,
+      "x-sender": "python",
+      "x-reply-kind": "hello_ack"
+    },
+    {
+      "type": "object",
       "required": [
         "v",
         "kind",
@@ -190,10 +1856,6 @@
         "request_id",
         "payload"
       ],
-      "additionalProperties": false
-    },
-    {
-      "type": "object",
       "properties": {
         "v": {
           "const": 1,
@@ -203,50 +1865,21 @@
           "const": "hello_ack"
         },
         "boot_id": {
-          "type": "string",
-          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          "$ref": "#/$defs/uuid"
         },
         "request_id": {
-          "type": "string",
-          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          "$ref": "#/$defs/uuid"
         },
         "payload": {
-          "type": "object",
-          "properties": {
-            "role": {
-              "const": "hap"
-            },
-            "build_id": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 128,
-              "pattern": "^[^\\u0000-\\u001f\\ud800-\\udfff]*$"
-            },
-            "protocol": {
-              "const": 1,
-              "type": "integer"
-            },
-            "features": {
-              "const": [
-                "classic-camera-control-v1"
-              ]
-            },
-            "pid": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 9007199254740991
-            }
-          },
-          "required": [
-            "role",
-            "build_id",
-            "protocol",
-            "features",
-            "pid"
-          ],
-          "additionalProperties": false
+          "$ref": "#/$defs/hello_ack_payload"
         }
       },
+      "additionalProperties": false,
+      "x-sender": "hap",
+      "x-reply-kind": null
+    },
+    {
+      "type": "object",
       "required": [
         "v",
         "kind",
@@ -254,10 +1887,130 @@
         "request_id",
         "payload"
       ],
-      "additionalProperties": false
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "integer"
+        },
+        "kind": {
+          "const": "ping"
+        },
+        "boot_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "request_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "payload": {
+          "$ref": "#/$defs/ping_payload"
+        }
+      },
+      "additionalProperties": false,
+      "x-sender": "python",
+      "x-reply-kind": "pong"
     },
     {
       "type": "object",
+      "required": [
+        "v",
+        "kind",
+        "boot_id",
+        "request_id",
+        "payload"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "integer"
+        },
+        "kind": {
+          "const": "pong"
+        },
+        "boot_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "request_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "payload": {
+          "$ref": "#/$defs/pong_payload"
+        }
+      },
+      "additionalProperties": false,
+      "x-sender": "hap",
+      "x-reply-kind": null
+    },
+    {
+      "type": "object",
+      "required": [
+        "v",
+        "kind",
+        "boot_id",
+        "request_id",
+        "payload"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "integer"
+        },
+        "kind": {
+          "const": "shutdown"
+        },
+        "boot_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "request_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "payload": {
+          "$ref": "#/$defs/shutdown_payload"
+        }
+      },
+      "additionalProperties": false,
+      "x-sender": "python",
+      "x-reply-kind": "shutdown_ack"
+    },
+    {
+      "type": "object",
+      "required": [
+        "v",
+        "kind",
+        "boot_id",
+        "request_id",
+        "payload"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "integer"
+        },
+        "kind": {
+          "const": "shutdown_ack"
+        },
+        "boot_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "request_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "payload": {
+          "$ref": "#/$defs/shutdown_ack_payload"
+        }
+      },
+      "additionalProperties": false,
+      "x-sender": "hap",
+      "x-reply-kind": null
+    },
+    {
+      "type": "object",
+      "required": [
+        "v",
+        "kind",
+        "boot_id",
+        "request_id",
+        "payload"
+      ],
       "properties": {
         "v": {
           "const": 1,
@@ -267,36 +2020,21 @@
           "const": "status"
         },
         "boot_id": {
-          "type": "string",
-          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          "$ref": "#/$defs/uuid"
         },
         "request_id": {
-          "type": "string",
-          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          "$ref": "#/$defs/uuid"
         },
         "payload": {
-          "type": "object",
-          "properties": {
-            "state": {
-              "enum": [
-                "ready",
-                "degraded"
-              ]
-            },
-            "reason": {
-              "type": "string",
-              "minLength": 0,
-              "maxLength": 256,
-              "pattern": "^[^\\u0000-\\u001f\\ud800-\\udfff]*$"
-            }
-          },
-          "required": [
-            "state",
-            "reason"
-          ],
-          "additionalProperties": false
+          "$ref": "#/$defs/status_payload"
         }
       },
+      "additionalProperties": false,
+      "x-sender": "either",
+      "x-reply-kind": null
+    },
+    {
+      "type": "object",
       "required": [
         "v",
         "kind",
@@ -304,10 +2042,6 @@
         "request_id",
         "payload"
       ],
-      "additionalProperties": false
-    },
-    {
-      "type": "object",
       "properties": {
         "v": {
           "const": 1,
@@ -317,36 +2051,21 @@
           "const": "error"
         },
         "boot_id": {
-          "type": "string",
-          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          "$ref": "#/$defs/uuid"
         },
         "request_id": {
-          "type": "string",
-          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          "$ref": "#/$defs/uuid"
         },
         "payload": {
-          "type": "object",
-          "properties": {
-            "code": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 64,
-              "pattern": "^[^\\u0000-\\u001f\\ud800-\\udfff]*$"
-            },
-            "message": {
-              "type": "string",
-              "minLength": 0,
-              "maxLength": 256,
-              "pattern": "^[^\\u0000-\\u001f\\ud800-\\udfff]*$"
-            }
-          },
-          "required": [
-            "code",
-            "message"
-          ],
-          "additionalProperties": false
+          "$ref": "#/$defs/error_payload"
         }
       },
+      "additionalProperties": false,
+      "x-sender": "either",
+      "x-reply-kind": null
+    },
+    {
+      "type": "object",
       "required": [
         "v",
         "kind",
@@ -354,7 +2073,710 @@
         "request_id",
         "payload"
       ],
-      "additionalProperties": false
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "integer"
+        },
+        "kind": {
+          "const": "inventory_request"
+        },
+        "boot_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "request_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "payload": {
+          "$ref": "#/$defs/inventory_request_payload"
+        }
+      },
+      "additionalProperties": false,
+      "x-sender": "hap",
+      "x-reply-kind": "inventory_page"
+    },
+    {
+      "type": "object",
+      "required": [
+        "v",
+        "kind",
+        "boot_id",
+        "request_id",
+        "payload"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "integer"
+        },
+        "kind": {
+          "const": "inventory_page"
+        },
+        "boot_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "request_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "payload": {
+          "$ref": "#/$defs/inventory_page_payload"
+        }
+      },
+      "additionalProperties": false,
+      "x-sender": "python",
+      "x-reply-kind": null
+    },
+    {
+      "type": "object",
+      "required": [
+        "v",
+        "kind",
+        "boot_id",
+        "request_id",
+        "payload"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "integer"
+        },
+        "kind": {
+          "const": "camera_status"
+        },
+        "boot_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "request_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "payload": {
+          "$ref": "#/$defs/camera_status_payload"
+        }
+      },
+      "additionalProperties": false,
+      "x-sender": "python",
+      "x-reply-kind": null
+    },
+    {
+      "type": "object",
+      "required": [
+        "v",
+        "kind",
+        "boot_id",
+        "request_id",
+        "payload"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "integer"
+        },
+        "kind": {
+          "const": "policy_update"
+        },
+        "boot_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "request_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "payload": {
+          "$ref": "#/$defs/policy_update_payload"
+        }
+      },
+      "additionalProperties": false,
+      "x-sender": "hap",
+      "x-reply-kind": "policy_ack"
+    },
+    {
+      "type": "object",
+      "required": [
+        "v",
+        "kind",
+        "boot_id",
+        "request_id",
+        "payload"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "integer"
+        },
+        "kind": {
+          "const": "policy_ack"
+        },
+        "boot_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "request_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "payload": {
+          "$ref": "#/$defs/policy_ack_payload"
+        }
+      },
+      "additionalProperties": false,
+      "x-sender": "python",
+      "x-reply-kind": null
+    },
+    {
+      "type": "object",
+      "required": [
+        "v",
+        "kind",
+        "boot_id",
+        "request_id",
+        "payload"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "integer"
+        },
+        "kind": {
+          "const": "lease_request"
+        },
+        "boot_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "request_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "payload": {
+          "$ref": "#/$defs/lease_request_payload"
+        }
+      },
+      "additionalProperties": false,
+      "x-sender": "hap",
+      "x-reply-kind": "lease_result"
+    },
+    {
+      "type": "object",
+      "required": [
+        "v",
+        "kind",
+        "boot_id",
+        "request_id",
+        "payload"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "integer"
+        },
+        "kind": {
+          "const": "lease_result"
+        },
+        "boot_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "request_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "payload": {
+          "$ref": "#/$defs/lease_result_payload"
+        }
+      },
+      "additionalProperties": false,
+      "x-sender": "python",
+      "x-reply-kind": null
+    },
+    {
+      "type": "object",
+      "required": [
+        "v",
+        "kind",
+        "boot_id",
+        "request_id",
+        "payload"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "integer"
+        },
+        "kind": {
+          "const": "lease_renew"
+        },
+        "boot_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "request_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "payload": {
+          "$ref": "#/$defs/lease_renew_payload"
+        }
+      },
+      "additionalProperties": false,
+      "x-sender": "hap",
+      "x-reply-kind": "lease_renew_result"
+    },
+    {
+      "type": "object",
+      "required": [
+        "v",
+        "kind",
+        "boot_id",
+        "request_id",
+        "payload"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "integer"
+        },
+        "kind": {
+          "const": "lease_renew_result"
+        },
+        "boot_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "request_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "payload": {
+          "$ref": "#/$defs/lease_renew_result_payload"
+        }
+      },
+      "additionalProperties": false,
+      "x-sender": "python",
+      "x-reply-kind": null
+    },
+    {
+      "type": "object",
+      "required": [
+        "v",
+        "kind",
+        "boot_id",
+        "request_id",
+        "payload"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "integer"
+        },
+        "kind": {
+          "const": "lease_stop"
+        },
+        "boot_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "request_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "payload": {
+          "$ref": "#/$defs/lease_stop_payload"
+        }
+      },
+      "additionalProperties": false,
+      "x-sender": "hap",
+      "x-reply-kind": "lease_stop_result"
+    },
+    {
+      "type": "object",
+      "required": [
+        "v",
+        "kind",
+        "boot_id",
+        "request_id",
+        "payload"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "integer"
+        },
+        "kind": {
+          "const": "lease_stop_result"
+        },
+        "boot_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "request_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "payload": {
+          "$ref": "#/$defs/lease_stop_result_payload"
+        }
+      },
+      "additionalProperties": false,
+      "x-sender": "python",
+      "x-reply-kind": null
+    },
+    {
+      "type": "object",
+      "required": [
+        "v",
+        "kind",
+        "boot_id",
+        "request_id",
+        "payload"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "integer"
+        },
+        "kind": {
+          "const": "snapshot_request"
+        },
+        "boot_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "request_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "payload": {
+          "$ref": "#/$defs/snapshot_request_payload"
+        }
+      },
+      "additionalProperties": false,
+      "x-sender": "hap",
+      "x-reply-kind": "snapshot_result"
+    },
+    {
+      "type": "object",
+      "required": [
+        "v",
+        "kind",
+        "boot_id",
+        "request_id",
+        "payload"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "integer"
+        },
+        "kind": {
+          "const": "snapshot_result"
+        },
+        "boot_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "request_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "payload": {
+          "$ref": "#/$defs/snapshot_result_payload"
+        }
+      },
+      "additionalProperties": false,
+      "x-sender": "python",
+      "x-reply-kind": null
+    },
+    {
+      "type": "object",
+      "required": [
+        "v",
+        "kind",
+        "boot_id",
+        "request_id",
+        "payload"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "integer"
+        },
+        "kind": {
+          "const": "snapshot_cancel"
+        },
+        "boot_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "request_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "payload": {
+          "$ref": "#/$defs/snapshot_cancel_payload"
+        }
+      },
+      "additionalProperties": false,
+      "x-sender": "hap",
+      "x-reply-kind": null
+    },
+    {
+      "type": "object",
+      "required": [
+        "v",
+        "kind",
+        "boot_id",
+        "request_id",
+        "payload"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "integer"
+        },
+        "kind": {
+          "const": "talkback_request"
+        },
+        "boot_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "request_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "payload": {
+          "$ref": "#/$defs/talkback_request_payload"
+        }
+      },
+      "additionalProperties": false,
+      "x-sender": "hap",
+      "x-reply-kind": "talkback_result"
+    },
+    {
+      "type": "object",
+      "required": [
+        "v",
+        "kind",
+        "boot_id",
+        "request_id",
+        "payload"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "integer"
+        },
+        "kind": {
+          "const": "talkback_result"
+        },
+        "boot_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "request_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "payload": {
+          "$ref": "#/$defs/talkback_result_payload"
+        }
+      },
+      "additionalProperties": false,
+      "x-sender": "python",
+      "x-reply-kind": null
+    },
+    {
+      "type": "object",
+      "required": [
+        "v",
+        "kind",
+        "boot_id",
+        "request_id",
+        "payload"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "integer"
+        },
+        "kind": {
+          "const": "control_request"
+        },
+        "boot_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "request_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "payload": {
+          "$ref": "#/$defs/control_request_payload"
+        }
+      },
+      "additionalProperties": false,
+      "x-sender": "hap",
+      "x-reply-kind": "control_result"
+    },
+    {
+      "type": "object",
+      "required": [
+        "v",
+        "kind",
+        "boot_id",
+        "request_id",
+        "payload"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "integer"
+        },
+        "kind": {
+          "const": "control_result"
+        },
+        "boot_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "request_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "payload": {
+          "$ref": "#/$defs/control_result_payload"
+        }
+      },
+      "additionalProperties": false,
+      "x-sender": "python",
+      "x-reply-kind": null
+    },
+    {
+      "type": "object",
+      "required": [
+        "v",
+        "kind",
+        "boot_id",
+        "request_id",
+        "payload"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "integer"
+        },
+        "kind": {
+          "const": "transfer_open"
+        },
+        "boot_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "request_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "payload": {
+          "$ref": "#/$defs/transfer_open_payload"
+        }
+      },
+      "additionalProperties": false,
+      "x-sender": "either",
+      "x-reply-kind": "transfer_credit"
+    },
+    {
+      "type": "object",
+      "required": [
+        "v",
+        "kind",
+        "boot_id",
+        "request_id",
+        "payload"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "integer"
+        },
+        "kind": {
+          "const": "transfer_credit"
+        },
+        "boot_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "request_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "payload": {
+          "$ref": "#/$defs/transfer_credit_payload"
+        }
+      },
+      "additionalProperties": false,
+      "x-sender": "either",
+      "x-reply-kind": null
+    },
+    {
+      "type": "object",
+      "required": [
+        "v",
+        "kind",
+        "boot_id",
+        "request_id",
+        "payload"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "integer"
+        },
+        "kind": {
+          "const": "transfer_end"
+        },
+        "boot_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "request_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "payload": {
+          "$ref": "#/$defs/transfer_end_payload"
+        }
+      },
+      "additionalProperties": false,
+      "x-sender": "either",
+      "x-reply-kind": "transfer_result"
+    },
+    {
+      "type": "object",
+      "required": [
+        "v",
+        "kind",
+        "boot_id",
+        "request_id",
+        "payload"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "integer"
+        },
+        "kind": {
+          "const": "transfer_cancel"
+        },
+        "boot_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "request_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "payload": {
+          "$ref": "#/$defs/transfer_cancel_payload"
+        }
+      },
+      "additionalProperties": false,
+      "x-sender": "either",
+      "x-reply-kind": null
+    },
+    {
+      "type": "object",
+      "required": [
+        "v",
+        "kind",
+        "boot_id",
+        "request_id",
+        "payload"
+      ],
+      "properties": {
+        "v": {
+          "const": 1,
+          "type": "integer"
+        },
+        "kind": {
+          "const": "transfer_result"
+        },
+        "boot_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "request_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "payload": {
+          "$ref": "#/$defs/transfer_result_payload"
+        }
+      },
+      "additionalProperties": false,
+      "x-sender": "either",
+      "x-reply-kind": null
     }
-  ]
+  ],
+  "x-literal-text-policy": "Unicode16 Cc/Cf/Cs ranges frozen in homekit/text.py and Node FORBIDDEN_TEXT_RANGES; independent of host Unicode database."
 }

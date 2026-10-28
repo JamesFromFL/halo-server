@@ -64,6 +64,8 @@ def _validate_device_inventory(rows: object) -> None:
 class RingClient:
     """Synchronous owner of one async ring-doorbell session and event loop."""
 
+    supports_snapshot_admission = True
+
     def __init__(self) -> None:
         self._ring = None
         self._authenticated = False
@@ -144,11 +146,12 @@ class RingClient:
         device,
         *,
         fresh: bool = False,
+        admission: Callable[[], bool] | None = None,
     ) -> concurrent.futures.Future:
         """Submit one snapshot request to the client-owned Ring event loop."""
         if self._ring is None:
             raise RuntimeError("Not signed in to Ring")
-        return self.submit(self._async_snapshot_bytes(device, fresh=fresh))
+        return self.submit(self._async_snapshot_bytes(device, fresh=fresh, admission=admission))
 
     def submit(self, coro) -> concurrent.futures.Future:
         """Submit work to the Ring event loop without blocking the caller."""
@@ -413,12 +416,18 @@ class RingClient:
         ring.session_refresh_time = staged.session_refresh_time
         ring._devices = refreshed
 
-    async def _async_snapshot_bytes(self, device, *, fresh: bool = False) -> bytes | None:
-        if self._ring is None:
+    async def _async_snapshot_bytes(
+        self,
+        device,
+        *,
+        fresh: bool = False,
+        admission: Callable[[], bool] | None = None,
+    ) -> bytes | None:
+        if self._ring is None or (admission is not None and not admission()):
             return None
         if self._snapshot_reader is None:
             self._snapshot_reader = SnapshotReader(self._ring)
-        return await self._snapshot_reader.fetch(device, fresh=fresh)
+        return await self._snapshot_reader.fetch(device, fresh=fresh, admission=admission)
 
     async def _async_close(self) -> None:
         ring = self._detach_session()

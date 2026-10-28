@@ -1,6 +1,7 @@
 # Direct HomeKit implementation status
 
-Engineering record, 2026-10-28. Baseline: `d3c74883b16434d2d0244404fc6766ca1f38f98a`.
+Engineering record, 2026-10-28. Foundation committed locally as
+`798b7173ad9e8fbcbe655eb692a709b17cafcc87`; S05 builds on that commit.
 
 The approved architecture keeps Python as the sole Ring account, push-event,
 shared capture and speaker owner. A supervised Node adapter uses released public
@@ -32,10 +33,14 @@ development. Direct HomeKit is not ready to pair or use with cameras.
   The selected pair is aiortc 1.15.0 / PyAV 17.1.0, with exact guarded contracts
   revalidated in an isolated variant before adoption. PyAV 19 is outside aiortc's
   supported range and drops the project's Python 3.11 floor.
-- S05 groundwork: capture consumers, timestamp math, the Ring receiver and direct
-  service imports no longer require GI/GStreamer. Private control v1 has strict
-  bounded framing/schema/fixtures and immutable scope/privacy inputs, independent
-  of unchanged public plugin v2/v3 contracts.
+- S05: validated operating modes and revision-checked private configuration;
+  bounded immutable inventory, source format, capability evidence and privacy
+  inputs; and one native service facade over the existing account/capture/speaker
+  owners. Native live, snapshot, talkback and control admission are scoped by
+  account, source wrapper, adapter boot and privacy generation. Capture consumers,
+  timestamp math, the Ring receiver and direct imports remain GI-free. Private
+  control v1 defines strict scoped requests/replies and separate typed binary
+  headers; public plugin v2/v3 schemas and fixtures remain unchanged.
 - S06 groundwork: inherited private socket pairs, Python ownership of one Node
   process, handshake, bounded requests, heartbeat, crash budget, boot rotation,
   cancellation-safe startup and joined TERM/KILL cleanup. The synthetic adapter
@@ -46,6 +51,50 @@ is available while the network is slow. Pending authentication is retired during
 shutdown. OS-level filesystem operations and cancellation-suppressing native work
 cannot be force-killed as Python threads; ownership is retained and incomplete
 cleanup is reported rather than admitting another upstream.
+
+## S05 service contract and operating modes
+
+`compatibility` remains the missing-configuration default and enables the plugin
+and RTSP listeners. `homekit` requests only the native path, `dual` requests both,
+and `ring-only` enables neither media integration. The CLI accepts `daemon --mode`
+as an override for that launch. Overrides do not silently save settings. The
+private version-1 `configuration.json` store uses revision compare-and-swap,
+owner-only regular files, no-follow directory traversal, atomic replacement,
+file/directory fsync and visible corruption/conflict/uncertain-durability errors.
+The future settings interface will use this store; no TUI editor is added here.
+`homekit` and `dual` currently report `not_ready` with
+`native_adapter_wiring_pending`; choosing them cannot publish an accessory yet.
+
+The facade starts with no selected cameras and unsynchronized, deny-all policy.
+A current adapter boot explicitly selects current source scopes, then applies
+policy. Every policy change advances privacy generation and retires existing
+claims. Logout/replacement detaches the boot. Inventory refresh reconciles old
+wrappers, while metadata-only changes preserve their generation. Account display
+names, Ring credentials and SDK objects never appear in native inventory.
+Observed media format and audio capability stay unknown until measured; capability
+labels distinguish SDK reports from Halo's exact-kind compatibility overrides.
+The SDK's `subscribed` flag is not used to claim network reachability.
+
+Initial native limits are two live handles per camera, eight total, two snapshots,
+two controls, and one speaker globally. The speaker also shares the existing
+per-camera exclusion against plugin talkback. Native and legacy live claims share
+one capture registry. Admission is checked after locks, when queued Ring work
+starts, before snapshot HTTP retries/fallback, and before read/renew/write results
+are delivered. Audio filtering advances the encoded cursor even when audio is
+withheld. Cancelling an acquisition joins late mutation and compensating release;
+cancelling a task before its first instruction also releases its reservation.
+A cleanup failure remains reserved and visible instead of reopening its source.
+Logout still attempts credential removal when resource cleanup fails. A command
+already handed to Ring cannot be undone; uncertain accepted controls are reported
+conservatively and are never retried automatically.
+
+Private control JSON is capped at 64 KiB and carries metadata only. The binary
+contract has a fixed 32-byte versioned header and typed snapshot/init/fragment/PCM
+transfers, with 64 KiB chunks and a two-chunk/128 KiB credit window. These are
+validated contracts, not an operational bulk sender. In particular, a 32-camera
+page can exceed the control-byte limit with valid Unicode metadata; S06 must
+paginate by encoded bytes as well as camera count. The synthetic child continues
+to accept only lifecycle operations and rejects media operations as unsupported.
 
 ## Account continuity and migration
 
@@ -64,9 +113,10 @@ that could revive revoked pairings/controllers.
 
 ## Remaining implementation
 
-S04 still needs the final distribution/runtime capability gates. S05 still needs
-the complete service facade, operational configuration and policy propagation.
-S06 still needs production service wiring and bounded bulk transfers. A handshake
+S04 still needs the final distribution/runtime capability gates. S05 is complete
+as the shared service/configuration/contract slice. S06 still needs production
+adapter wiring, owned request maps, policy propagation across IPC, bounded bulk
+credit/cancel machinery and byte-aware inventory pagination. A handshake
 echoed build ID verifies correlation, not independent artifact provenance; frozen
 resource hashes and packaged-manifest verification belong in S14.
 
