@@ -60,6 +60,19 @@ def reconstruct(packets):
             if payload[1] & 0x40:
                 nalus.append(fragment)
                 fragment = None
+        elif payload[0] & 31 == 24:
+            assert fragment is None and len(payload) > 1
+            offset = 1
+            while offset < len(payload):
+                assert offset + 2 <= len(payload)
+                count = struct.unpack_from("!H", payload, offset)[0]
+                offset += 2
+                assert count and offset + count <= len(payload)
+                nal = payload[offset : offset + count]
+                assert 1 <= nal[0] & 31 <= 23
+                nalus.append(nal)
+                offset += count
+            assert offset == len(payload)
         else:
             assert fragment is None
             nalus.append(payload)
@@ -69,8 +82,8 @@ def reconstruct(packets):
 
 def test_rtp_header_known_vector_and_sequence_wrap():
     sender = H264Packetizer(0x12345678, sequence=65535)
-    one = sender.packetize(b"\0\0\0\1\x65\x01\x02", 0xABCDEF01, payload_type=99, mtu=128)
-    assert one[0].packet.hex() == "80e3ffffabcdef0112345678650102"
+    one = sender.packetize(b"\0\0\0\1\x61\x01\x02", 0xABCDEF01, payload_type=99, mtu=128)
+    assert one[0].packet.hex() == "80e3ffffabcdef0112345678610102"
     assert sender.sequence == 0
     two = sender.packetize(b"\0\0\1\x61xx", 0, payload_type=96, mtu=1200)
     assert two[0].sequence == 0 and two[0].timestamp == 0

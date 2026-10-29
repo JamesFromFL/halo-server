@@ -14,7 +14,8 @@ separate from synthetic and installed-artifact checks.
 | 4c | Mains-camera snapshot cache-miss recovery | Complete: `64a889a`; 2,212 Python / 265 Node tests passed |
 | 4d | Ring post-activation stream-options compatibility | Complete: `9c51a33`; paired pilot did not eliminate incoming periodic gaps |
 | 5 | Complete-frame delivery and loss recovery | Partial original scope: `4e0af7b`; 2,256 Python / 265 Node passed; packaged, not deployed; remaining recovery work below |
-| 6a | Original video receipt and worker ownership | Frozen implementation; combined focused 234 passed / 1 host IPv6 skip; full gate and commit pending |
+| 6a | Original video receipt and worker ownership | Complete: `a59435f`; 2,294 Python / 265 Node passed; 1 host IPv6 skip |
+| 6p | HomeKit parameter-set packetization | Implemented; 173 focused checks passed / 1 host IPv6 skip; full gate pending |
 | 6b onward | Quality, A/V timeline and reconfigure | Receiver-first audit now governs sequencing; no new implementation from this audit |
 | 7 | Installed and real-device qualification | Pending |
 
@@ -334,3 +335,21 @@ Read-only source audits and synthetic probes are retained in the repair workspac
 under `diagnosis/homekit-contract-audit/`. No server or media actions were taken
 for this receiver-first audit. The full repair and real-device acceptance remain
 incomplete; no claim of near-Ring parity is made yet.
+
+## Receiver packet implementation, R6p
+
+The stateless H.264 packetizer now places leading SPS/PPS in one bounded STAP-A.
+Intervening non-VCL prefixes remain in their original order inside that packet;
+every original NAL byte survives reconstruction. The aggregate uses the maximum
+member NRI, network-order lengths, and the negotiated protected-packet ceiling.
+Its marker stays clear; the final picture fragment owns the marker. Missing,
+partial, late or oversized parameter groups fail before consuming a sequence
+number. No parameter cache can leak an older source or configuration into a new
+IDR. Ordinary P-frame and FU-A payloads retain their original content.
+
+Independent aiortc depacketization, SRTP authentication, native decode and exact
+decoded-pixel comparisons cover all three supported H.264 profiles, small and
+normal MTUs, sequence wrap, IDR recovery and intervening metadata. Existing test
+reconstructors now parse STAP-A explicitly rather than treating it as a codec
+NAL. The actual public HAP delegate/IPC/UDP/decode test also passes. These checks
+establish the wire correction, not physical Home continuity or quality parity.

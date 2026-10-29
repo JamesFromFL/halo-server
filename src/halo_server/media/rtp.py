@@ -83,8 +83,41 @@ class H264Packetizer:
         # not a required packet size. Retain our conservative protected-UDP
         # payload ceiling, including the RTP header and SRTP authentication tag.
         maximum = min(mtu, MAX_UDP_PAYLOAD_BYTES) - RTP_HEADER_BYTES - SRTP_TAG_BYTES
+        nals = annexb_nalus(payload)
+        types = tuple(nal[0] & 31 for nal in nals)
+        pictures = [index for index, kind in enumerate(types) if 1 <= kind <= 5]
+        if not pictures:
+            raise RtpError("H264 access unit has no picture")
+        parameters = [index for index, kind in enumerate(types) if kind in {7, 8}]
+        if 5 in types and not {7, 8} <= set(types):
+            raise RtpError("H264 IDR lacks current parameter sets")
+        parameter_start = parameter_end = None
+        aggregate = None
+        if parameters:
+            parameter_start, parameter_end = parameters[0], parameters[-1] + 1
+            members = nals[parameter_start:parameter_end]
+            if parameter_end > pictures[0] or not {7, 8} <= {nal[0] & 31 for nal in members}:
+                # Keep intervening non-VCL NALs in the aggregate, in order.
+                # Never move an update across picture data or borrow a cached
+                # pair from another source/configuration.
+                raise RtpError("H264 parameter sets are not a complete leading group")
+            if any(not 1 < len(nal) <= 0xFFFF for nal in members):
+                raise RtpError("H264 parameter set exceeds aggregation limits")
+            aggregate_size = 1 + sum(2 + len(nal) for nal in members)
+            if aggregate_size > maximum:
+                # RFC6184 does not permit fragmenting a STAP-A. Sending the
+                # parameter NALs separately would miss the HomeKit contract.
+                raise RtpError("H264 parameter aggregation exceeds negotiated packet limit")
+            aggregate = bytes((24 | max(nal[0] & 0x60 for nal in members),)) + b"".join(
+                struct.pack("!H", len(nal)) + nal for nal in members
+            )
         chunks = []
-        for nal in annexb_nalus(payload):
+        for index, nal in enumerate(nals):
+            if index == parameter_start:
+                chunks.append(aggregate)
+                continue
+            if parameter_start is not None and parameter_start < index < parameter_end:
+                continue
             if len(nal) <= maximum:
                 chunks.append(nal)
             else:

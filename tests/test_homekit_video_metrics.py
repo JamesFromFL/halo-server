@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
+from aiortc.codecs.h264 import h264_depayload
 from aiortc.rtp import RtcpPacket, RtcpReceiverInfo, RtcpRrPacket, RtcpSrPacket
 from test_homekit_live import (
     CONFIG,
@@ -169,10 +170,12 @@ async def test_partial_au_counts_packets_but_not_a_complete_frame(monkeypatch):
         assert counters["sent_protected_bytes"] == counters["sent_payload_bytes"] + 22 * 3
         crypto = native_crypto(result.ssrc)
         clear = [crypto.unprotect(packet) for packet in protected]
-        # Real matching SPS/PPS preceded the first IDR fragment. The next
-        # fragment failed, so the observed unit still is genuinely incomplete.
-        assert [packet[12] & 31 for packet in clear] == [7, 8, 28]
-        assert clear[-1][13] & 0x80 and not clear[-1][13] & 0x40
+        # Real matching SPS/PPS share a STAP-A before two IDR fragments. The
+        # final fragment failed, so this still is genuinely incomplete.
+        assert [packet[12] & 31 for packet in clear] == [24, 28, 28]
+        assert annexb_nalus(h264_depayload(clear[0][12:])) == annexb_nalus(output.payload)[:2]
+        assert clear[1][13] & 0x80 and not clear[1][13] & 0x40
+        assert not clear[-1][13] & (0x80 | 0x40)
         assert not clear[-1][1] & 0x80
     finally:
         receiver.close()

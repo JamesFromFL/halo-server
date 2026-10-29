@@ -151,6 +151,18 @@ async def test_public_hap_delegate_reaches_native_udp_picture_and_graceful_clean
                     fragment.extend(payload[2:])
                     if payload[1] & 0x40:
                         nals.append(bytes(fragment))
+                elif payload[0] & 31 == 24:
+                    offset = 1
+                    while offset < len(payload):
+                        assert offset + 2 <= len(payload)
+                        count = struct.unpack_from("!H", payload, offset)[0]
+                        offset += 2
+                        assert count and offset + count <= len(payload)
+                        nal = payload[offset : offset + count]
+                        assert nal[0] & 31 in {7, 8}
+                        nals.append(nal)
+                        offset += count
+                    assert offset == len(payload)
                 else:
                     nals.append(payload)
                 if packet[1] & 0x80:
