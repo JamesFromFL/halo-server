@@ -40,11 +40,14 @@ HEADER = struct.Struct("!cQQI")
 MAX_PENDING_FRAMES = 8
 MAX_INPUT_ORIGINS = 64
 MAX_FORCE_REQUESTS = 8
-RATE_SAMPLES = 32
+RATE_SAMPLES = 128
 RATE_INTERVALS = 8
 RATE_SPAN = 45000
 RATE_GAP = 90000
 RATE_COOLDOWN = 5 * 90000
+RATE_MAINTENANCE_SPAN = 4 * 90000
+RATE_VOTE_SPAN = 2 * 90000
+RATE_SMALL_VOTE_SPAN = 4 * 90000
 
 
 def read_exact(count):
@@ -166,9 +169,18 @@ class RateCadence:
             self.vote = self.vote_since = None
             self.votes = 0
         self.samples.append(source)
+        # Startup learns promptly without holding a picture. Later corrections
+        # use four source seconds, rather than a short count window that can
+        # mistake irregular source PTS for a persistent rate change. Keep one
+        # boundary sample so the covered interval is never shortened silently.
+        if self.calibrated:
+            boundary = source - RATE_MAINTENANCE_SPAN
+            while len(self.samples) > 2 and self.samples[1] <= boundary:
+                self.samples.popleft()
         intervals = len(self.samples) - 1
         span = source - self.samples[0]
-        if intervals < RATE_INTERVALS or span < RATE_SPAN:
+        required_span = RATE_MAINTENANCE_SPAN if self.calibrated else RATE_SPAN
+        if intervals < RATE_INTERVALS or span < required_span:
             return self.target
         estimated = min(self.maximum, max(1, (intervals * 90000 + span // 2) // span))
         if not self.calibrated:
@@ -176,7 +188,7 @@ class RateCadence:
             self.target = estimated
             self.changed_at = source
             return self.target
-        if abs(estimated - self.target) * 5 < self.target:
+        if estimated == self.target:
             self.vote = self.vote_since = None
             self.votes = 0
             return self.target
@@ -184,9 +196,12 @@ class RateCadence:
             self.vote, self.votes, self.vote_since = estimated, 1, source
         else:
             self.votes += 1
+        # One-fps corrections remain possible, but need longer persistence to
+        # reject small transient excursions near an integer rounding boundary.
+        vote_span = RATE_SMALL_VOTE_SPAN if abs(estimated - self.target) == 1 else RATE_VOTE_SPAN
         if (
             self.votes >= RATE_INTERVALS
-            and source - self.vote_since >= RATE_SPAN
+            and source - self.vote_since >= vote_span
             and source - self.changed_at >= RATE_COOLDOWN
         ):
             self.target = estimated

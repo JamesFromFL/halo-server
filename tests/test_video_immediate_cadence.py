@@ -26,7 +26,8 @@ def test_calibration_needs_eight_intervals_and_half_second_without_holding_frame
     assert rate.observe(48000) == 15
     for index in range(9, 100):
         assert rate.observe(index * 6000) == 15
-    assert len(rate.samples) == RATE_SAMPLES
+    assert len(rate.samples) <= RATE_SAMPLES
+    assert rate.samples[-1] - rate.samples[0] >= 4 * 90000
     faster = RateCadence(30)
     for index in range(15):
         assert faster.observe(index * 3000) == 30 and not faster.calibrated
@@ -97,7 +98,7 @@ def test_calibration_waits_for_returned_batch_origins_and_preserves_force_fifo()
 
 
 def test_actual_native_cadence_change_keeps_decoder_warm_and_force_acknowledgments_exact():
-    source = encode_source(fps=25, frames=170, profile="high", level="5.0")
+    source = encode_source(fps=25, frames=170, profile="high", level="5.0") * 2
     worker = Encoder(asdict(CONFIG))
     decoder = worker.decoder
     output_decoder = av.CodecContext.create("h264", "r")
