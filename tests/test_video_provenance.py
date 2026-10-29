@@ -32,12 +32,16 @@ async def test_delayed_multiple_outputs_keep_original_receipts_before_batch_reti
     class Worker:
         def __init__(self, _configuration):
             self.calls = 0
+            self.tokens = []
 
-        async def feed(self, _payload, _timestamp, *, force_idr):
+        async def feed(self, _payload, _timestamp, *, force_idr, force_request):
             self.calls += 1
+            self.tokens.append(force_request)
             if self.calls % 2:
+                self.last_output_force_requests = ()
                 return ()
             start = self.calls - 2
+            self.last_output_force_requests = tuple(self.tokens[start : start + 2])
             return tuple((source[index][1], outputs[index][0]) for index in (start, start + 1))
 
         async def close(self):
@@ -102,7 +106,8 @@ async def test_native_faster_source_drops_leave_metadata_bounded_without_false_o
                 )
             )
             assert len(adapter._source_receipts) <= MAX_SOURCE_RECEIPTS
-        assert [output.timestamp for output in outputs] == list(range(0, 255000, 3000))
+        assert [output.timestamp for output in outputs] == list(range(0, 252000, 3000))
+        assert adapter._worker.last_pending_frames == 1
         assert all(output.received_at == receipts[output.timestamp] for output in outputs)
         assert all(output.capture_epoch == 4 for output in outputs)
     finally:
@@ -181,7 +186,8 @@ async def test_retirement_during_old_close_cannot_resurrect_or_erase_new_worker(
         def __init__(self, _configuration):
             made.append(self)
 
-        async def feed(self, _payload, timestamp, *, force_idr):
+        async def feed(self, _payload, timestamp, *, force_idr, force_request):
+            self.last_output_force_requests = (force_request,)
             return ((timestamp, outputs[0][0]),)
 
         async def close(self):
@@ -224,9 +230,10 @@ async def test_native_result_after_close_never_returns_media(monkeypatch, bitstr
     entered, release = asyncio.Event(), asyncio.Event()
 
     class Worker:
-        async def feed(self, _payload, timestamp, *, force_idr):
+        async def feed(self, _payload, timestamp, *, force_idr, force_request):
             entered.set()
             await release.wait()
+            self.last_output_force_requests = (force_request,)
             return ((timestamp, outputs[0][0]),)
 
         async def close(self):
@@ -280,7 +287,8 @@ async def test_epoch_and_reconfigure_clear_only_retired_origins_and_advance_cont
             self.closed = False
             workers.append(self)
 
-        async def feed(self, _payload, timestamp, *, force_idr):
+        async def feed(self, _payload, timestamp, *, force_idr, force_request):
+            self.last_output_force_requests = () if len(workers) == 1 else (force_request,)
             return () if len(workers) == 1 else ((timestamp, outputs[0][0]),)
 
         async def close(self):
@@ -314,9 +322,13 @@ async def test_missing_or_evicted_origin_is_explicit_and_metadata_stays_bounded(
     class Worker:
         calls = 0
 
-        async def feed(self, _payload, _timestamp, *, force_idr):
+        async def feed(self, _payload, _timestamp, *, force_idr, force_request):
             self.calls += 1
-            return () if self.calls <= MAX_SOURCE_RECEIPTS + 1 else ((0, outputs[0][0]),)
+            if self.calls == 1:
+                self.last_output_force_requests = (force_request,)
+                return ((0, outputs[0][0]),)
+            self.last_output_force_requests = () if self.calls <= MAX_SOURCE_RECEIPTS + 2 else (0,)
+            return () if self.calls <= MAX_SOURCE_RECEIPTS + 2 else ((6000, outputs[0][0]),)
 
         async def close(self):
             pass
@@ -324,7 +336,8 @@ async def test_missing_or_evicted_origin_is_explicit_and_metadata_stays_bounded(
     monkeypatch.setattr(transcode, "VideoWorker", lambda _configuration: Worker())
     adapter = configured()
     try:
-        for index in range(MAX_SOURCE_RECEIPTS + 1):
+        assert len(await adapter.feed(source[0][0], 0, capture_epoch=1, received_at=100)) == 1
+        for index in range(1, MAX_SOURCE_RECEIPTS + 2):
             assert (
                 await adapter.feed(
                     source[0][0], index * 6000, capture_epoch=1, received_at=100 + index
@@ -332,12 +345,12 @@ async def test_missing_or_evicted_origin_is_explicit_and_metadata_stays_bounded(
                 == ()
             )
             assert len(adapter._source_receipts) <= MAX_SOURCE_RECEIPTS
-        assert (1, 0) not in adapter._source_receipts
+        assert (1, 6000) not in adapter._source_receipts
         assert all(type(value) is float for value in adapter._source_receipts.values())
         with pytest.raises(VideoTransformError, match="source receipt is unavailable"):
             await adapter.feed(
                 source[0][0],
-                (MAX_SOURCE_RECEIPTS + 1) * 6000,
+                (MAX_SOURCE_RECEIPTS + 2) * 6000,
                 capture_epoch=1,
                 received_at=999,
             )

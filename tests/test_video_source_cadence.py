@@ -29,14 +29,16 @@ async def test_keyframe_request_during_feed_applies_to_next_input(
         def __init__(self, _configuration):
             pass
 
-        async def feed(self, _payload, timestamp, *, force_idr):
+        async def feed(self, _payload, timestamp, *, force_idr, force_request):
             index = len(dispatched)
             dispatched.append(force_idr)
             if index == 1:
                 entered.set()
                 await resume.wait()
                 if skip_inflight_output:
+                    self.last_output_force_requests = ()
                     return ()
+            self.last_output_force_requests = (force_request,)
             return ((timestamp, encoded[index][0]),)
 
         async def close(self):
@@ -140,13 +142,14 @@ async def test_copy_keeps_jittered_source_bytes_and_does_not_skip_dependent_fram
 
 @pytest.mark.asyncio
 async def test_true_repeated_phase_fences_copy_chain_until_an_actual_source_idr():
-    source = encode_source(frames=5, force=(4,))
+    source = encode_source(frames=6, force=(4,))
     adapter = AccessUnitAdapter(VideoConfiguration(320, 240, 15, "baseline", "3.1", 2000))
     try:
         assert (await adapter.feed(source[0][0], 0))[0].mode == "copy"
         for index in range(1, 4):
             assert await adapter.feed(source[index][0], index * 3000) == ()
-        outputs = await adapter.feed(source[4][0], 12000)
+        assert await adapter.feed(source[4][0], 12000) == ()
+        outputs = await adapter.feed(source[5][0], 18000)
         assert outputs[0].mode == "adapt" and outputs[0].is_keyframe
     finally:
         await adapter.close()
@@ -168,7 +171,8 @@ async def test_native_jitter_and_long_source_gop_keep_frames_and_force_source_ti
             timestamp = 2**32 - 9000 + round(index * 90000 / source_fps) - index % 2
             timestamps.append(timestamp)
             outputs.extend(await adapter.feed(payload, timestamp, capture_epoch=1))
-        assert [output.timestamp for output in outputs] == timestamps
+        assert [output.timestamp for output in outputs] == timestamps[:-1]
+        assert adapter._worker.last_pending_frames == 1
         assert all(output.mode == "adapt" for output in outputs)
         idrs = [output for output in outputs if output.is_keyframe]
         assert len(idrs) >= 3
@@ -195,43 +199,51 @@ async def test_native_faster_input_is_decimated_by_phase_without_retimestamping(
         outputs = []
         for index, payload in enumerate(source):
             outputs.extend(await adapter.feed(payload, index * 1500))
-        assert [output.timestamp for output in outputs] == list(range(0, 180000, 3000))
+        assert [output.timestamp for output in outputs] == list(range(0, 177000, 3000))
+        assert adapter._worker.last_pending_frames == 1
     finally:
         await adapter.close()
 
 
 @pytest.mark.asyncio
 async def test_discontinuity_and_new_capture_reset_phase_and_require_a_real_idr():
-    source = encode_source(profile="high", level="5.0", frames=4, force=(3,))
+    source = encode_source(profile="high", level="5.0", frames=5, force=(3,))
     adapter = AccessUnitAdapter(VideoConfiguration(320, 240, 15, "main", "3.1", 1000))
     try:
-        assert (await adapter.feed(source[0][0], 90000, capture_epoch=1))[0].is_keyframe
-        assert await adapter.feed(source[1][0], 96000, capture_epoch=1)
+        assert await adapter.feed(source[0][0], 90000, capture_epoch=1) == ()
+        assert (await adapter.feed(source[1][0], 96000, capture_epoch=1))[0].is_keyframe
         assert await adapter.feed(source[2][0], 6000, capture_epoch=1) == ()
-        restarted = await adapter.feed(source[3][0], 12000, capture_epoch=1)
+        assert await adapter.feed(source[3][0], 12000, capture_epoch=1) == ()
+        restarted = await adapter.feed(source[4][0], 18000, capture_epoch=1)
         assert restarted[0].timestamp == 12000 and restarted[0].is_keyframe
         assert await adapter.feed(source[2][0], 6000, capture_epoch=2) == ()
-        fresh = await adapter.feed(source[3][0], 12000, capture_epoch=2)
+        assert await adapter.feed(source[3][0], 12000, capture_epoch=2) == ()
+        fresh = await adapter.feed(source[4][0], 18000, capture_epoch=2)
         assert fresh[0].timestamp == 12000 and fresh[0].is_keyframe
     finally:
         await adapter.close()
 
 
-def test_fixed_encoder_uses_actual_source_precision_without_vfr_buffering():
+def test_source_time_encoder_keeps_exact_pts_with_one_frame_pending_and_explicit_flush():
     selected = VideoConfiguration(320, 240, 30, "main", "3.1", 1000)
     encoder = open_encoder(asdict(selected))
     assert encoder.time_base == Fraction(1, 90000)
     assert encoder.framerate == 30
     assert not encoder.options
-    for timestamp in (2**32 - 2999, 2**32 + 3001, 2**32 + 9000):
+    timestamps = (2**32 - 2999, 2**32 + 3001, 2**32 + 9000)
+    encoded = []
+    for index, timestamp in enumerate(timestamps):
         frame = av.VideoFrame(320, 240, "yuv420p")
-        for index, plane in enumerate(frame.planes):
-            plane.update(bytes([80 if index == 0 else 128]) * plane.buffer_size)
+        for number, plane in enumerate(frame.planes):
+            plane.update(bytes([80 if number == 0 else 128]) * plane.buffer_size)
         frame.pts, frame.time_base = timestamp, Fraction(1, 90000)
         packets = encoder.encode(frame)
-        assert len(packets) == 1
-        assert packets[0].pts == timestamp and packets[0].time_base == Fraction(1, 90000)
-    assert not encoder.encode(None)
+        assert len(packets) == (0 if index == 0 else 1)
+        encoded.extend(packets)
+    assert [packet.pts for packet in encoded] == list(timestamps[:-1])
+    tail = encoder.encode(None)
+    assert len(tail) == 1 and tail[0].pts == timestamps[-1]
+    assert all(packet.time_base == Fraction(1, 90000) for packet in (*encoded, *tail))
 
 
 @pytest.mark.asyncio
@@ -250,8 +262,12 @@ async def test_forced_worker_output_must_contain_actual_idr_and_matching_paramet
             self.calls += 1
             if failure == "deadline":
                 if self.calls == 1:
+                    self.token = _kwargs["force_request"]
+                    self.last_output_force_requests = ()
                     return ()
+                self.last_output_force_requests = (self.token, 0)
                 return ((0, output[0][0]), (180000, output[1][0]))
+            self.last_output_force_requests = (_kwargs["force_request"],)
             nals = split_annexb(output[0][0])
             if failure == "not-idr":
                 return ((0, annexb([nal for nal in nals if nal[0] & 31 != 5]) + output[1][0]),)

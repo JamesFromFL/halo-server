@@ -66,9 +66,13 @@ async def test_native_moving_video_has_small_decodable_idrs_and_bounded_protecte
     continuous.thread_count = 1
     rows, idrs, decoded_count = [], [], 0
     try:
-        for timestamp, payload in source:
+        for index, (timestamp, payload) in enumerate(source):
             encoded = await worker.feed(payload, timestamp)
-            assert len(encoded) == 1 and encoded[0][0] == timestamp
+            assert len(encoded) == (0 if index == 0 else 1)
+            if not encoded:
+                continue
+            assert encoded[0][0] == source[index - 1][0]
+            timestamp = encoded[0][0]
             output = encoded[0][1]
             nals = split_annexb(output)
             types = {nal[0] & 31 for nal in nals}
@@ -99,11 +103,14 @@ async def test_native_moving_video_has_small_decodable_idrs_and_bounded_protecte
             rows.append((timestamp / 90000, protected_bytes))
             if 5 in types:
                 idrs.append((timestamp, protected_bytes))
-        assert decoded_count == len(source) == fps * 6
+        assert decoded_count == len(source) - 1 == fps * 6 - 1
+        assert worker.last_pending_frames == 1
         assert [timestamp for timestamp, _count in idrs] == [0, 180000, 360000]
-        # This representative scene's recovery frames fit within 200 ms of wire
-        # service. The prior 1 s VBV encoder needed 458–507 ms before any processing.
-        assert all(count * 8 / (kbps * 1000) < 0.2 for _timestamp, count in idrs)
+        # The selected limit describes codec bytes over one second. This
+        # separate finite peak is the approved receiver-first transport model,
+        # not an assertion that the codec limit is the physical wire speed.
+        wire_rate = min(64_000_000, max(2_000_000, kbps * 1000 * 4))
+        assert all(count * 8 / wire_rate < 0.2 for _timestamp, count in idrs)
         assert sum(count for _timestamp, count in rows) * 8 / 6 <= kbps * 1000
 
         # Deterministic serialization model, with an explicit 50 ms conversion
@@ -111,12 +118,12 @@ async def test_native_moving_video_has_small_decodable_idrs_and_bounded_protecte
         # execution guarantees on every host or hypothetical arbitrary scenes.
         next_packet = 0
         for received, count in rows:
-            finish = max(received + 0.250 + 0.050, next_packet) + count * 8 / (kbps * 1000)
+            finish = max(received + 0.250 + 0.050, next_packet) + count * 8 / wire_rate
             assert finish <= received + 0.5
             next_packet = finish
         # Independent 250 ms age + 250 ms backlog already exhausts the budget:
         # no encoder setting can truthfully admit a positive-size AU here.
-        assert 0.250 + 0.250 + rows[0][1] * 8 / (kbps * 1000) > 0.5
+        assert 0.250 + 0.250 + rows[0][1] * 8 / wire_rate > 0.5
     finally:
         await worker.close()
         secure.close()

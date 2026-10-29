@@ -11,6 +11,7 @@ import pylibsrtp
 import pytest
 from test_homekit_bridge import ADAPTER, NODE
 from test_homekit_broker import setup_broker
+from test_media_h264 import encode_source
 
 from halo_server.homekit.runtime import HomeKitRuntime
 from halo_server.media.h264 import VideoConfiguration
@@ -129,8 +130,13 @@ async def test_public_hap_delegate_reaches_native_udp_picture_and_graceful_clean
         assert result.startswith("started-"), result
         ssrc = int(result.removeprefix("started-"))
         capture = service._media_sessions["42"]
-        picture = (await worker.probe())[0][1]
+        probe = (await worker.probe())[0][1]
+        assert len(av.CodecContext.create("h264", "r").decode(av.Packet(probe))) == 1
         await worker.close()
+        # A terminal source-time capability probe has no fixed VUI frame rate.
+        # The copy fixture uses real fixed-rate source headers, rather than
+        # pretending that an unknown-rate probe is a qualified source stream.
+        picture = encode_source(frames=1)[0][0]
         capture.buffer.append_video(picture, 0)
         decoder = pylibsrtp.Session(
             pylibsrtp.Policy(
@@ -170,7 +176,8 @@ async def test_public_hap_delegate_reaches_native_udp_picture_and_graceful_clean
         recovered = b"".join(b"\x00\x00\x00\x01" + nal for nal in nals)
         decoded = av.CodecContext.create("h264", "r").decode(av.Packet(recovered))
         assert len(decoded) == 1 and (decoded[0].width, decoded[0].height) == (320, 240)
-        assert abs(decoded[0].to_ndarray(format="gray").mean()) < 2
+        reference = av.CodecContext.create("h264", "r").decode(av.Packet(picture))[0]
+        assert decoded[0].to_ndarray().tobytes() == reference.to_ndarray().tobytes()
         # Copy mode proves compressed NAL preservation separately from picture decode.
         from halo_server.media.h264 import split_annexb
 

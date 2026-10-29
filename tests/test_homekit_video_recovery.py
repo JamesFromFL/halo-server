@@ -574,15 +574,22 @@ async def test_actual_native_motion_through_sender_pacer_and_independent_srtp_de
         try:
             for timestamp, payload in source:
                 encoded = await worker.feed(payload, timestamp)
-                assert len(encoded) == 1
+                assert len(encoded) <= 1
+                assert worker.last_pending_frames == 1
+                # Source-time rate control has one explicitly pending picture.
+                # Do not borrow the newer triggering input's receipt for it.
+                if not encoded:
+                    assert timestamp == source[0][0]
+                    continue
                 native_timestamp, native_payload = encoded[0]
                 if first is None:
                     first = native_payload
-                receipt = 100 + timestamp / 90000
-                # Model an explicit 250 ms source age plus 50 ms conversion
-                # allowance. Actual native wall time is qualified separately;
-                # the pacer and wire crypto below are production methods.
-                clock.now = max(clock.now, receipt + 0.300)
+                receipt = 100 + native_timestamp / 90000
+                # Model 250 ms source age plus 50 ms conversion allowance
+                # against the triggering input, then additionally charge this
+                # delayed output's actual earlier receipt. Native wall time is
+                # qualified separately; pacer and crypto are production methods.
+                clock.now = max(clock.now, 100 + timestamp / 90000 + 0.300)
                 assert await manager._access_unit(
                     session,
                     output(native_payload, native_timestamp),
@@ -599,10 +606,11 @@ async def test_actual_native_motion_through_sender_pacer_and_independent_srtp_de
                 assert len(decoded) == 1
                 assert (decoded[0].width, decoded[0].height) == (width, height)
                 decoded_count += len(decoded)
-            assert decoded_count == fps * 6
+            assert decoded_count == fps * 6 - 1
+            assert worker.last_pending_frames == 1  # No invented live flush at STOP.
             metrics = session.metrics.snapshot()["counters"]
             assert metrics["sent_keyframes"] == 3
-            assert metrics["sent_access_units"] == len(source)
+            assert metrics["sent_access_units"] == len(source) - 1
             assert metrics["partial_access_units"] == metrics["recovery_idr_rejected"] == 0
 
             # Existing source age and additional pacing backlog are additive.

@@ -33,11 +33,13 @@ from halo_server.release_guard import inherited_guard_fds
 
 MAX_ENCODERS = 4
 MAX_SOURCE_RECEIPTS = 64
+MAX_FORCE_INPUTS = 32
+MAX_NATIVE_PENDING = 8
 START_SECONDS = 5.0
 FRAME_SECONDS = 2.0
 STOP_SECONDS = 2.0
-_MAX_RESPONSE = MAX_OUTPUT_ACCESS_UNIT_BYTES + 64
-_HEADER = struct.Struct("!cQBI")
+_MAX_RESPONSE = MAX_OUTPUT_ACCESS_UNIT_BYTES + 128
+_HEADER = struct.Struct("!cQQI")
 _COUNT_LOCK = threading.Lock()
 _ENCODERS = 0
 _RETIRING_WORKERS: set = set()
@@ -79,6 +81,19 @@ class VideoWorker:
         self._starting = asyncio.Lock()
         self._operation = asyncio.Lock()
         self._closing = asyncio.Lock()
+        self._terminal_probe = False
+        self._fed = False
+        self._force_serial = 0
+        self._last_output_force_requests: tuple[int, ...] = ()
+        self._last_pending_frames = 0
+
+    @property
+    def last_output_force_requests(self):
+        return self._last_output_force_requests
+
+    @property
+    def last_pending_frames(self):
+        return self._last_pending_frames
 
     @property
     def pid(self):
@@ -136,11 +151,31 @@ class VideoWorker:
             raise VideoTransformError("Video worker returned oversized data")
         return await self._process.stdout.readexactly(count)
 
-    async def feed(self, payload: bytes, timestamp: int, *, force_idr=False):
-        return await self._request(b"F", payload, timestamp, force_idr)
+    async def feed(self, payload: bytes, timestamp: int, *, force_idr=False, force_request=None):
+        if self._terminal_probe or self._operation.locked():
+            raise VideoTransformError("Video probe is terminal")
+        if type(force_idr) is not bool:
+            raise VideoTransformError("Invalid video worker force request")
+        if force_request is None:
+            force_request = self._force_serial + 1 if force_idr else 0
+        if (
+            type(force_request) is not int
+            or not 0 <= force_request < 2**53
+            or bool(force_request) != force_idr
+            or force_request
+            and force_request <= self._force_serial
+        ):
+            raise VideoTransformError("Invalid video worker force request")
+        if force_request:
+            self._force_serial = force_request
+        self._fed = True
+        return await self._request(b"F", payload, timestamp, force_request)
 
     async def probe(self):
-        return await self._request(b"P", b"", 0, True)
+        if self._terminal_probe or self._fed or self._operation.locked():
+            raise VideoTransformError("Video probe is terminal or busy")
+        self._terminal_probe = True
+        return await self._request(b"P", b"", 0, 0)
 
     async def _request(self, kind, payload, timestamp, force):
         if self._operation.locked():
@@ -151,7 +186,8 @@ class VideoWorker:
                 or len(payload) > MAX_ACCESS_UNIT_BYTES
                 or type(timestamp) is not int
                 or not 0 <= timestamp < 2**53
-                or type(force) is not bool
+                or type(force) is not int
+                or not 0 <= force < 2**53
             ):
                 raise VideoTransformError("Invalid video worker request")
             await self.start()
@@ -159,26 +195,38 @@ class VideoWorker:
                 raise VideoTransformError("Video worker is retired")
             try:
                 async with asyncio.timeout(FRAME_SECONDS):
-                    self._process.stdin.write(
-                        _HEADER.pack(kind, timestamp, int(force), len(payload))
-                    )
+                    self._process.stdin.write(_HEADER.pack(kind, timestamp, force, len(payload)))
                     self._process.stdin.write(payload)
                     await self._process.stdin.drain()
                     body = await self._read()
-                if self._closed or len(body) < 2 or body[:1] != b"V" or body[1] > 4:
+                if (
+                    self._closed
+                    or len(body) < 3
+                    or body[:1] != b"V"
+                    or body[1] > 4
+                    or body[2] > MAX_NATIVE_PENDING
+                ):
                     raise VideoTransformError("Video worker output is unavailable")
-                offset, result = 2, []
+                offset, result, forces = 3, [], []
                 for _ in range(body[1]):
-                    if offset + 12 > len(body):
+                    if offset + 20 > len(body):
                         raise VideoTransformError("Truncated video worker result")
-                    timestamp, count = struct.unpack_from("!QI", body, offset)
-                    offset += 12
-                    if not 0 < count <= MAX_OUTPUT_ACCESS_UNIT_BYTES or offset + count > len(body):
+                    timestamp, token, count = struct.unpack_from("!QQI", body, offset)
+                    offset += 20
+                    if (
+                        not 0 <= timestamp < 2**53
+                        or not 0 <= token < 2**53
+                        or not 0 < count <= MAX_OUTPUT_ACCESS_UNIT_BYTES
+                        or offset + count > len(body)
+                    ):
                         raise VideoTransformError("Invalid video worker result")
                     result.append((timestamp, body[offset : offset + count]))
+                    forces.append(token)
                     offset += count
                 if offset != len(body):
                     raise VideoTransformError("Unexpected video worker data")
+                self._last_output_force_requests = tuple(forces)
+                self._last_pending_frames = body[2]
                 return tuple(result)
             except BaseException:
                 await self.close()
@@ -262,6 +310,8 @@ class AccessUnitAdapter:
         self._configuration_generation = 1
         self._lifecycle_generation = 0
         self._source_receipts: OrderedDict[tuple[int, int], float | None] = OrderedDict()
+        self._pending_forces: dict[int, tuple[int, int]] = {}
+        self._native_inputs = 0
 
     @property
     def mode(self):
@@ -348,6 +398,8 @@ class AccessUnitAdapter:
             self._worker = None
         self._current(generation)
         self._source_receipts.clear()
+        self._pending_forces.clear()
+        self._native_inputs = 0
         self._waiting_idr, self._force, self._mode = True, True, "waiting"
         self._force_revision += 1
         self._output = None
@@ -494,18 +546,46 @@ class AccessUnitAdapter:
             # Feedback may request an IDR while the native feed is in flight.
             # Validate only the request actually dispatched, and retain a newer
             # request for the next input rather than rejecting this valid P frame.
-            force_required, force_revision = self._force, self._force_revision
+            force_revision = self._force_revision
+            force_request = (
+                force_revision if self._force and force_revision not in self._pending_forces else 0
+            )
             generation = self._lifecycle_generation
             configuration_generation = self._configuration_generation
+            self._native_inputs += 1
+            if force_request:
+                if len(self._pending_forces) >= MAX_NATIVE_PENDING:
+                    raise VideoTransformError("Video output force capacity is exhausted")
+                self._pending_forces[force_request] = (timestamp, self._native_inputs)
             self._record_receipt(capture_epoch, timestamp, received_at)
-            encoded = await self._worker.feed(payload, timestamp, force_idr=force_required)
+            encoded = await self._worker.feed(
+                payload, timestamp, force_idr=bool(force_request), force_request=force_request
+            )
             self._current(generation)
+            force_requests = self._worker.last_output_force_requests
+            if (
+                type(force_requests) is not tuple
+                or len(force_requests) != len(encoded)
+                or any(
+                    type(token) is not int
+                    or token < 0
+                    or token
+                    and token not in self._pending_forces
+                    for token in force_requests
+                )
+                or len({token for token in force_requests if token})
+                != sum(bool(token) for token in force_requests)
+            ):
+                raise VideoTransformError("Video output force provenance is unavailable")
             # Establish every original receipt before retiring any origin from
             # this batch. Reordered/delayed outputs cannot borrow the newest
             # feed's receipt, including when that feed returned several AUs.
             receipts = self._receipts(capture_epoch, encoded)
             result = []
-            for (timestamp, output), receipt in zip(encoded, receipts, strict=True):
+            acknowledged = []
+            for (timestamp, output), receipt, token in zip(
+                encoded, receipts, force_requests, strict=True
+            ):
                 out_nals = split_annexb(output)
                 types = {nal[0] & 31 for nal in out_nals}
                 output_pps = None
@@ -518,7 +598,7 @@ class AccessUnitAdapter:
                     raise VideoTransformError("Actual encoder output does not match selection")
                 keyframe = 5 in types
                 due = (
-                    force_required
+                    token
                     or self._last_output_idr is None
                     or timestamp - self._last_output_idr >= IDR_INTERVAL
                 )
@@ -532,7 +612,8 @@ class AccessUnitAdapter:
                     ):
                         raise VideoTransformError("Actual encoder IDR lacks current parameters")
                     self._last_output_idr = timestamp
-                force_required = False
+                if token:
+                    acknowledged.append(token)
                 result.append(
                     OutputAccessUnit(
                         output,
@@ -546,9 +627,17 @@ class AccessUnitAdapter:
                         receipt,
                     )
                 )
-            if result and self._force_revision == force_revision:
-                self._force = False
             self._current(generation)
+            for token in acknowledged:
+                del self._pending_forces[token]
+                if self._force_revision == token:
+                    self._force = False
+            if len(self._pending_forces) > MAX_NATIVE_PENDING or any(
+                self._native_inputs - started >= MAX_FORCE_INPUTS
+                or self._timestamp - source > IDR_INTERVAL
+                for source, started in self._pending_forces.values()
+            ):
+                raise VideoTransformError("Video output force request did not converge")
             for timestamp, _output in encoded:
                 self._source_receipts.pop((capture_epoch, timestamp))
             return tuple(result)
@@ -557,6 +646,7 @@ class AccessUnitAdapter:
         self._closed = True
         self._lifecycle_generation += 1
         self._source_receipts.clear()
+        self._pending_forces.clear()
         worker = self._worker
         if worker is not None:
             await worker.close()
