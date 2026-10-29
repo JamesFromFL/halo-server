@@ -120,6 +120,7 @@ async def test_real_send_loop_outcomes_unchanged_with_safe_or_failing_trace(
     monkeypatch, caplog, broken_logger
 ):
     caplog.set_level(logging.INFO, logger=homekit_audio.__name__)
+    real_sleep = asyncio.sleep
     now = [100.0]
     track = make_track(monkeypatch, now)
     track.config = AudioConfiguration(24000, 20, "cbr", 24)
@@ -145,6 +146,8 @@ async def test_real_send_loop_outcomes_unchanged_with_safe_or_failing_trace(
     class Handle:
         async def read_audio(self, *, timeout):
             if calls:
+                while track._outputs:
+                    await real_sleep(0)
                 raise asyncio.CancelledError
             return SimpleNamespace(
                 capture_epoch=1,
@@ -161,6 +164,7 @@ async def test_real_send_loop_outcomes_unchanged_with_safe_or_failing_trace(
 
     async def sleep(delay):
         now[0] += delay
+        await real_sleep(0)
 
     def broken(*_args, **_kwargs):
         raise asyncio.CancelledError("private-error-text")

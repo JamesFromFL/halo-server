@@ -852,7 +852,7 @@ async def test_expired_audio_is_rejected_after_udp_retry_without_new_enqueue():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("scenario", ["receipt_gap", "conversion_crosses_oldest_deadline"])
-async def test_grouped_audio_uses_earliest_contributing_receipt_and_discards_expired_prefix(
+async def test_grouped_audio_uses_earliest_receipt_and_reuses_fresh_batch_after_reset(
     scenario,
 ):
     from halo_server.media.opus import repacketize
@@ -919,12 +919,9 @@ async def test_grouped_audio_uses_earliest_contributing_receipt_and_discards_exp
             now[0] = began + 0.75
             append([960, 1920, 2880], now[0])
             await until(lambda: len(instances) == 2)
-            assert instances[0].closed and instances[1].inputs == []
-            # The already-read batch was discarded before the cold restart.
-            # Submit a fresh read, then ordinary contiguous grouping inputs.
-            append([3840], now[0])
-            await until(lambda: instances[1].inputs == [3840])
-            append([4800, 5760], now[0])
+            assert instances[0].closed and instances[1].inputs == [960, 1920, 2880]
+            # The source cursor already advanced: reuse this actual fresh read
+            # after joined reset instead of discarding all three source units.
         else:
             now[0] = began + 0.49
             append([960, 1920], now[0])
@@ -934,15 +931,14 @@ async def test_grouped_audio_uses_earliest_contributing_receipt_and_discards_exp
             now[0] = began + 0.52
             append([2880, 3840, 4800], now[0])
             await until(lambda: instances[0].inputs[-1] == 4800)
-            append([5760, 6720], now[0])
         packets = await receive_media(audio, crypto(result.audio.ssrc), 1)
         assert parse_opus(packets[0].payload).duration_samples == 2880
         if scenario == "receipt_gap":
             assert len(instances) == 2 and instances[0].closed
-            assert instances[0].inputs == [0] and instances[1].inputs == [3840, 4800, 5760]
+            assert instances[0].inputs == [0] and instances[1].inputs == [960, 1920, 2880]
         else:
             assert len(instances) == 1 and instances[0].groups == 2
-            assert instances[0].inputs == [0, 960, 1920, 4800, 5760, 6720]
+            assert instances[0].inputs == [0, 960, 1920, 2880, 3840, 4800]
     finally:
         video.close()
         audio.close()

@@ -12,6 +12,20 @@ from halo_server.media import homekit_audio
 from halo_server.media.homekit_audio import _AudioTiming
 from halo_server.media.opus import AudioConfiguration, AudioOutput
 
+_REAL_SLEEP = asyncio.sleep
+
+
+async def drain(track):
+    while track._outputs:
+        await track._send_output(track._outputs[0])
+
+
+async def read_after_drain(track):
+    # These unit fixtures model the source clock deterministically. Actual
+    # concurrent producer/sender behavior has separate real-event-loop tests.
+    while track._outputs:
+        await _REAL_SLEEP(0)
+
 
 def source(index, received, *, epoch=1):
     return SimpleNamespace(
@@ -59,6 +73,7 @@ def setup(monkeypatch, *, cold=0.122):
 
     async def sleep(delay):
         now[0] += delay
+        await _REAL_SLEEP(0)
 
     track._check, track._epoch = check, lambda: epoch[0]
     track._adapter_factory = Adapter
@@ -91,6 +106,7 @@ async def test_buffered_live_start_escapes_cold_worker_stale_reset_cascade(monke
 
     class Handle:
         async def read_audio(self, *, timeout):
+            await read_after_drain(context.track)
             nonlocal cursor
             if context.now[0] >= 104:
                 raise asyncio.CancelledError
@@ -125,6 +141,7 @@ async def test_continuous_batches_ordered_and_explicit_recovery_starts_latest(
 
     class Handle:
         async def read_audio(self, *, timeout):
+            await read_after_drain(context.track)
             nonlocal reads
             reads += 1
             if reads == 1:
@@ -161,7 +178,7 @@ async def test_continuous_batches_ordered_and_explicit_recovery_starts_latest(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("revoke_during_close", [False, True])
-async def test_expired_prefix_discards_old_batch_before_one_restart(
+async def test_expired_prefix_rechecks_expired_batch_before_one_restart(
     monkeypatch, revoke_during_close
 ):
     context = setup(monkeypatch, cold=0.01)
@@ -179,15 +196,16 @@ async def test_expired_prefix_discards_old_batch_before_one_restart(
 
     class Handle:
         async def read_audio(self, *, timeout):
+            await read_after_drain(context.track)
             nonlocal reads
             reads += 1
             if reads == 1:
                 packets = (source(0, 100),)
             elif reads == 2:
                 context.now[0] = 100.7
-                # Both are pre-recovery history. Even its newest packet has
-                # only10ms freshness budget: never cold-start the worker on it.
-                packets = (source(1, 100.21), source(2, 100.21))
+                # Both packets have actually expired. Recheck rather than
+                # inventing a startup allowance or relaxing the500ms deadline.
+                packets = (source(1, 100.19), source(2, 100.19))
             elif reads == 3:
                 packets = (source(3, context.now[0]),)
             else:

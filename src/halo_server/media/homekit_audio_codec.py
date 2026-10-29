@@ -119,13 +119,13 @@ class AudioWorker:
             raise AudioTransformError("Audio worker returned oversized data")
         return await self._process.stdout.readexactly(count)
 
-    async def feed(self, payload: bytes, timestamp: int):
-        return await self._request(b"F", payload, timestamp)
+    async def feed(self, payload: bytes, timestamp: int, *, max_outputs=16):
+        return await self._request(b"F", payload, timestamp, max_outputs=max_outputs)
 
     async def flush(self):
         return await self._request(b"D", b"", 0)
 
-    async def _request(self, kind, payload, timestamp):
+    async def _request(self, kind, payload, timestamp, *, max_outputs=16):
         if self._operation.locked():
             raise AudioTransformError("Audio worker is busy")
         async with self._operation:
@@ -134,6 +134,8 @@ class AudioWorker:
                 or len(payload) > MAX_OPUS_PACKET
                 or type(timestamp) is not int
                 or not -(2**53) < timestamp < 2**53
+                or type(max_outputs) is not int
+                or not 1 <= max_outputs <= 16
             ):
                 raise AudioTransformError("Invalid audio worker input")
             if kind == b"F":
@@ -147,7 +149,7 @@ class AudioWorker:
                     self._process.stdin.write(payload)
                     await self._process.stdin.drain()
                     body = await self._read()
-                if self._closed or len(body) < 2 or body[:1] != b"A" or body[1] > 16:
+                if self._closed or len(body) < 2 or body[:1] != b"A" or body[1] > max_outputs:
                     raise AudioTransformError("Audio conversion failed")
                 offset, result = 2, []
                 for _ in range(body[1]):
@@ -282,7 +284,13 @@ class AudioAdapter:
         self.mode = "adapt"
         result = []
         for payload, timestamp in inputs:
-            for pts, duration, data in await worker.feed(payload, timestamp):
+            # The parent's response reservation covers the entire adapter call,
+            # including several pending repacketizer inputs. Reject excess count
+            # before parsing another native response into retained packet bytes.
+            remaining = 16 - len(result)
+            if not remaining:
+                raise AudioTransformError("Audio conversion capacity exceeded")
+            for pts, duration, data in await worker.feed(payload, timestamp, max_outputs=remaining):
                 if self._closed:
                     raise AudioTransformError("Audio output retired during conversion")
                 result.append(AudioOutput(data, pts, duration, "adapt"))

@@ -27,6 +27,12 @@ RECEIVER_SECONDS = 60.0
 SEND_SECONDS = 0.25
 MAX_DATAGRAM_RATE = 128
 MAX_INPUT_SPANS = 512
+# Queue membership includes the packet currently owned by the sender. Reserve
+# response slots before conversion: queued + native response never exceeds32.
+# Payloads plus one plain/protected pair stay below40KiB at the existing cap.
+MAX_QUEUED_OUTPUTS = 32
+MAX_NATIVE_OUTPUTS = 16
+MAX_RETAINED_OUTPUT_BYTES = 40 * 1024
 _LOGGER = logging.getLogger(__name__)
 _COUNTER_MAX = 2**31 - 1
 _SAMPLE_BINS = (120, 240, 480, 960, 1440, 1920, 2880, 5760)
@@ -50,6 +56,9 @@ _OUTPUT_CATEGORIES = (
     "output_send_fenced",
     "output_unvisited",
     "output_unfinished",
+    "output_queued",
+    "output_overflow",
+    "output_retired",
 )
 
 
@@ -269,6 +278,15 @@ class PreparedAudio:
     salt: bytes = field(repr=False)
 
 
+@dataclass(eq=False)
+class _QueuedAudio:
+    output: object = field(repr=False)
+    received_at: float
+    epoch: int
+    generation: int
+    outcome: str | None = None
+
+
 class AudioTrack:
     """No source lease: both directions use their parent session's live handle."""
 
@@ -323,6 +341,7 @@ class AudioTrack:
                 self.secure.close()
             raise
         self._tasks = []
+        self._output_tasks = []
         self._adapter = None
         self.talkback = None
         self.config = None
@@ -341,6 +360,14 @@ class AudioTrack:
         self._input_end = None
         self._live_edge_pending = True
         self._submitted_any = False
+        self._outputs = deque()
+        self._output_bytes = 0
+        self._output_ready = asyncio.Event()
+        self._output_space = asyncio.Event()
+        self._sending = None
+        self._delivery_generation = 0
+        self._permission_paused = False
+        self._audio_allowed_after = float("-inf")
         self._timing = None
         self._receiver_reports = None
         self._metrics = StreamMetrics(
@@ -348,13 +375,23 @@ class AudioTrack:
                 "read_batches",
                 "source_invalid_packets",
                 "adapter_recreates",
+                "permission_pauses",
                 *(
                     f"{name}_{unit}"
                     for name in (*_SOURCE_CATEGORIES, *_OUTPUT_CATEGORIES)
                     for unit in ("packets", "samples")
                 ),
             ),
-            maxima=("batch_packets", "batch_samples", "output_batch_packets", "input_spans"),
+            maxima=(
+                "batch_packets",
+                "batch_samples",
+                "output_batch_packets",
+                "input_spans",
+                "queued_packets",
+                "queued_bytes",
+                "retained_output_packets",
+                "retained_output_bytes",
+            ),
             timings=(
                 "read_wait",
                 "feed",
@@ -366,6 +403,7 @@ class AudioTrack:
                 "output_age",
                 "pacing_wait",
                 "pacing_late",
+                "output_backpressure",
             ),
         )
         self.failure = None
@@ -429,6 +467,7 @@ class AudioTrack:
             "sample_clock_rate": 48000,
             # Native lookahead/FIFO progress is not inferred from fed-minus-sent.
             "native_pending_samples": None,
+            "queue": {"packets": len(self._outputs), "bytes": self._output_bytes},
             "receiver_reports": receiver,
             "metrics": self._metrics.snapshot(),
         }
@@ -503,12 +542,16 @@ class AudioTrack:
             raise
         return True
 
-    async def _send(self, packet, *, permission=None, epoch=None, fresh_until=None):
+    async def _send(
+        self, packet, *, permission=None, epoch=None, fresh_until=None, generation=None
+    ):
         deadline = self._clock() + SEND_SECONDS
         while True:
             if self._retired:
                 raise HomeKitOperationError("authority_changed")
             self._checked(permission)
+            if generation is not None and generation != self._delivery_generation:
+                return False
             if epoch is not None and epoch != self._current_epoch():
                 return False
             if fresh_until is not None and self._clock() > fresh_until:
@@ -523,6 +566,8 @@ class AudioTrack:
                 await asyncio.sleep(0.002)
 
     def _reset(self, epoch):
+        self._delivery_generation += 1
+        self._discard_outputs("output_epoch")
         if self._capture_epoch is not None:
             self._trace("reset")
         self._capture_epoch = epoch
@@ -554,6 +599,8 @@ class AudioTrack:
             self._metric("count", "adapter_recreates")
             self._input_spans.clear()
             self._input_end = None
+            return True
+        return False
 
     def _output_receipt(self, output, fallback):
         start, end = output.timestamp, output.timestamp + output.duration
@@ -567,8 +614,6 @@ class AudioTrack:
             if receipts
             else (self._input_spans[0][2] if self._input_spans else fallback)
         )
-        while self._input_spans and self._input_spans[0][1] <= end:
-            self._input_spans.popleft()
         return received
 
     def _timestamp(self, timestamp):
@@ -583,11 +628,30 @@ class AudioTrack:
         ) & 0xFFFFFFFF
 
     async def _send_audio(self):
+        # One supervisor retains both owners until they actually finish. In
+        # particular, cancelling a read must not orphan a pacing/socket task.
+        self._output_tasks = [
+            asyncio.create_task(self._produce_audio(), name="homekit-audio-convert"),
+            asyncio.create_task(self._egress_audio(), name="homekit-audio-egress"),
+        ]
+        try:
+            done, _pending = await asyncio.wait(
+                self._output_tasks, return_when=asyncio.FIRST_COMPLETED
+            )
+            for task in done:
+                await task
+        finally:
+            for task in self._output_tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*self._output_tasks, return_exceptions=True)
+
+    async def _produce_audio(self):
         try:
             while not self._retired:
                 self._checked(None)
                 self._trace("tick", self._clock())
-                if not self._may("live_audio"):
+                if not await self._ready_audio():
                     await asyncio.sleep(0.05)
                     continue
                 try:
@@ -599,6 +663,10 @@ class AudioTrack:
                 except HomeKitOperationError as exc:
                     if exc.code != "policy_denied":
                         raise
+                    # The handle itself observed denial before/after its wait.
+                    # Even if permission is already back by the next poll, this
+                    # is a real privacy boundary for queued and native PCM.
+                    self._pause_delivery()
                     await asyncio.sleep(0.05)
                     continue
                 await self._audio_batch(batch)
@@ -607,6 +675,44 @@ class AudioTrack:
         except Exception as exc:
             self._failed("audio_send", "audio_output_failed", exc)
 
+    def _pause_delivery(self):
+        if not self._permission_paused:
+            self._permission_paused = True
+            self._audio_allowed_after = float("inf")
+            self._delivery_generation += 1
+            self._discard_outputs("output_send_fenced")
+            self._metric("count", "permission_pauses")
+
+    async def _ready_audio(self):
+        if not self._may("live_audio"):
+            self._pause_delivery()
+        if self._permission_paused:
+            if self._adapter is not None:
+                began = self._clock()
+                try:
+                    await self._adapter.close()
+                finally:
+                    self._measure("retirement", began)
+                self._adapter = None
+                self._input_spans.clear()
+                self._input_end = None
+                self._live_edge_pending = True
+            if not self._may("live_audio"):
+                return False
+            from halo_server.media.homekit_audio_codec import AudioAdapter
+
+            self._checked("live_audio")
+            if self._retired:
+                raise HomeKitOperationError("authority_changed")
+            self._adapter = (self._adapter_factory or AudioAdapter)(self.config)
+            self._permission_paused = False
+            # Same-epoch off/on is still a privacy boundary: an old source read
+            # cannot supply PCM that was buffered before permission resumed.
+            self._audio_allowed_after = self._clock()
+            self._trace("count", "adapter_recreates")
+            self._metric("count", "adapter_recreates")
+        return True
+
     async def _audio_batch(self, batch):
         from halo_server.media.opus import parse_opus
 
@@ -614,10 +720,14 @@ class AudioTrack:
         try:
             if batch.capture_epoch != self._capture_epoch:
                 self._reset(batch.capture_epoch)
-            if not self._may("live_audio"):
+            if not await self._ready_audio():
                 ledger.remaining("source_authority_discarded")
                 return
             packets = batch.packets
+            if not packets:
+                # Idle alone grants no new delivery. Defer the conservative
+                # prefix reset until there is a real fresh batch to reuse.
+                return
             for packet in packets:
                 self._trace("source", packet, self._clock())
             # Live viewers start at the current complete packet. Replaying
@@ -625,10 +735,10 @@ class AudioTrack:
             # next prefix repeatedly, even while Ring supplies clean audio.
             # Recording reads retain their separate pre-roll semantics.
             if self._expired_prefix():
+                # The source read has already advanced its cursor. Keep this
+                # bounded fresh batch while the old native owner is joined;
+                # dropping it here creates a reset/discard cascade on bursts.
                 await self._discard_expired_prefix()
-                ledger.remaining("source_prefix_discarded")
-                self._live_edge_pending = True
-                return
             if getattr(batch, "resynchronized", False):
                 self._live_edge_pending = True
             if packets and self._clock() - packets[0].received_at > MAX_AUDIO_AGE:
@@ -644,6 +754,9 @@ class AudioTrack:
             offset = len(batch.packets) - len(packets)
             for relative_index, packet in enumerate(packets):
                 input_index = offset + relative_index
+                if packet.received_at < self._audio_allowed_after:
+                    ledger.record(input_index, "source_authority_discarded")
+                    continue
                 if packet.capture_epoch != self._current_epoch():
                     self._trace("count", "epoch_drop")
                     ledger.record(input_index, "source_epoch_discarded")
@@ -651,24 +764,34 @@ class AudioTrack:
                 if self._clock() - packet.received_at > MAX_AUDIO_AGE:
                     self._trace("count", "stale_input")
                     ledger.record(input_index, "source_stale_discarded")
-                    self._live_edge_pending = True
-                    break
-                # A prefix can expire while an earlier output is paced.
-                # Leave that batch before restarting on another old packet.
+                    continue
                 if self._expired_prefix():
                     await self._discard_expired_prefix()
-                    ledger.remaining("source_prefix_discarded")
-                    self._live_edge_pending = True
-                    break
+                await self._reserve_output_capacity()
+                # Both native retirement and bounded queue backpressure yield;
+                # neither grants an old packet any new delivery lifetime.
                 if packet.capture_epoch != self._current_epoch():
                     self._trace("count", "epoch_drop")
                     ledger.record(input_index, "source_epoch_discarded")
                     break
+                if not await self._ready_audio():
+                    ledger.remaining("source_authority_discarded")
+                    break
+                if packet.received_at < self._audio_allowed_after:
+                    ledger.record(input_index, "source_authority_discarded")
+                    continue
                 if self._clock() - packet.received_at > MAX_AUDIO_AGE:
                     self._trace("count", "stale_input")
                     ledger.record(input_index, "source_stale_discarded")
-                    self._live_edge_pending = True
-                    break
+                    continue
+                if self._expired_prefix():
+                    await self._discard_expired_prefix()
+                    if packet.capture_epoch != self._current_epoch():
+                        ledger.record(input_index, "source_epoch_discarded")
+                        break
+                    if self._clock() - packet.received_at > MAX_AUDIO_AGE:
+                        ledger.record(input_index, "source_stale_discarded")
+                        continue
                 if self._input_end is not None and packet.rtp_timestamp != self._input_end:
                     self._input_spans.clear()
                 self._input_end = packet.rtp_timestamp + parse_opus(packet.payload).duration_samples
@@ -693,103 +816,234 @@ class AudioTrack:
                     self._trace("feed", self._clock() - feed_started)
                     self._measure("feed", feed_started)
                 self._live_edge_pending = False
-                await self._audio_outputs(outputs, packet)
-                if self._live_edge_pending:
+                try:
+                    await self._audio_outputs(outputs, packet)
+                finally:
+                    # Do not retain a sent/evicted previous native response in
+                    # this local while awaiting the next read/feed reservation.
+                    del outputs
+                if self._permission_paused:
+                    ledger.remaining("source_authority_discarded")
                     break
         finally:
             ledger.remaining()
 
+    def _output_result(self, item, category):
+        if item.outcome is None:
+            item.outcome = category
+            self._metric("count", f"{category}_packets")
+            self._metric("count", f"{category}_samples", item.output.duration)
+
+    def _remove_output(self, item):
+        self._outputs.remove(item)
+        self._output_bytes -= len(item.output.payload)
+        self._output_space.set()
+
+    async def _reserve_output_capacity(self):
+        if len(self._outputs) > MAX_QUEUED_OUTPUTS - MAX_NATIVE_OUTPUTS:
+            began = self._clock()
+            try:
+                async with asyncio.timeout(MAX_AUDIO_AGE):
+                    while len(self._outputs) > MAX_QUEUED_OUTPUTS - MAX_NATIVE_OUTPUTS:
+                        self._output_space.clear()
+                        await self._output_space.wait()
+                        self._checked("live_audio")
+                        if self._retired:
+                            raise HomeKitOperationError("authority_changed")
+            except TimeoutError:
+                # A stalled sender cannot turn source admission into an
+                # unbounded wait. Preserve its charged item and drop oldest
+                # unsent packets to reserve a complete bounded response.
+                while len(self._outputs) > MAX_QUEUED_OUTPUTS - MAX_NATIVE_OUTPUTS:
+                    index = 1 if self._sending is self._outputs[0] else 0
+                    item = self._outputs[index]
+                    self._output_result(item, "output_overflow")
+                    self._remove_output(item)
+            finally:
+                self._measure("output_backpressure", began)
+
+    def _discard_outputs(self, category):
+        for item in tuple(self._outputs):
+            self._output_result(item, category)
+            # The sender may still reference its current item across an await.
+            # Keep it charged until its finally block releases actual ownership.
+            if item is not self._sending:
+                self._remove_output(item)
+        self._output_ready.set()
+
+    def _retained_outputs(self, staging_packets=0, staging_bytes=0):
+        count = len(self._outputs) + staging_packets
+        # Reserve one plain and one protected datagram, including headers.
+        size = self._output_bytes + staging_bytes + 2 * MAX_AUDIO_PACKET
+        if count > MAX_QUEUED_OUTPUTS or size > MAX_RETAINED_OUTPUT_BYTES:
+            raise HomeKitOperationError("media_saturated")
+        self._metric("maximum", "retained_output_packets", count)
+        self._metric("maximum", "retained_output_bytes", size)
+        self._metric("maximum", "queued_packets", len(self._outputs))
+        self._metric("maximum", "queued_bytes", self._output_bytes)
+
     async def _audio_outputs(self, outputs, packet):
+        generation = self._delivery_generation
         ledger = _AudioLedger(
             tuple(output.duration for output in outputs), self._metric, output=True
         )
         self._metric("maximum", "output_batch_packets", len(outputs))
         try:
-            for output_index, output in enumerate(outputs):
-                ledger.visit(output_index)
+            if len(outputs) > MAX_NATIVE_OUTPUTS or any(
+                not 0 < len(output.payload) <= MAX_AUDIO_PACKET - 22 for output in outputs
+            ):
+                raise HomeKitOperationError("media_saturated")
+            staging_bytes = sum(len(output.payload) for output in outputs)
+            self._retained_outputs(len(outputs), staging_bytes)
+            receipts = tuple(self._output_receipt(output, packet.received_at) for output in outputs)
+            # First establish every receipt, then advance the generated frontier.
+            # Sending, queue eviction and stale disposal must not prune metadata
+            # before another output in this same response is classified.
+            if outputs:
+                end = max(output.timestamp + output.duration for output in outputs)
+                while self._input_spans and self._input_spans[0][1] <= end:
+                    self._input_spans.popleft()
+            # Receipt attribution advances at generation, independent of which
+            # outputs are later sent, stale, or dropped by bounded queue policy.
+            for index, output in enumerate(outputs):
+                ledger.visit(index)
                 self._trace("output", output)
-                received_at = self._output_receipt(output, packet.received_at)
+                received_at = receipts[index]
+                staging_bytes -= len(output.payload)
                 if packet.capture_epoch != self._current_epoch():
                     self._trace("count", "epoch_drop")
-                    ledger.record(output_index, "output_epoch")
-                    break
+                    ledger.record(index, "output_epoch")
+                    continue
                 self._metric("observe", "output_age", max(0, self._clock() - received_at))
                 if self._clock() - received_at > MAX_AUDIO_AGE:
                     self._trace("count", "stale_output")
-                    ledger.record(output_index, "output_stale")
-                    self._live_edge_pending = True
-                    break
-                if self._next_packet_at:
-                    self._metric(
-                        "observe", "pacing_late", max(0, self._clock() - self._next_packet_at)
-                    )
-                    self._trace(
-                        "maximum",
-                        "pacing_late_ms_max",
-                        (self._clock() - self._next_packet_at) * 1000,
-                    )
-                target = max(self._clock(), self._next_packet_at)
-                if target > self._clock():
-                    began = self._clock()
-                    try:
-                        await asyncio.sleep(target - self._clock())
-                    finally:
-                        self._measure("pacing_wait", began)
-                if self._clock() - received_at > MAX_AUDIO_AGE:
-                    self._trace("count", "stale_output")
-                    ledger.record(output_index, "output_stale")
-                    self._live_edge_pending = True
-                    break
-                if len(output.payload) + 22 > MAX_AUDIO_PACKET:
-                    raise HomeKitOperationError("media_saturated")
-                timestamp = self._timestamp(output.timestamp)
-                plain = (
-                    struct.pack(
-                        "!BBHII",
-                        0x80,
-                        self.config.payload_type,
-                        self._sequence,
-                        timestamp,
-                        self.prepared.ssrc,
-                    )
-                    + output.payload
-                )
-                protected = self.secure.protect(plain)
-                # Native SRTP consumed this index even if an epoch fence
-                # now rejects delivery. Never encrypt different PCM at it.
-                self._sequence = (self._sequence + 1) & 65535
-                if not await self._send(
-                    protected,
-                    permission="live_audio",
-                    epoch=packet.capture_epoch,
-                    fresh_until=received_at + MAX_AUDIO_AGE,
+                    ledger.record(index, "output_stale")
+                    continue
+                if (
+                    self._permission_paused
+                    or generation != self._delivery_generation
+                    or not self._may("live_audio")
                 ):
-                    ledger.record(output_index, "output_send_fenced")
-                    self._live_edge_pending = True
-                    break
-                ledger.record(output_index, "output_sent")
-                self._last_timestamp = timestamp
-                self._last_duration = output.duration * self.config.sample_rate // 48000
-                began = self._clock()
-                try:
-                    self._last_presentation = self._presentation(
-                        "audio", output.timestamp, received_at
-                    )
-                finally:
-                    self._measure("presentation", began)
-                self._packets += 1
-                self._octets += len(output.payload)
-                self._trace(
-                    "sent",
-                    timestamp,
-                    self._last_duration,
-                    len(output.payload),
-                    self._clock(),
-                    self._last_presentation,
-                )
-                self._next_packet_at = target + output.duration / 48000
+                    self._pause_delivery()
+                    ledger.record(index, "output_send_fenced")
+                    continue
+                if len(self._outputs) >= MAX_QUEUED_OUTPUTS:
+                    # Prefer the live edge without revoking the current sender's
+                    # ownership or disguising the missing media timestamp span.
+                    evicted = self._outputs[1 if self._sending is self._outputs[0] else 0]
+                    self._output_result(evicted, "output_overflow")
+                    self._remove_output(evicted)
+                item = _QueuedAudio(output, received_at, packet.capture_epoch, generation)
+                self._outputs.append(item)
+                self._output_bytes += len(output.payload)
+                ledger.record(index, "output_queued")
+                self._retained_outputs(len(outputs) - index - 1, staging_bytes)
+                self._output_ready.set()
         finally:
             ledger.remaining()
+
+    async def _egress_audio(self):
+        try:
+            while not self._retired:
+                if not self._outputs:
+                    self._output_ready.clear()
+                    await self._output_ready.wait()
+                    continue
+                await self._send_output(self._outputs[0])
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            self._failed("audio_send", "audio_output_failed", exc)
+
+    async def _send_output(self, item):
+        self._sending = item
+        output, received_at = item.output, item.received_at
+        try:
+            if item.outcome is not None:
+                return
+            if item.generation != self._delivery_generation or item.epoch != self._current_epoch():
+                self._output_result(item, "output_epoch")
+                return
+            if self._permission_paused or not self._may("live_audio"):
+                self._pause_delivery()
+                self._output_result(item, "output_send_fenced")
+                return
+            if self._clock() - received_at > MAX_AUDIO_AGE:
+                self._trace("count", "stale_output")
+                self._output_result(item, "output_stale")
+                return
+            if self._next_packet_at:
+                self._metric("observe", "pacing_late", max(0, self._clock() - self._next_packet_at))
+                self._trace(
+                    "maximum", "pacing_late_ms_max", (self._clock() - self._next_packet_at) * 1000
+                )
+            target = max(self._clock(), self._next_packet_at)
+            if target > self._clock():
+                began = self._clock()
+                try:
+                    await asyncio.sleep(target - self._clock())
+                finally:
+                    self._measure("pacing_wait", began)
+            if item.outcome is not None:
+                return
+            if self._clock() - received_at > MAX_AUDIO_AGE:
+                self._trace("count", "stale_output")
+                self._output_result(item, "output_stale")
+                return
+            if item.generation != self._delivery_generation or item.epoch != self._current_epoch():
+                self._output_result(item, "output_epoch")
+                return
+            if self._permission_paused or not self._may("live_audio"):
+                self._pause_delivery()
+                self._output_result(item, "output_send_fenced")
+                return
+            timestamp = self._timestamp(output.timestamp)
+            plain = (
+                struct.pack(
+                    "!BBHII",
+                    0x80,
+                    self.config.payload_type,
+                    self._sequence,
+                    timestamp,
+                    self.prepared.ssrc,
+                )
+                + output.payload
+            )
+            protected = self.secure.protect(plain)
+            # Native SRTP consumed this index even if a final fence rejects it.
+            self._sequence = (self._sequence + 1) & 65535
+            if not await self._send(
+                protected,
+                permission="live_audio",
+                epoch=item.epoch,
+                fresh_until=received_at + MAX_AUDIO_AGE,
+                generation=item.generation,
+            ):
+                self._output_result(item, "output_send_fenced")
+                return
+            self._output_result(item, "output_sent")
+            self._last_timestamp = timestamp
+            self._last_duration = output.duration * self.config.sample_rate // 48000
+            began = self._clock()
+            try:
+                self._last_presentation = self._presentation("audio", output.timestamp, received_at)
+            finally:
+                self._measure("presentation", began)
+            self._packets += 1
+            self._octets += len(output.payload)
+            self._trace(
+                "sent",
+                timestamp,
+                self._last_duration,
+                len(output.payload),
+                self._clock(),
+                self._last_presentation,
+            )
+            self._next_packet_at = target + output.duration / 48000
+        finally:
+            self._output_result(item, "output_unfinished")
+            self._remove_output(item)
+            self._sending = None
 
     async def _receive(self):
         from halo_server.media.opus import parse_opus
@@ -890,6 +1144,8 @@ class AudioTrack:
 
     def fence(self):
         self._retired = True
+        self._delivery_generation += 1
+        self._discard_outputs("output_retired")
         self._trace("finish", self._clock())
         descriptor = self.socket.fileno()
         if descriptor >= 0:
@@ -902,11 +1158,12 @@ class AudioTrack:
 
     async def close(self):
         self.fence()
-        for task in self._tasks:
+        tasks = (*self._tasks, *self._output_tasks)
+        for task in tasks:
             if not task.done():
                 task.cancel()
-        if self._tasks:
-            await asyncio.gather(*self._tasks, return_exceptions=True)
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
         if self.talkback is not None:
             await self.talkback.close()
         if self._adapter is not None:
