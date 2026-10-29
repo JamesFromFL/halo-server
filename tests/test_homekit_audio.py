@@ -890,6 +890,7 @@ async def test_expired_audio_is_rejected_after_udp_retry_without_new_enqueue():
 async def test_grouped_audio_uses_earliest_receipt_and_reuses_fresh_batch_after_reset(
     scenario,
 ):
+    from halo_server.media.homekit_audio import MAX_AUDIO_AGE
     from halo_server.media.opus import repacketize
 
     instances = []
@@ -914,7 +915,7 @@ async def test_grouped_audio_uses_earliest_receipt_and_reuses_fresh_batch_after_
             self.groups += 1
             group, self.pending = self.pending, []
             if scenario == "conversion_crosses_oldest_deadline" and self.groups == 1:
-                now[0] = began + 0.51
+                now[0] = began + MAX_AUDIO_AGE + 0.01
             return (
                 AudioOutput(
                     repacketize(item[0] for item in group), group[0][1] - 120, 2880, "adapt"
@@ -952,19 +953,19 @@ async def test_grouped_audio_uses_earliest_receipt_and_reuses_fresh_batch_after_
         append([0], began)
         await first_feed.wait()
         if scenario == "receipt_gap":
-            now[0] = began + 0.75
+            now[0] = began + MAX_AUDIO_AGE + 0.25
             append([960, 1920, 2880], now[0])
             await until(lambda: len(instances) == 2)
             assert instances[0].closed and instances[1].inputs == [960, 1920, 2880]
             # The source cursor already advanced: reuse this actual fresh read
             # after joined reset instead of discarding all three source units.
         else:
-            now[0] = began + 0.49
+            now[0] = began + MAX_AUDIO_AGE - 0.01
             append([960, 1920], now[0])
             await until(lambda: instances[0].groups == 1)
             with pytest.raises(TimeoutError):
                 await asyncio.wait_for(asyncio.get_running_loop().sock_recv(audio, 4096), 0.03)
-            now[0] = began + 0.52
+            now[0] = began + MAX_AUDIO_AGE + 0.02
             append([2880, 3840, 4800], now[0])
             await until(lambda: instances[0].inputs[-1] == 4800)
         packets = await receive_media(audio, crypto(result.audio.ssrc), 1)

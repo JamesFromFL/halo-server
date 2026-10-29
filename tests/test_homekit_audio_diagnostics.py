@@ -9,6 +9,7 @@ import pytest
 from aiortc.rtp import RtcpReceiverInfo, RtcpRrPacket
 from test_homekit_audio_live_edge import drain, setup, source
 
+from halo_server.media.homekit_audio import MAX_AUDIO_AGE
 from halo_server.media.rtp import ReceiverReportStats, sender_report
 from halo_server.media.srtp import SecureVideo
 
@@ -48,7 +49,7 @@ async def test_whole_fresh_read_reused_after_expired_prefix_is_fully_counted(mon
     context = setup(monkeypatch)
     context.track._capture_epoch = 1
     context.track._live_edge_pending = False
-    context.track._input_spans.append((0, 2880, 99.0))
+    context.track._input_spans.append((0, 2880, 100 - MAX_AUDIO_AGE - 0.1))
     try:
         await context.track._audio_batch(batch(source(index, 100) for index in (1, 2, 3)))
         await drain(context.track)
@@ -70,7 +71,7 @@ async def test_whole_fresh_read_reused_after_expired_prefix_is_fully_counted(mon
 async def test_expired_conversion_classifies_every_output_and_remaining_input(
     monkeypatch,
 ):
-    context = setup(monkeypatch, cold=0.6)
+    context = setup(monkeypatch, cold=MAX_AUDIO_AGE + 0.1)
     context.track._capture_epoch = 1
     context.track._live_edge_pending = False
     try:
@@ -88,7 +89,7 @@ async def test_expired_conversion_classifies_every_output_and_remaining_input(
         assert values["output_unfinished_samples"] == values["output_sent_samples"] == 0
         assert context.sent == [] and len(context.calls) == 1
         timings = context.track.diagnostics()["metrics"]["timings"]
-        assert timings["feed"]["sum_us"] == 600000
+        assert timings["feed"]["sum_us"] == round((MAX_AUDIO_AGE + 0.1) * 1_000_000)
     finally:
         await context.track.close()
 
@@ -147,7 +148,7 @@ async def test_repeated_status_remains_fixed_size_private_and_labels_malformed_d
         for index in range(1000):
             ledger = context.track._source_ledger((source(index, 100),))
             ledger.remaining()
-        malformed = source(1001, 99)
+        malformed = source(1001, 100 - MAX_AUDIO_AGE - 0.1)
         malformed.payload = b""
         await context.track._audio_batch(batch((malformed,)))
         result = context.track.diagnostics()

@@ -14,7 +14,7 @@ import pylibsrtp
 import pytest
 from aiortc.rtp import RtpPacket
 
-from halo_server.media.homekit_audio import AudioEndpointRequest, AudioTrack
+from halo_server.media.homekit_audio import MAX_AUDIO_AGE, AudioEndpointRequest, AudioTrack
 from halo_server.media.homekit_audio_codec import AudioAdapter
 from halo_server.media.opus import AudioConfiguration, parse_opus, repacketize
 
@@ -80,9 +80,9 @@ def decode_every_packet(packets):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("arrival", ["regular", "600ms_burst", "1200ms_burst"])
+@pytest.mark.parametrize("arrival", ["regular", "600ms_burst", "900ms_burst", "1200ms_burst"])
 async def test_native_live_reuses_bursts_without_reset_discard_cascade(arrival):
-    count = 41 if arrival == "1200ms_burst" else 31
+    count = {"regular": 31, "600ms_burst": 31, "900ms_burst": 46, "1200ms_burst": 41}[arrival]
     source = source_packets(count)
     receiver = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     receiver.setblocking(False)
@@ -181,11 +181,13 @@ async def test_native_live_reuses_bursts_without_reset_discard_cascade(arrival):
                 await asyncio.sleep(max(0, started + index * 0.06 - time.monotonic()))
                 append((index,))
         else:
-            size = 20 if arrival == "1200ms_burst" else 10
+            size = {"600ms_burst": 10, "900ms_burst": 15, "1200ms_burst": 20}[arrival]
             for burst in range((count - 1) // size):
                 await asyncio.sleep(max(0, started + (burst + 1) * size * 0.06 - time.monotonic()))
                 append(range(1 + burst * size, 1 + (burst + 1) * size))
-        await asyncio.sleep(0.55)
+        # The extreme burst may consume the entire finite retention window.
+        # Wait beyond that bound before requiring every output to be accounted.
+        await asyncio.sleep(MAX_AUDIO_AGE + 0.05 if arrival == "1200ms_burst" else 0.55)
         assert not failures and track.failure is None
         minimum = 85 if arrival == "regular" else (35 if arrival == "1200ms_burst" else 45)
         assert track.sent_packets == len(received) >= minimum
@@ -195,7 +197,10 @@ async def test_native_live_reuses_bursts_without_reset_discard_cascade(arrival):
         assert values["source_prefix_discarded_samples"] == 0
         assert values["source_unprocessed_samples"] == 0
         assert values["output_unvisited_samples"] == 0
-        assert values["adapter_recreates"] <= (0 if arrival == "regular" else 3)
+        assert values["adapter_recreates"] <= (3 if arrival == "1200ms_burst" else 0)
+        if arrival != "1200ms_burst":
+            assert track.sent_packets == count * 3 - 1
+            assert values["output_stale_samples"] == values["output_budget_rejected_samples"] == 0
         assert values["source_read_samples"] == (
             values["source_submitted_samples"] + values["source_stale_discarded_samples"]
         )
@@ -245,7 +250,7 @@ async def test_native_live_reuses_bursts_without_reset_discard_cascade(arrival):
             for a, b in zip(received, received[1:], strict=False)
         ]
         assert all(0 < step < 2**31 for step in steps)
-        if arrival == "regular":
+        if arrival != "1200ms_burst":
             assert set(steps) == {480}
         pcm = decode_every_packet(packet.payload for packet in received)
         assert len(pcm) == len(received) * 960

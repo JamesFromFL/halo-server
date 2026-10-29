@@ -22,7 +22,11 @@ from halo_server.media.srtp import SecureVideo, SrtpError
 from halo_server.media.talkback import Talkback, TalkPacket
 from halo_server.media.telemetry import StreamMetrics
 
-MAX_AUDIO_AGE = 0.5
+# Maximum retained source contribution, not an intentional playout delay.
+# Ring arrivals can pause for about one second; keep the short native tail
+# through that gap without recreating the converter. Queue count/byte bounds
+# and immediate permission/epoch retirement remain independent.
+MAX_AUDIO_AGE = 1.2
 MAX_AUDIO_PACKET = 1200
 RECEIVER_SECONDS = 60.0
 SEND_SECONDS = 0.25

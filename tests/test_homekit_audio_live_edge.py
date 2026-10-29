@@ -216,9 +216,9 @@ async def test_expired_prefix_rechecks_expired_batch_before_one_restart(
             if reads == 1:
                 packets = (source(0, 100),)
             elif reads == 2:
-                context.now[0] = 100.7
+                context.now[0] = 100 + homekit_audio.MAX_AUDIO_AGE + 0.2
                 # Both packets have actually expired. Recheck rather than
-                # inventing a startup allowance or relaxing the500ms deadline.
+                # inventing a new receipt or exceeding the finite retention limit.
                 packets = (source(1, 100.19), source(2, 100.19))
             elif reads == 3:
                 packets = (source(3, context.now[0]),)

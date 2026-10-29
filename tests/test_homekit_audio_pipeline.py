@@ -9,7 +9,7 @@ from test_homekit_audio_live_edge import drain, observe_audio_clock, setup, sour
 from test_homekit_audio_timing import make_track
 
 from halo_server.homekit.models import HomeKitOperationError
-from halo_server.media.homekit_audio import MAX_RETAINED_OUTPUT_BYTES, _AudioTiming
+from halo_server.media.homekit_audio import MAX_AUDIO_AGE, MAX_RETAINED_OUTPUT_BYTES, _AudioTiming
 from halo_server.media.homekit_audio_codec import AudioAdapter, AudioTransformError
 from halo_server.media.opus import AudioConfiguration, AudioOutput
 
@@ -82,8 +82,9 @@ async def test_response_capacity_wait_rechecks_privacy_and_retains_queue_owner(m
 async def test_each_complete_output_is_classified_before_input_frontier_advances(monkeypatch):
     context = setup(monkeypatch, cold=0)
     track = context.track
-    track._input_spans.extend(((0, 960, 99), (960, 2880, 100)))
-    observe_audio_clock(track, source(0, 99))
+    expired = 100 - MAX_AUDIO_AGE - 0.1
+    track._input_spans.extend(((0, 960, expired), (960, 2880, 100)))
+    observe_audio_clock(track, source(0, expired))
     try:
         await track._audio_outputs(
             tuple(AudioOutput(b"\xd8\x01", i * 960, 960, "adapt") for i in range(3)),
@@ -106,7 +107,7 @@ async def test_fresh_batch_cannot_cross_retirement_fence(monkeypatch, change):
     context = setup(monkeypatch, cold=0)
     track = context.track
     track._capture_epoch, track._live_edge_pending = 1, False
-    track._input_spans.append((0, 2880, 99))
+    track._input_spans.append((0, 2880, 100 - MAX_AUDIO_AGE - 0.1))
     entered, release = asyncio.Event(), asyncio.Event()
     close = track._adapter.close
 

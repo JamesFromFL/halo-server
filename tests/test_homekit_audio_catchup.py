@@ -121,10 +121,10 @@ async def test_wire_limit_rejects_infeasible_head_without_spending_or_waiting_pa
         # No byte credit is available for this synthetic maximum-size head.
         track._pacer = _AudioPacer(track.config, socket.AF_INET, context.now[0])
         track._pacer._bytes = 0
-        context.now[0] += 0.49
+        context.now[0] += MAX_AUDIO_AGE - 0.01
         track._pacer._at = context.now[0]
         await track._send_output(track._outputs[0])
-        assert not context.sent and context.now[0] == 100.49
+        assert not context.sent and context.now[0] == 100 + MAX_AUDIO_AGE - 0.01
         assert track._pacer._packets == 3 and track._pacer._bytes == 0
         values = track.diagnostics()["metrics"]["counters"]
         assert values["output_budget_rejected_packets"] == 1
@@ -167,4 +167,54 @@ async def test_catchup_wait_cannot_cross_permission_epoch_or_stop(monkeypatch, c
         assert track._pacer._packets >= 2
     finally:
         release.set()
+        await track.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("age", [0.75, 1.19, 1.200001])
+async def test_retention_uses_original_receipt_without_adding_playout_delay(monkeypatch, age):
+    context = setup(monkeypatch, cold=0)
+    track = context.track
+    try:
+        await queue(track, 1)
+        original_sequence = track._sequence
+        context.now[0] = 100 + age
+        await drain(track)
+        values = track.diagnostics()["metrics"]["counters"]
+        if age > MAX_AUDIO_AGE:
+            assert not context.sent and track._sequence == original_sequence
+            assert values["output_stale_samples"] == 960
+        else:
+            assert len(context.sent) == 1 and context.sent[0][0] == 100 + age
+            decoder = pylibsrtp.Session(
+                pylibsrtp.Policy(
+                    key=track.request.key + track.request.salt,
+                    ssrc_type=pylibsrtp.Policy.SSRC_SPECIFIC,
+                    ssrc_value=track.prepared.ssrc,
+                )
+            )
+            assert decoder.unprotect(context.sent[0][1])[12:] == unit(0).payload
+            assert values["output_stale_samples"] == 0
+    finally:
+        await track.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fence", ["privacy", "epoch", "stop"])
+async def test_retained_audio_remains_immediately_fenced(monkeypatch, fence):
+    context = setup(monkeypatch, cold=0)
+    track = context.track
+    try:
+        await queue(track, 1)
+        context.now[0] = 101.1
+        original_sequence = track._sequence
+        if fence == "privacy":
+            context.allowed[0] = False
+        elif fence == "epoch":
+            context.epoch[0] = 2
+        else:
+            track.fence()
+        await drain(track)
+        assert not context.sent and track._sequence == original_sequence
+    finally:
         await track.close()
