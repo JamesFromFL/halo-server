@@ -244,10 +244,13 @@ async def test_forced_worker_output_must_contain_actual_idr_and_matching_paramet
 
     class WrongWorker:
         def __init__(self, _configuration):
-            pass
+            self.calls = 0
 
         async def feed(self, *_args, **_kwargs):
+            self.calls += 1
             if failure == "deadline":
+                if self.calls == 1:
+                    return ()
                 return ((0, output[0][0]), (180000, output[1][0]))
             nals = split_annexb(output[0][0])
             if failure == "not-idr":
@@ -260,9 +263,13 @@ async def test_forced_worker_output_must_contain_actual_idr_and_matching_paramet
     monkeypatch.setattr(transcode, "VideoWorker", WrongWorker)
     adapter = AccessUnitAdapter(VideoConfiguration(320, 240, 15, "high", "3.1", 2000))
     try:
+        if failure == "deadline":
+            assert await adapter.feed(source[0][0], 0, capture_epoch=0) == ()
         # A worker claiming a P frame at the source-time deadline must fail even
         # when its initial output was a genuine independently decodable IDR.
         with pytest.raises(VideoTransformError, match="source-time IDR|current parameters"):
-            await adapter.feed(source[0][0], 0, capture_epoch=0)
+            await adapter.feed(
+                source[0][0], 180000 if failure == "deadline" else 0, capture_epoch=0
+            )
     finally:
         await adapter.close()

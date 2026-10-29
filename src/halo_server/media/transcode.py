@@ -5,8 +5,10 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import math
 import struct
 import threading
+from collections import OrderedDict
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -30,6 +32,7 @@ from halo_server.release_execution import python_worker_command
 from halo_server.release_guard import inherited_guard_fds
 
 MAX_ENCODERS = 4
+MAX_SOURCE_RECEIPTS = 64
 START_SECONDS = 5.0
 FRAME_SECONDS = 2.0
 STOP_SECONDS = 2.0
@@ -52,6 +55,9 @@ class OutputAccessUnit:
     mode: str
     source: SpsInfo
     output: SpsInfo
+    capture_epoch: int = 0
+    configuration_generation: int = 0
+    received_at: float | None = None
 
 
 @dataclass(frozen=True)
@@ -253,6 +259,9 @@ class AccessUnitAdapter:
         self._last_output_idr = None
         self._bucket_timestamp = None
         self._tokens = configuration.max_bit_rate * 1000
+        self._configuration_generation = 1
+        self._lifecycle_generation = 0
+        self._source_receipts: OrderedDict[tuple[int, int], float | None] = OrderedDict()
 
     @property
     def mode(self):
@@ -265,6 +274,38 @@ class AccessUnitAdapter:
     @property
     def output_format(self):
         return self._output
+
+    @property
+    def configuration_generation(self):
+        return self._configuration_generation
+
+    def _current(self, generation=None):
+        if self._closed or generation is not None and generation != self._lifecycle_generation:
+            raise VideoTransformError("Video output is retired")
+
+    def _record_receipt(self, epoch, timestamp, received_at):
+        key = epoch, timestamp
+        if key in self._source_receipts:
+            previous = self._source_receipts[key]
+            # Unknown provenance stays unknown; a duplicate never makes an
+            # unresolved picture appear newer than its first known receipt.
+            self._source_receipts[key] = (
+                min(previous, received_at)
+                if previous is not None and received_at is not None
+                else None
+            )
+            return
+        if len(self._source_receipts) >= MAX_SOURCE_RECEIPTS:
+            self._source_receipts.popitem(last=False)
+        self._source_receipts[key] = received_at
+
+    def _receipts(self, epoch, encoded):
+        if len(encoded) > 4:
+            raise VideoTransformError("Video output batch exceeds its bound")
+        keys = [(epoch, timestamp) for timestamp, _payload in encoded]
+        if len(set(keys)) != len(keys) or any(key not in self._source_receipts for key in keys):
+            raise VideoTransformError("Video output source receipt is unavailable")
+        return tuple(self._source_receipts[key] for key in keys)
 
     def request_keyframe(self):
         if self._mode == "adapt":
@@ -287,15 +328,26 @@ class AccessUnitAdapter:
                 raise VideoTransformError("Video output is retired")
             if self.configuration != configuration:
                 await self._reset(clear_parameters=False)
+                self._current()
                 self.configuration = configuration
+                self._configuration_generation += 1
                 self._copy_cadence = SourceCadence(configuration.fps)
                 self._adapt_requested = False
                 self._tokens = configuration.max_bit_rate * 1000
 
     async def _reset(self, *, clear_parameters):
-        if self._worker is not None:
-            await self._worker.close()
+        self._current()
+        self._lifecycle_generation += 1
+        generation = self._lifecycle_generation
+        worker = self._worker
+        if worker is not None:
+            await worker.close()
+            self._current(generation)
+            if self._worker is not worker:
+                raise VideoTransformError("Video worker ownership changed")
             self._worker = None
+        self._current(generation)
+        self._source_receipts.clear()
         self._waiting_idr, self._force, self._mode = True, True, "waiting"
         self._force_revision += 1
         self._output = None
@@ -319,12 +371,18 @@ class AccessUnitAdapter:
         self._tokens -= len(payload) * 8
         return True
 
-    async def feed(self, payload: bytes, rtp_timestamp: int, *, capture_epoch: int = 0):
+    async def feed(
+        self,
+        payload: bytes,
+        rtp_timestamp: int,
+        *,
+        capture_epoch: int = 0,
+        received_at: float | None = None,
+    ):
         if self._operation.locked():
             raise VideoTransformError("Video output already owns an access unit")
         async with self._operation:
-            if self._closed:
-                raise VideoTransformError("Video output is retired")
+            self._current()
             if (
                 type(capture_epoch) is not int
                 or capture_epoch < 0
@@ -332,6 +390,15 @@ class AccessUnitAdapter:
                 or not 0 <= rtp_timestamp < 2**53
             ):
                 raise VideoTransformError("Invalid source video epoch or timestamp")
+            if received_at is not None:
+                if type(received_at) not in (int, float):
+                    raise VideoTransformError("Invalid source video receipt")
+                try:
+                    received_at = float(received_at)
+                except (OverflowError, ValueError):
+                    raise VideoTransformError("Invalid source video receipt") from None
+                if received_at < 0 or not math.isfinite(received_at):
+                    raise VideoTransformError("Invalid source video receipt")
             if self._epoch != capture_epoch:
                 await self._reset(clear_parameters=True)
                 self._epoch = capture_epoch
@@ -399,15 +466,27 @@ class AccessUnitAdapter:
                 and self._copy_budget(payload, timestamp)
             ):
                 self._mode, self._output = "copy", self._source
+                self._record_receipt(capture_epoch, timestamp, received_at)
+                receipt = self._source_receipts.pop((capture_epoch, timestamp))
+                self._current()
                 return (
                     OutputAccessUnit(
-                        payload, timestamp, keyframe, "copy", self._source, self._source
+                        payload,
+                        timestamp,
+                        keyframe,
+                        "copy",
+                        self._source,
+                        self._source,
+                        capture_epoch,
+                        self._configuration_generation,
+                        receipt,
                     ),
                 )
             if self._mode != "adapt" and not keyframe:
                 self._waiting_idr = True
                 return ()
             self._mode = "adapt"
+            self._current()
             if self._worker is None:
                 self._worker = VideoWorker(self.configuration)
             if not self._source.progressive:
@@ -416,9 +495,17 @@ class AccessUnitAdapter:
             # Validate only the request actually dispatched, and retain a newer
             # request for the next input rather than rejecting this valid P frame.
             force_required, force_revision = self._force, self._force_revision
+            generation = self._lifecycle_generation
+            configuration_generation = self._configuration_generation
+            self._record_receipt(capture_epoch, timestamp, received_at)
             encoded = await self._worker.feed(payload, timestamp, force_idr=force_required)
+            self._current(generation)
+            # Establish every original receipt before retiring any origin from
+            # this batch. Reordered/delayed outputs cannot borrow the newest
+            # feed's receipt, including when that feed returned several AUs.
+            receipts = self._receipts(capture_epoch, encoded)
             result = []
-            for timestamp, output in encoded:
+            for (timestamp, output), receipt in zip(encoded, receipts, strict=True):
                 out_nals = split_annexb(output)
                 types = {nal[0] & 31 for nal in out_nals}
                 output_pps = None
@@ -454,17 +541,27 @@ class AccessUnitAdapter:
                         "adapt",
                         self._source,
                         self._output,
+                        capture_epoch,
+                        configuration_generation,
+                        receipt,
                     )
                 )
             if result and self._force_revision == force_revision:
                 self._force = False
+            self._current(generation)
+            for timestamp, _output in encoded:
+                self._source_receipts.pop((capture_epoch, timestamp))
             return tuple(result)
 
     async def close(self):
         self._closed = True
-        if self._worker is not None:
-            await self._worker.close()
-            self._worker = None
+        self._lifecycle_generation += 1
+        self._source_receipts.clear()
+        worker = self._worker
+        if worker is not None:
+            await worker.close()
+            if self._worker is worker:
+                self._worker = None
 
 
 def _actual_output(info, selected):

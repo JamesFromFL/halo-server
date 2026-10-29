@@ -12,9 +12,10 @@ separate from synthetic and installed-artifact checks.
 | 4 | Video cadence and IDR timing | Complete: `d9b38ed`; 2,124 Python / 265 Node tests passed |
 | 4b | Captured-burst audio repair and receive/snapshot diagnostics | Complete: `6db2aeb`; 2,189 Python / 265 Node tests passed; installed and paired pilot captured |
 | 4c | Mains-camera snapshot cache-miss recovery | Complete: `64a889a`; 2,212 Python / 265 Node tests passed |
-| 4d | Ring post-activation stream-options compatibility | Implementation complete; controlled paired comparison pending |
-| 5 | Complete-frame delivery and loss recovery | Pending |
-| 6 | Quality, A/V timeline and reconfigure | Pending |
+| 4d | Ring post-activation stream-options compatibility | Complete: `9c51a33`; paired pilot did not eliminate incoming periodic gaps |
+| 5 | Complete-frame delivery and loss recovery | Partial original scope: `4e0af7b`; 2,256 Python / 265 Node passed; packaged, not deployed; remaining recovery work below |
+| 6a | Original video receipt and worker ownership | Frozen implementation; combined focused 234 passed / 1 host IPv6 skip; full gate and commit pending |
+| 6b onward | Quality, A/V timeline and reconfigure | Receiver-first audit now governs sequencing; no new implementation from this audit |
 | 7 | Installed and real-device qualification | Pending |
 
 ## Slice 1
@@ -257,3 +258,79 @@ slice5. Upstream keyframe-request bridging, a separate repair worker and decoder
 warmup remain outside this slice. The original-input receipt provenance and
 stable clock/reconfiguration work remain under slice6 review. None of these
 local sender results establishes a fix for the observed incoming AV gaps.
+
+
+## Follow-up after the activation pilot
+
+R4c and R4d were built twice identically, qualified as extracted installations,
+and deployed together as selection revision12. The paired identity and exact
+HKSV-off preferences were preserved. The full02:53:59–02:58:16UTC lifecycle
+contained258 samples,177 active samples, zero collection errors and a clean
+owner STOP. The fixed activation diagnostic reported `sent`, but81 joint RTP
+quiet periods still had median700ms duration and2s start spacing at directUDP,
+post-decryption and routed observation. The activation candidate therefore did
+not resolve the measured ingress pattern. Sampled daemon-owned UDP drops stayed
+zero; this sampled result is not a proof excluding network or kernel causes.
+
+The owner reported shorter-feeling stutters with recurring brief pixelation,
+and a working preview. Home requested1280x720/30fps/299kbps initially, then
+640x360/30fps/132kbps about six seconds later. Those are requested contracts;
+metadata does not prove why Home changed them or directly measure displayed
+pixelation. One pre-live fresh snapshot attempt returned no new timestamp after
+two SDK comparisons (2.41s); no image GET followed that attempt. Its failure was
+reported rather than presenting an expired cached JPEG as newly captured.
+
+R5's integrated gate passed2256 Python tests plus265 adapter tests with one
+host IPv6 skip. The first full gate exposed two outdated metric fixtures missing
+SPS/PPS. They now exercise a real partial IDR and complete independently
+unprotected/reassembled output; production validation was retained. The failed
+receipt is preserved. The slice is locally committed as4e0af7b; installed
+qualification is separate from the physical pilot.
+
+The next narrow R6a step preserves original video input receipt/epoch/config
+provenance through delayed or batched output. A concurrent retirement regression
+also demonstrated that an adapter feed awaiting old-worker close could create
+an unowned replacement after adapter close had already completed. Lifecycle
+fences and exact worker ownership are required before further native changes.
+The owner then redirected the investigation toward the HomeKit receiver's
+requirements and Ring quality parity. The R6a implementation is frozen; a
+candidate stable timeline remains isolated and unintegrated. Further product
+changes now follow the receiver-contract investigation below. No backend swap,
+new playout buffer, noise filter or guessed Ring latency option is introduced.
+
+The original slice5 upstream PLI bridge, nonblocking bounded repair queue and
+separate cached-repair deadline remain open. Current R5's stricter original
+500ms bound for cached repairs is conservative, but it does not implement the
+plan's distinct one-second repair window. The paired captures contain no NACKs,
+so these are recovery-completeness work rather than an explanation for the
+observed periodic stutter. They must be resolved or explicitly reported before
+calling the full repair plan complete.
+
+## Receiver-first research update
+
+See [the receiver-contract report](halo-homekit-receiver-contract-2026-10-28.md).
+This review distinguishes the installed R4d from the undeployed R5: the latter's
+86 percent codec target and quarter-second VBV cannot cause the former's
+observed stutter. Whole-AU admission tests proved feasibility inside a chosen
+local envelope, not that the envelope follows Apple's receiver requirements.
+
+The audit identifies missing SPS/PPS aggregation, reproducible media-clock
+errors, codec-rate versus protected-wire budgeting conflation, and measured
+underuse of encoder rate when source15fps is configured as nominal30fps. Home
+changed its selected resolution once in the pilot; it was not repeatedly
+reconfiguring at each reported two-second disturbance. Requested format is not
+yet a separate parsed-output measurement. Incoming quiet periods remain an
+independent unresolved observation.
+
+Revised order: receiver packet contract and measurements; stable media timeline;
+source-time codec quality and bitrate accounting; bounded transport/recovery;
+controlled real Home qualification. Preserve source bytes where the selected
+contract permits. Qualify conversion with detail, motion, color, audio continuity
+and timestamp tests, rather than treating generic decode success as Apple
+playback or quality proof. Review finite latency policy explicitly, retaining
+count/byte/privacy bounds. Newer HEVC/multitier HomeKit remains a separate scope.
+
+Read-only source audits and synthetic probes are retained in the repair workspace
+under `diagnosis/homekit-contract-audit/`. No server or media actions were taken
+for this receiver-first audit. The full repair and real-device acceptance remain
+incomplete; no claim of near-Ring parity is made yet.

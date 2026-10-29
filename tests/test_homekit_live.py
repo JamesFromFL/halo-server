@@ -499,6 +499,7 @@ async def test_capture_retry_during_idr_pacing_stops_remaining_old_attempt_datag
 class DeferredAdapter:
     def __init__(self, config):
         self.config = config
+        self.configuration_generation = 1
         self.entered, self.release = asyncio.Event(), asyncio.Event()
         self.release.set()
         self.closed = False
@@ -506,12 +507,21 @@ class DeferredAdapter:
         self.epochs = []
         self.keyframe_requests = 0
 
-    async def feed(self, payload, timestamp, *, capture_epoch):
+    async def feed(self, payload, timestamp, *, capture_epoch, received_at=None):
+        generation = self.configuration_generation
         self.entered.set()
         self.epochs.append(capture_epoch)
         await self.release.wait()
         return (
-            SimpleNamespace(payload=payload, timestamp=timestamp, is_keyframe=True, mode="copy"),
+            SimpleNamespace(
+                payload=payload,
+                timestamp=timestamp,
+                is_keyframe=True,
+                mode="copy",
+                capture_epoch=capture_epoch,
+                configuration_generation=generation,
+                received_at=received_at,
+            ),
         )
 
     def request_keyframe(self):
@@ -521,6 +531,8 @@ class DeferredAdapter:
         pass
 
     async def reconfigure(self, config):
+        if self.config != config:
+            self.configuration_generation += 1
         self.config = config
 
     async def close(self):

@@ -991,6 +991,36 @@ class HomeKitLiveManager:
                         metrics.observe("output_pts_step", delta / 90000)
                 session.diagnostic_output_pts = output.timestamp
 
+    @staticmethod
+    def _configuration_generation(session):
+        generation = getattr(session.adapter, "configuration_generation", None)
+        if type(generation) is not int or generation < 1:
+            raise HomeKitOperationError("media_failed")
+        return generation
+
+    def _output_receipts(self, session, outputs, *, epoch, generation):
+        # A newer input may release an older decoded picture. Validate the
+        # whole bounded batch before any packet admission; never substitute
+        # the triggering input's receipt for missing output provenance.
+        if self._configuration_generation(session) != generation:
+            raise HomeKitOperationError("media_failed")
+        receipts = []
+        for output in outputs:
+            receipt = getattr(output, "received_at", None)
+            if (
+                type(getattr(output, "capture_epoch", None)) is not int
+                or output.capture_epoch != epoch
+                or type(getattr(output, "configuration_generation", None)) is not int
+                or output.configuration_generation != generation
+                or type(receipt) not in {int, float}
+                or not math.isfinite(receipt)
+                or receipt < 0
+                or receipt > self._clock()
+            ):
+                raise HomeKitOperationError("media_failed")
+            receipts.append(receipt)
+        return tuple(receipts)
+
     async def _send_video(self, session):
         try:
             while not session.retired:
@@ -1024,29 +1054,34 @@ class HomeKitLiveManager:
                     session.last_source = max(session.last_source, packet.received_at)
                     async with session.adapter_lock:
                         self._current(session)
+                        if session.handle.capture_epoch != packet.capture_epoch:
+                            break
+                        generation = self._configuration_generation(session)
                         feed_started = self._clock()
                         _measure(session, "count", "adapter_feeds")
                         outputs = await session.adapter.feed(
                             packet.payload,
                             packet.rtp_timestamp,
-                            capture_epoch=getattr(
-                                packet, "capture_epoch", getattr(batch, "capture_epoch", 0)
-                            ),
+                            capture_epoch=packet.capture_epoch,
+                            received_at=packet.received_at,
                         )
                         _measure(
                             session, "observe", "adapter_feed", max(0, self._clock() - feed_started)
                         )
-                        self._observe_outputs(session, outputs)
                         if session.handle.capture_epoch != packet.capture_epoch:
                             break
-                        for output in outputs:
+                        receipts = self._output_receipts(
+                            session, outputs, epoch=packet.capture_epoch, generation=generation
+                        )
+                        self._observe_outputs(session, outputs)
+                        for output, receipt in zip(outputs, receipts, strict=True):
                             _measure(
                                 session,
                                 "observe",
                                 "source_age",
-                                max(0, self._clock() - packet.received_at),
+                                max(0, self._clock() - receipt),
                             )
-                            if self._clock() - packet.received_at > MAX_FRAME_AGE:
+                            if self._clock() - receipt > MAX_FRAME_AGE:
                                 _measure(session, "count", "stale_output_units")
                                 self._stale_access_unit(session, output)
                                 continue
@@ -1055,7 +1090,7 @@ class HomeKitLiveManager:
                                     session,
                                     output,
                                     packet.capture_epoch,
-                                    received_at=packet.received_at,
+                                    received_at=receipt,
                                 )
                                 if not sent and output.mode == "copy":
                                     session.adapter.force_adaptation()
@@ -1066,6 +1101,7 @@ class HomeKitLiveManager:
                                             packet.payload,
                                             packet.rtp_timestamp,
                                             capture_epoch=packet.capture_epoch,
+                                            received_at=packet.received_at,
                                         )
                                         _measure(
                                             session,
@@ -1073,13 +1109,21 @@ class HomeKitLiveManager:
                                             "adapter_feed",
                                             max(0, self._clock() - feed_started),
                                         )
+                                        adapted_receipts = self._output_receipts(
+                                            session,
+                                            adapted,
+                                            epoch=packet.capture_epoch,
+                                            generation=generation,
+                                        )
                                         self._observe_outputs(session, adapted)
-                                        for unit in adapted:
+                                        for unit, unit_receipt in zip(
+                                            adapted, adapted_receipts, strict=True
+                                        ):
                                             await self._access_unit(
                                                 session,
                                                 unit,
                                                 packet.capture_epoch,
-                                                received_at=packet.received_at,
+                                                received_at=unit_receipt,
                                             )
                             except _SourceChanged:
                                 break

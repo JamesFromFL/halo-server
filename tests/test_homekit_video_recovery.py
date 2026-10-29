@@ -55,8 +55,9 @@ class AsyncioProxy:
 
 
 class Sink:
-    def __init__(self, clock):
+    def __init__(self, clock, owner):
         self.clock = clock
+        self.owner = owner
         self.sent = []
         self.before = None
 
@@ -65,6 +66,12 @@ class Sink:
             self.before()
         self.sent.append((self.clock(), packet))
         return len(packet)
+
+    def fileno(self):
+        return self.owner.fileno()
+
+    def close(self):
+        self.owner.close()
 
 
 @asynccontextmanager
@@ -75,7 +82,7 @@ async def controlled(monkeypatch, *, bitrate=300):
     session = manager._sessions[identity]
     original_socket = session.socket
     clock = Clock()
-    sink = Sink(clock)
+    sink = Sink(clock, original_socket)
     manager._clock = clock
     session.handle, session.config = controller.handle, replace(CONFIG, max_bit_rate=bitrate)
     session.capture_epoch = controller.handle.capture_epoch
@@ -375,13 +382,19 @@ async def test_multioutput_feed_after_stale_reference_cannot_send_later_p(monkey
         async def feed(*_args, **_kwargs):
             calls.append(True)
             if len(calls) == 1:
-                return (output(source[0 if stale_idr else 1][0], 6000),)
-            if len(calls) == 2:
-                return (
+                units = (output(source[0 if stale_idr else 1][0], 6000),)
+            elif len(calls) == 2:
+                units = (
                     output(source[1][0], 12000, keyframe=False),
                     output(source[2][0], 18000, keyframe=False),
                 )
-            return (output(source[0][0], 24000),)
+            else:
+                units = (output(source[0][0], 24000),)
+            for unit in units:
+                unit.capture_epoch = _kwargs["capture_epoch"]
+                unit.configuration_generation = 1
+                unit.received_at = _kwargs["received_at"]
+            return units
 
         async def read(**_kwargs):
             if len(calls) >= 3:
@@ -399,6 +412,7 @@ async def test_multioutput_feed_after_stale_reference_cannot_send_later_p(monkey
         session.handle.read = read
         session.adapter = NS(
             feed=feed,
+            configuration_generation=1,
             request_keyframe=lambda: requests.append(True),
             close=lambda: asyncio.sleep(0),
         )
