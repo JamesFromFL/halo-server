@@ -30,6 +30,9 @@ MAX_SNAPSHOT_BYTES = 8 * 1024 * 1024
 MAX_TIMESTAMP_BYTES = 64 * 1024
 SNAPSHOT_TOTAL_SECONDS = 8.0
 MAX_SNAPSHOT_REQUESTS = 2
+# A missing mains-camera cache can take longer than two one-second polls to
+# populate. Keep one SDK trigger and the existing whole-operation/byte budgets.
+MISSING_CACHE_POLL_ATTEMPTS = 5
 _TLS_CONTEXT = ssl.create_default_context()
 _LOG = logging.getLogger(__name__)
 _DIAGNOSTIC_SECONDS = 5.0
@@ -422,7 +425,7 @@ class SnapshotReader:
         scope.http_status = None
         scope.reason = None
         scope.error_class = "none"
-        raw = await device.async_get_snapshot(retries=2, delay=1)
+        raw = await device.async_get_snapshot(retries=MISSING_CACHE_POLL_ATTEMPTS, delay=1)
         if admission is not None and not admission():
             scope.reason = "authority_retired"
             return None

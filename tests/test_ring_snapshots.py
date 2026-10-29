@@ -1070,12 +1070,15 @@ async def test_no_new_sdk_timestamp_ends_bounded_fallback_without_another_get(
 ):
     old = b'{"timestamps":[{"timestamp":0}]}'
     reader, transport, session, device = mains_fixture(
-        [Response(status=404), Response(b"{}"), Response(old), Response(old)]
+        [Response(status=404), Response(b"{}"), *[Response(old) for _ in range(5)]]
     )
     try:
         assert await reader.fetch(device) is None
         assert [method for method, _url, _options in session.calls] == [
             "GET",
+            "POST",
+            "POST",
+            "POST",
             "POST",
             "POST",
             "POST",
