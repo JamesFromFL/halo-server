@@ -112,11 +112,11 @@ def open_encoder(config, *, source=None):
     )
     # The negotiated value is a codec one-second maximum, not a protected-wire
     # serialization rate. Native moving-scene probes retain a measured codec
-    # reserve; full-target ABR/VBV exceeded covered one-second windows. This is
+    # reserve; full-target/larger-VBV probes exceeded startup or covered windows. This is
     # an empirical target, not a universal bound; the separate monitor observes
     # actual encoded windows and transport owns its finite byte/burst budget.
-    payload_rate = max(1, config["max_bit_rate"] * 90 // 100)
-    vbv_size = max(1, (payload_rate + 3) // 4)
+    payload_rate = max(1, config["max_bit_rate"] * 82 // 100)
+    vbv_size = max(1, (payload_rate + 1) // 2)
     encoder.bit_rate, encoder.thread_count = payload_rate * 1000, 1
     encoder.gop_size, encoder.max_b_frames = fps * 2, 0
     encoder.sample_aspect_ratio = Fraction(1)

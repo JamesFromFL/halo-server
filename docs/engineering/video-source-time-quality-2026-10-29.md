@@ -1,5 +1,11 @@
 # Source-time live video encoding and bounded delayed output
 
+This is the historical R6e implementation record. Its 90-percent/250-ms rate
+policy is superseded by R6q's 82-percent/500-ms policy; see the
+[installed-baseline comparison and final qualification](halo-server-receiver-implementation-2026-10-29.md).
+The frame ownership, source-time, bounded pending-output and color behavior
+described here remain in place.
+
 This slice corrects rate-control underallocation when Ring provides fewer real
 frames than Home's selected maximum. It preserves the existing source cadence
 ceiling and 90 kHz PTS; it never invents live frames or fills source gaps.

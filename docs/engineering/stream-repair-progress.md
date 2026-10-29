@@ -372,3 +372,21 @@ SRTP and independent decode, preserve a two-second reconfigure gap, and deny
 old-epoch output. The packet correction remains in place. This slice changes no
 bitrate, pacing, freshness, codec, filtering or resource limits. Sender-report
 correctness alone is not a diagnosis of receiver arrival jitter.
+
+## Receiver-first implementation, R6u through R6q
+
+The audio-retention, separate codec/wire budget, native source-time ownership,
+bounded asynchronous repair and current-lease keyframe slices are implemented
+and locally committed. See [the implementation and qualification record](halo-server-receiver-implementation-2026-10-29.md)
+for per-slice checks, behavior and open limits.
+
+R6q supersedes the earlier R6e 90-percent/250-ms encoder policy with the measured
+82-percent/500-ms candidate. A direct comparison with installed R4d was required
+because improvements over intermediate R6a did not imply improvements over the
+server's actual baseline. Startup-inclusive bitrate checks now accompany covered
+one-second windows. The selected policy improves aggregate 15-fps 720p quality
+in the synthetic fixture, with explicit 360p and 30-fps tradeoffs. It does not
+establish physical Home continuity, universal rate compliance or Ring parity.
+
+Release qualification and a new real Home lifecycle remain separate acceptance
+steps. Preserve pairing, exact HKSV-off preferences and the installed R4d rollback.

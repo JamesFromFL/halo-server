@@ -271,7 +271,7 @@ async def test_native_known_bt709_rgb_bars_range_and_nonsquare_source_pixels(ful
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "width,height,kbps,minimum_psnr", [(640, 360, 132, 22), (1280, 720, 299, 18)]
+    "width,height,kbps,minimum_psnr", [(640, 360, 132, 23), (1280, 720, 299, 20)]
 )
 async def test_moving_source15_selected30_has_real_source_time_budget_and_bounded_pending_tail(
     width, height, kbps, minimum_psnr
@@ -318,12 +318,15 @@ async def test_moving_source15_selected30_has_real_source_time_budget_and_bounde
         mean_codec = sum(count for _stamp, count in rows) * 8 / 6
         assert kbps * 1000 * 0.65 < mean_codec <= kbps * 1000
         windows = [
-            sum(count for other, count in rows if stamp - 90000 < other <= stamp) * 8
+            (stamp, sum(count for other, count in rows if stamp - 90000 < other <= stamp) * 8)
             for stamp, _count in rows
-            if stamp >= 90000
         ]
-        assert windows and max(windows) <= kbps * 1000
+        assert any(stamp < 90000 for stamp, _bits in windows)
+        assert any(stamp >= 90000 for stamp, _bits in windows)
+        assert max(bits for _stamp, bits in windows) <= kbps * 1000
         psnr = 10 * np.log10(255**2 / (sum(errors) / len(errors)))
-        assert psnr > minimum_psnr  # Same moving fixture's old CFR baseline was20.87/16.39dB.
+        # A floor for this exact fixture; neither every frame/metric nor real
+        # Ring/Home image quality is asserted to improve.
+        assert psnr > minimum_psnr
     finally:
         await adapter.close()

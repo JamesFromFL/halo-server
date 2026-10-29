@@ -64,7 +64,7 @@ async def test_native_moving_video_has_small_decodable_idrs_and_bounded_protecte
     secure = SecureVideo(b"k" * 16, b"s" * 14, 123)
     continuous = av.CodecContext.create("h264", "r")
     continuous.thread_count = 1
-    rows, idrs, decoded_count = [], [], 0
+    rows, codec_rows, idrs, decoded_count = [], [], [], 0
     try:
         for index, (timestamp, payload) in enumerate(source):
             encoded = await worker.feed(payload, timestamp)
@@ -95,6 +95,7 @@ async def test_native_moving_video_has_small_decodable_idrs_and_bounded_protecte
             decoded = continuous.decode(av.Packet(output))
             assert len(decoded) == 1 and (decoded[0].width, decoded[0].height) == (width, height)
             decoded_count += len(decoded)
+            codec_rows.append((timestamp, len(output)))
             protected_bytes = 0
             for fragment in packetizer.packetize(output, timestamp, payload_type=99, mtu=1378):
                 protected = secure.protect(fragment.packet)
@@ -106,6 +107,15 @@ async def test_native_moving_video_has_small_decodable_idrs_and_bounded_protecte
         assert decoded_count == len(source) - 1 == fps * 6 - 1
         assert worker.last_pending_frames == 1
         assert [timestamp for timestamp, _count in idrs] == [0, 180000, 360000]
+        # Startup partial windows can already establish an overshoot. Include
+        # them as well as all covered one-second windows over original PTS.
+        codec_windows = [
+            (stamp, sum(count for other, count in codec_rows if stamp - 90000 < other <= stamp) * 8)
+            for stamp, _count in codec_rows
+        ]
+        assert any(stamp < 90000 for stamp, _bits in codec_windows)
+        assert any(stamp >= 90000 for stamp, _bits in codec_windows)
+        assert max(bits for _stamp, bits in codec_windows) <= kbps * 1000
         # The selected limit describes codec bytes over one second. This
         # separate finite peak is the approved receiver-first transport model,
         # not an assertion that the codec limit is the physical wire speed.
@@ -113,12 +123,13 @@ async def test_native_moving_video_has_small_decodable_idrs_and_bounded_protecte
         assert all(count * 8 / wire_rate < 0.2 for _timestamp, count in idrs)
         assert sum(count for _timestamp, count in rows) * 8 / 6 <= kbps * 1000
 
-        # Deterministic serialization model, with an explicit 50 ms conversion
-        # allowance. It verifies finite representative headroom, not wall-time
-        # execution guarantees on every host or hypothetical arbitrary scenes.
+        # Charge the native pending frame in addition to the explicit 250 ms
+        # original-source age and 50 ms conversion allowance. This verifies
+        # representative headroom, not wall-time guarantees on arbitrary hosts.
         next_packet = 0
         for received, count in rows:
-            finish = max(received + 0.250 + 0.050, next_packet) + count * 8 / wire_rate
+            ready = received + 0.250 + 0.050 + 1 / fps
+            finish = max(ready, next_packet) + count * 8 / wire_rate
             assert finish <= received + 0.5
             next_packet = finish
         # Independent 250 ms age + 250 ms backlog already exhausts the budget:
