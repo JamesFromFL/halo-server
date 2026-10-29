@@ -183,7 +183,7 @@ def test_state_lock_wait_observed_without_blocking_diagnostics_snapshot():
     )
 
 
-def test_legacy_encode_duration_is_observed_without_moving_native_work():
+def test_legacy_encode_duration_is_observed_outside_state_lock():
     session, _client, _lease, _callbacks = session_fixture()
     encoded_under_lock = []
 
@@ -193,10 +193,10 @@ def test_legacy_encode_duration_is_observed_without_moving_native_work():
             time.sleep(0.025)
             return ()
 
-    session._audio_encoder = SlowEncoder()
+    session._audio_owner.factory = SlowEncoder
     try:
         session._raw_audio(1, b"\x00\x00", 1, 48000)
-        assert encoded_under_lock == [True]  # Lock isolation is a later approved slice.
+        assert encoded_under_lock == [False]
         assert session.diagnostics()["metrics"]["timings"]["legacy_encode"]["max_us"] >= 20000
     finally:
         session.stop_all()

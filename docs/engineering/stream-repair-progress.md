@@ -7,8 +7,8 @@ separate from synthetic and installed-artifact checks.
 | Slice | Scope | Status |
 | --- | --- | --- |
 | 1 | Bounded stream diagnostics | Complete: `47ffd76`; 2,025 Python / 265 Node tests passed |
-| 2 | Audio recovery and bounded sending | Implemented; frozen verification gate before commit |
-| 3 | Camera-state lock isolation | Pending |
+| 2 | Audio recovery and bounded sending | Complete: `78e0e81`; 2,040 Python / 265 Node tests passed |
+| 3 | Camera-state lock isolation | Implemented: bounded legacy lane and finer shared-path diagnostics; full gate required before commit |
 | 4 | Video cadence and IDR timing | Pending |
 | 5 | Complete-frame delivery and loss recovery | Pending |
 | 6 | Quality, A/V timeline and reconfigure | Pending |
@@ -84,3 +84,27 @@ measurements: bounded per-instance raw RTP handler entry/exit and shared short
 cadence bins will distinguish packet handling from assembled encoded frames.
 Existing one-second receiver samples and aggregate frame intervals cannot alone
 separate network arrivals, jitter assembly and sender/report timing.
+
+## Slice 3
+
+Legacy audio normalization now has a separate bounded native lane. Decoded
+frames retain their source timing, and constructor, conversion, encoding and
+close operations run outside the Ring event loop and camera-state lock. The
+original encoded audio/video path does not wait for this compatibility lane.
+Source generation, capture attempt, stop event and native owner must all remain
+current before any result can be delivered. Cancellation fences first and joins
+the actual native work; a timeout retains cleanup ownership instead of claiming
+that an executing native operation stopped.
+
+The decoded handoff charges queued, native and in-flight frames against fixed
+limits. Two native worker threads serve a finite owner set, with at most one job
+per owner. Startup failure, queued cancellation, blocked close and retained
+exception tracebacks have explicit fault-injection coverage. Detailed local
+status has a separate getter/serialization budget so a large camera inventory
+does not exceed the administrative response limit.
+
+Per-receiver RTP handler measurements and shared 100-ms bins are an observation
+aid, not a claim that a post-jitter encoded gap originated on the network. A
+synthetic reordered-packet case reproduces a long encoded gap despite shorter
+raw packet gaps and final zero cumulative loss. Only the next paired-device
+measurement can attribute the owner's repeated joint audio/video pauses.

@@ -51,7 +51,7 @@ from halo_server.media.manager import CaptureRegistry, acquire_owned, owned_thre
 from halo_server.media.ring_media import validate_media_compatibility
 from halo_server.media.ring_speaker import supports_ring_camera_intercom
 from halo_server.media.session import CameraMediaSession, MediaSessionState
-from halo_server.media.telemetry import safe_diagnostics
+from halo_server.media.telemetry import DiagnosticBudget
 from halo_server.paths import ServerPaths
 from halo_server.ring.client import RingSessionManager, SessionSupersededError
 from halo_server.ring.credentials import CredentialStore, CredentialStoreError
@@ -807,6 +807,7 @@ class HaloService:
         uptime = None
         if self._started_at is not None:
             uptime = max(0.0, time.monotonic() - self._started_at)
+        diagnostic_budget = DiagnosticBudget()
         media_sessions = {
             camera_id: {
                 "state": snapshot.state,
@@ -816,7 +817,7 @@ class HaloService:
                 "buffer_ready": snapshot.buffer_ready,
                 "buffer_packets": snapshot.buffer_packets,
                 "buffer_bytes": snapshot.buffer_bytes,
-                "diagnostics": safe_diagnostics(session),
+                "diagnostics": diagnostic_budget.get(session),
                 "opus_frame_duration_ms": snapshot.opus_frame_duration_ms,
                 "failure": snapshot.failure,
             }
@@ -881,6 +882,7 @@ class HaloService:
                     for snapshot in media_sessions.values()
                 ),
                 "sessions": media_sessions if authority_current else {},
+                "diagnostic_coverage": diagnostic_budget.report() if authority_current else None,
             },
             "integrations": self._plugin_status(),
             "recent_actions": list(self._recent_actions)[-25:] if authority_current else [],

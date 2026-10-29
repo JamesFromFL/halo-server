@@ -95,20 +95,43 @@ def test_unit_real_offline_systemd_parser_accepts_prefix_with_spaces(tmp_path, n
     assert result.returncode == 0, result.stderr.decode(errors="replace")
 
 
-def test_operator_only_guard_drop_releases_its_own_fd_before_loop_resources(tmp_path, monkeypatch):
+def test_operator_only_guard_drop_releases_its_own_fd_before_loop_resources(tmp_path):
+    # The operator is a fresh-process entry. Other tests may already have
+    # started process-lifetime native workers, just as the daemon would.
     state = tmp_path / "state"
-    guard = ReleaseGuard.acquire(state, create=True)
-    descriptor = os.dup(guard.fileno())
-    environment = guard.environment() | {
-        "HALO_RELEASE_GUARD_FD": str(descriptor),
-        "HALO_RELEASE_OPERATOR": "1",
-    }
-    guard.close()
-    for key, value in environment.items():
-        monkeypatch.setenv(key, value)
-    paths = ServerPaths(state, tmp_path / "runtime")
-    _drop_operator_guard(paths)
-    assert "HALO_RELEASE_GUARD_FD" not in os.environ
+    script = """
+import os
+import sys
+import threading
+from pathlib import Path
+from halo_server.paths import ServerPaths
+from halo_server.release_guard import ReleaseGuard
+from halo_server.release_operator import _drop_operator_guard
+
+state = Path(sys.argv[1])
+assert threading.active_count() == 1
+guard = ReleaseGuard.acquire(state, create=True)
+descriptor = os.dup(guard.fileno())
+os.environ.update(guard.environment() | {
+    "HALO_RELEASE_GUARD_FD": str(descriptor),
+    "HALO_RELEASE_OPERATOR": "1",
+})
+guard.close()
+_drop_operator_guard(ServerPaths(state, state.parent / "runtime"))
+assert "HALO_RELEASE_GUARD_FD" not in os.environ
+try:
+    os.fstat(descriptor)
+except OSError:
+    pass
+else:
+    raise AssertionError("Operator retained its inherited guard descriptor")
+exclusive = ReleaseGuard.acquire(state, exclusive=True, nonblocking=True)
+exclusive.close()
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script, str(state)], capture_output=True, timeout=5
+    )
+    assert result.returncode == 0, result.stderr.decode(errors="replace")
     exclusive = ReleaseGuard.acquire(state, exclusive=True, nonblocking=True)
     exclusive.close()
 

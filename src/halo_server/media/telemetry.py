@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import bisect
+import json
 import math
 import re
 import threading
@@ -103,3 +104,49 @@ def safe_diagnostics(owner):
         return value if isinstance(value, dict) else None
     except Exception:
         return None
+
+
+class DiagnosticBudget:
+    """Bound optional trusted-owner diagnostics within one local status response.
+
+    Core session rows remain available when detailed metrics are omitted. The
+    getter call cap also bounds snapshot work, independently of serialized size.
+    This is a serialization budget, not a sanitizer for untrusted data.
+    """
+
+    MAX_OWNERS = 16
+    MAX_BYTES = 128 * 1024
+
+    def __init__(self):
+        self._attempted = self._included = self._omitted = self._unavailable = self._bytes = 0
+
+    def get(self, owner):
+        if self._attempted >= self.MAX_OWNERS or self._bytes >= self.MAX_BYTES:
+            self._omitted += 1
+            return None
+        self._attempted += 1
+        value = safe_diagnostics(owner)
+        if value is None:
+            self._unavailable += 1
+            return None
+        try:
+            size = len(json.dumps(value, separators=(",", ":"), allow_nan=False).encode())
+        except (TypeError, ValueError, OverflowError, RecursionError):
+            self._unavailable += 1
+            return None
+        if self._bytes + size > self.MAX_BYTES:
+            self._omitted += 1
+            return None
+        self._bytes += size
+        self._included += 1
+        return value
+
+    def report(self):
+        return {
+            "included": self._included,
+            "omitted": self._omitted,
+            "unavailable": self._unavailable,
+            "bytes": self._bytes,
+            "maximum_owners": self.MAX_OWNERS,
+            "maximum_bytes": self.MAX_BYTES,
+        }

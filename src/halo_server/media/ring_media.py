@@ -111,16 +111,32 @@ def _inbound_statistics(report, kind):
 
 
 async def observe_receiver_statistics(
-    audio_receiver, video_receiver, stop, terminal, callback, *, interval=1.0, timeout=0.25
+    audio_receiver,
+    video_receiver,
+    stop,
+    terminal,
+    callback,
+    *,
+    interval=1.0,
+    timeout=0.25,
+    pipeline=None,
+    wake_interval=0.1,
 ):
     """One retained receiver task: finite sampling, no raw media or log I/O."""
     loop = asyncio.get_running_loop()
+    collect_at = loop.time() + interval
     while not stop.is_set() and not terminal.is_set():
-        deadline = loop.time() + interval
-        await asyncio.sleep(interval)
+        delay = min(interval, wake_interval)
+        deadline = loop.time() + delay
+        await asyncio.sleep(delay)
         woke = loop.time()
         if stop.is_set() or terminal.is_set():
             return
+        if pipeline is not None:
+            _diagnostic_notify(pipeline.wake_lag, max(0, woke - deadline))
+        if woke < collect_at:
+            continue
+        collect_at = woke + interval
         snapshot = None
         try:
             async with asyncio.timeout(timeout):
@@ -137,6 +153,11 @@ async def observe_receiver_statistics(
         except BaseException:
             pass
         if not stop.is_set() and not terminal.is_set():
+            if pipeline is not None:
+                safe_pipeline = _diagnostic_notify(pipeline.snapshot)
+                if snapshot is None:
+                    snapshot = {"audio": None, "video": None}
+                snapshot["pipeline"] = safe_pipeline
             _diagnostic_notify(callback, snapshot, max(0, woke - deadline), loop.time() - woke)
 
 
@@ -374,22 +395,24 @@ class _EncodedFrameQueue(queue.Queue):
         *,
         forward_to_decoder: bool,
         on_incompatible: Callable[[str, str], None] | None,
+        decoder_queue=None,
     ) -> None:
         super().__init__()
         self._kind = kind
         self._callback = callback
         self._forward_to_decoder = forward_to_decoder
         self._on_incompatible = on_incompatible
+        self._decoder_queue = decoder_queue
         self._reported_mime_types: set[str] = set()
 
     def put(self, item, block: bool = True, timeout: float | None = None) -> None:
         if item is None:
-            super().put(item, block=block, timeout=timeout)
+            self._forward(item, block, timeout)
             return
 
         if not isinstance(item, tuple) or len(item) != 2:
             if self._forward_to_decoder:
-                super().put(item, block=block, timeout=timeout)
+                self._forward(item, block, timeout)
             return
 
         codec, frame = item
@@ -404,7 +427,19 @@ class _EncodedFrameQueue(queue.Queue):
                 self._on_incompatible(self._kind, mime_type or "unknown")
 
         if self._forward_to_decoder:
+            self._forward(item, block, timeout)
+
+    def _forward(self, item, block, timeout):
+        target = self._decoder_queue
+        if target is None:
             super().put(item, block=block, timeout=timeout)
+        else:
+            target.put(item, block=block, timeout=timeout)
+
+    def get(self, block=True, timeout=None):
+        if self._decoder_queue is not None:
+            return self._decoder_queue.get(block=block, timeout=timeout)
+        return super().get(block=block, timeout=timeout)
 
 
 def install_encoded_frame_adapter(
@@ -414,6 +449,7 @@ def install_encoded_frame_adapter(
     *,
     forward_to_decoder: bool,
     on_incompatible: Callable[[str, str], None] | None = None,
+    decoder_queue=None,
 ) -> queue.Queue:
     """Install Halo's validated aiortc 1.15 encoded-frame queue on one receiver."""
     import aiortc
@@ -446,6 +482,7 @@ def install_encoded_frame_adapter(
         callback,
         forward_to_decoder=forward_to_decoder,
         on_incompatible=on_incompatible,
+        decoder_queue=decoder_queue,
     )
     setattr(receiver, _DECODER_QUEUE_ATTRIBUTE, adapter)
     return adapter
@@ -1378,6 +1415,7 @@ class RingStreamReceiver:
         on_source_clock: Callable[[SourceClockObservation], None] | None = None,
         on_encoded_ingress: Callable | None = None,
         on_receiver_stats: Callable | None = None,
+        on_decoded_audio: Callable | None = None,
         decode_video: bool = True,
         decode_audio: bool = True,
         on_encoded_incompatible: Callable[[str, str], None] | None = None,
@@ -1394,6 +1432,7 @@ class RingStreamReceiver:
         self._on_source_clock = on_source_clock
         self._on_encoded_ingress = on_encoded_ingress
         self._on_receiver_stats = on_receiver_stats
+        self._on_decoded_audio = on_decoded_audio
         self._decode_video = decode_video
         self._decode_audio = decode_audio
         self._on_encoded_incompatible = on_encoded_incompatible
@@ -1421,6 +1460,8 @@ class RingStreamReceiver:
         camera_kind = _diagnostic_value(getattr(self._device, "kind", "unknown"))
         loop = asyncio.get_running_loop()
         pc = None
+        decoded_lane = pipeline = None
+        audio_transceiver = None
         mic_track = None
         ring_session_started = False
         terminal = asyncio.Event()
@@ -1510,12 +1551,23 @@ class RingStreamReceiver:
                     frame = await track.recv()
                 except MediaStreamError:
                     break
-                raw, channels, rate, _samples = audio_frame_to_s16le_interleaved(frame)
-                if self._on_audio is not None:
-                    try:
+                try:
+                    if self._on_decoded_audio is not None:
+                        accepted = self._on_decoded_audio(frame)
+                        if isinstance(accepted, Awaitable):
+                            await accepted
+                    elif self._on_audio is not None:
+                        raw, channels, rate, _samples = audio_frame_to_s16le_interleaved(frame)
                         self._on_audio(raw, channels, rate)
-                    except Exception as exc:  # noqa: BLE001
+                except Exception as exc:  # noqa: BLE001
+                    if self._on_decoded_audio is not None:
+                        _log.debug("Decoded audio callback failed")
+                    else:
                         _log.debug("on_audio error: %s", exc)
+                finally:
+                    if decoded_lane is not None:
+                        decoded_lane.release(frame)
+                    del frame
 
         async def on_answer(sdp) -> None:
             nonlocal remote_description_error
@@ -1590,14 +1642,40 @@ class RingStreamReceiver:
                 video_transceiver = pc.addTransceiver("video", direction="recvonly")
                 mic_track = MicrophoneTrack(self._microphone_source)
                 audio_transceiver = pc.addTransceiver(mic_track, direction="sendrecv")
+                if self._on_decoded_audio is not None:
+                    from halo_server.media.decoded_audio import DecodedAudioLane
+
+                    decoded_lane = DecodedAudioLane()
+                if self._on_receiver_stats is not None:
+                    from halo_server.media.receiver_metrics import (
+                        ReceiverMetricsError,
+                        ReceiverPipeline,
+                        install_rtp_observer,
+                    )
+
+                    pipeline = ReceiverPipeline(
+                        audio_transceiver.receiver, video_transceiver.receiver
+                    )
+                    try:
+                        install_rtp_observer(audio_transceiver.receiver, "audio", pipeline)
+                        install_rtp_observer(video_transceiver.receiver, "video", pipeline)
+                    except ReceiverMetricsError as exc:
+                        raise EncodedFrameAdapterError("RTP observation contract changed") from exc
 
                 def source_callback(receiver, kind, callback):
+                    def ingress(kind, timestamp, entered):
+                        if pipeline is not None:
+                            _diagnostic_notify(pipeline.frame, kind, entered)
+                        return _diagnostic_notify(
+                            self._on_encoded_ingress, kind, timestamp, entered
+                        )
+
                     return _encoded_source_callback(
                         receiver,
                         kind,
                         callback,
                         self._on_source_clock,
-                        self._on_encoded_ingress,
+                        ingress if pipeline is not None else self._on_encoded_ingress,
                     )
 
                 if self._on_encoded_video is not None:
@@ -1617,6 +1695,11 @@ class RingStreamReceiver:
                         ),
                         forward_to_decoder=self._decode_audio,
                         on_incompatible=on_encoded_incompatible,
+                        **(
+                            {"decoder_queue": decoded_lane.input}
+                            if decoded_lane is not None
+                            else {}
+                        ),
                     )
 
                 @pc.on("icecandidate")
@@ -1643,6 +1726,8 @@ class RingStreamReceiver:
                     if track.kind == "video" and self._decode_video:
                         spawn(recv_video(track), "video receiver")
                     elif track.kind == "audio" and self._decode_audio:
+                        if decoded_lane is not None:
+                            decoded_lane.attach_track(track, receiver=audio_transceiver.receiver)
                         spawn(recv_audio(track), "audio receiver")
 
                 @pc.on("connectionstatechange")
@@ -1758,6 +1843,7 @@ class RingStreamReceiver:
                             stop,
                             terminal,
                             self._on_receiver_stats,
+                            pipeline=pipeline,
                         ),
                         "receiver statistics",
                     )
@@ -1782,6 +1868,10 @@ class RingStreamReceiver:
             raise RingMediaProgressError("video_startup_timeout") from exc
         finally:
             terminal.set()
+            if pipeline is not None:
+                _diagnostic_notify(pipeline.fence)
+            if decoded_lane is not None:
+                decoded_lane.fence()
             if self._on_terminating is not None:
                 try:
                     self._on_terminating(sys.exception())
@@ -1836,10 +1926,27 @@ class RingStreamReceiver:
                         )
                     )
                 if pc is not None:
+
+                    async def close_peer():
+                        cancelled = False
+                        if decoded_lane is not None and audio_transceiver is not None:
+                            while True:
+                                try:
+                                    await decoded_lane.retire(audio_transceiver.receiver)
+                                    break
+                                except TimeoutError:
+                                    # Timeout is quarantine, not decoder release.
+                                    continue
+                                except asyncio.CancelledError:
+                                    cancelled = True
+                        await pc.close()
+                        if cancelled:
+                            raise asyncio.CancelledError
+
                     closers.append(
                         asyncio.create_task(
                             _run_bounded_cleanup(
-                                pc.close(),
+                                close_peer(),
                                 timeout=RECEIVER_CLOSE_TIMEOUT,
                                 label="WebRTC peer close",
                                 camera_id=camera_id,

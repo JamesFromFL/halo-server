@@ -470,18 +470,29 @@ def test_retry_audio_encoder_failure_remains_retryable_with_same_lease():
         retry_max=2,
     )
     session.acquire(LeasePurpose.EVENT)
+    assert encoder_attempts == 0
+    session._raw_audio(1, b"\x00\x00", 1, 48000)
+    assert encoder_attempts == 1
     client.futures[0].complete_unexpectedly()
+    with session._condition:
+        assert session._condition.wait_for(lambda: not session._retiring_audio, timeout=1)
 
     clock.value = 1
     session.expire(now=clock.value)
+    assert session.snapshot().state is MediaSessionState.STARTING
+    session._raw_audio(2, b"\x00\x00", 1, 48000)
     assert session.snapshot().state is MediaSessionState.FAILED
     assert session.snapshot().failure == "audio_encoder_initialization_failed"
     assert session.snapshot().lease_count == 1
+    client.futures[1].complete_unexpectedly()
+    with session._condition:
+        assert session._condition.wait_for(lambda: not session._retiring_audio, timeout=1)
 
     clock.value = 3
     session.expire(now=clock.value)
+    session._raw_audio(3, b"\x00\x00", 1, 48000)
     assert encoder_attempts == 3
-    assert len(client.futures) == 2
+    assert len(client.futures) == 3
     assert session.snapshot().state is MediaSessionState.STARTING
     session.stop_all()
 

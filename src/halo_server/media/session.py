@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import concurrent.futures
+import copy
 import logging
 import math
 import threading
@@ -24,6 +26,14 @@ from halo_server.media.leases import (
     LeasePurpose,
     MediaLease,
     MediaLeaseCoordinator,
+)
+from halo_server.media.legacy_audio import (
+    NATIVE_QUEUE_SECONDS,
+    LegacyAudioOwner,
+    LegacyInitializationError,
+    LegacyQueueError,
+    LegacyTimingError,
+    wait_native,
 )
 from halo_server.media.opus import OpusError, OriginalOpusBuffer, parse_opus
 from halo_server.media.recording_capture import RecordingSourceBuffer
@@ -70,7 +80,7 @@ class MediaSessionSnapshot:
 @dataclass(frozen=True)
 class _ReceiverStopRequest:
     generation: int
-    future: concurrent.futures.Future
+    future: concurrent.futures.Future | None
 
 
 class CameraMediaSession:
@@ -119,6 +129,11 @@ class CameraMediaSession:
         self._failure: str | None = None
         self._opus_frame_duration_ms: float | None = None
         self._audio_encoder: NormalizedOpusEncoder | None = None
+        self._audio_owner = None
+        self._retiring_audio = set()
+        self._receiver_completed = None
+        self._legacy_failure = None
+        self._legacy_callback_local = threading.local()
         self._microphone_source = MicrophonePcmBuffer()
         self._started_at: float | None = None
         self._first_video_at: float | None = None
@@ -137,6 +152,7 @@ class CameraMediaSession:
         self._last_pts = {}
         self._receiver_statistics = None
         self._receiver_statistics_at = None
+        self._receiver_pipeline = None
         self._metrics = StreamMetrics(
             counters=(
                 "audio_ingress_frames",
@@ -154,6 +170,9 @@ class CameraMediaSession:
                 "video_pts_backward",
                 "video_idrs",
                 "legacy_audio_calls",
+                "legacy_discontinuities",
+                "legacy_timing_unavailable",
+                "legacy_admission_busy",
                 "receiver_stats_missing",
             ),
             timings=(
@@ -281,7 +300,10 @@ class CameraMediaSession:
             if generation != self._runner_generation or stop is None or stop.is_set():
                 return
         safe = None
+        pipeline = None
         if isinstance(snapshot, dict):
+            with suppress(BaseException):
+                pipeline = _safe_pipeline(snapshot.get("pipeline"))
             safe = {}
             for kind in ("audio", "video"):
                 row = snapshot.get(kind)
@@ -306,6 +328,7 @@ class CameraMediaSession:
             ):
                 return
             self._receiver_statistics = safe
+            self._receiver_pipeline = pipeline
             self._receiver_statistics_at = self._diagnostic_time()
         if safe is None or all(row is None for row in safe.values()):
             self._metric("count", "receiver_stats_missing")
@@ -314,6 +337,7 @@ class CameraMediaSession:
 
     def diagnostics(self):
         now = self._diagnostic_time()
+        owner = self._audio_owner
         with self._diagnostic_lock:
             received = self._receiver_statistics_at
             age = None if now is None or received is None else max(0, now - received)
@@ -323,10 +347,20 @@ class CameraMediaSession:
                 if statistics is not None
                 else None
             )
+            pipeline = (
+                copy.deepcopy(self._receiver_pipeline) if age is not None and age <= 3 else None
+            )
         return {
             "metrics": self._metrics.snapshot(),
             "receiver_stats": safe,
             "receiver_stats_age_ms": round(age * 1000) if age is not None else None,
+            "receiver_stats_kind": "public_nonaggregate",
+            "receiver_pipeline": pipeline,
+            "legacy_audio": {
+                "failure": self._legacy_failure,
+                "cleanup_pending": len(self._retiring_audio),
+                "owner": owner.diagnostics() if owner is not None else None,
+            },
         }
 
     @property
@@ -365,6 +399,7 @@ class CameraMediaSession:
             )
 
     def _clear_media_locked(self):
+        self._retire_audio_locked()
         self._buffer.clear()
         self._original_audio_buffer.clear(capture_epoch=self._buffer.capture_epoch)
         self._recording_video_buffer.clear(capture_epoch=self._buffer.capture_epoch)
@@ -378,6 +413,7 @@ class CameraMediaSession:
             self._last_ingress.clear()
             self._last_pts.clear()
             self._receiver_statistics = self._receiver_statistics_at = None
+            self._receiver_pipeline = None
 
     def _source_clock(self, generation, observation):
         with self._measured_state_lock("source_clock_write_wait"):
@@ -423,6 +459,8 @@ class CameraMediaSession:
         with self._lock:
             return (
                 self._future is None
+                and not self._retiring_audio
+                and self._audio_owner is None
                 and not self._leases.snapshot().leases
                 and self._state is MediaSessionState.IDLE
             )
@@ -619,6 +657,8 @@ class CameraMediaSession:
                 action.generation,
             )
             return
+        if self._retiring_audio:
+            return
         self._runner_generation = action.generation
         self._capture_attempt += 1
         self._permanent_failure = False
@@ -630,12 +670,10 @@ class CameraMediaSession:
         self._first_video_at = None
         self._first_audio_at = None
         self._clear_media_locked()
-        try:
-            self._audio_encoder = self._audio_encoder_factory()
-        except BaseException:
-            self._state = MediaSessionState.FAILED
-            self._failure = "audio_encoder_initialization_failed"
-            raise
+        self._audio_owner = LegacyAudioOwner(
+            self._audio_encoder_factory, retired=self._audio_retired
+        )
+        self._legacy_failure = None
         self._microphone_source.clear()
         stop = threading.Event()
         self._stop = stop
@@ -663,6 +701,7 @@ class CameraMediaSession:
             ),
             "decode_video": False,
             "decode_audio": True,
+            "on_decoded_audio": lambda frame: self._decoded_audio(action.generation, frame),
             "on_encoded_incompatible": lambda kind, mime_type: self._incompatible(
                 action.generation,
                 kind,
@@ -693,6 +732,7 @@ class CameraMediaSession:
             stop.set()
             self._stop = None
             self._audio_encoder = None
+            self._retire_audio_locked()
             self._state = MediaSessionState.FAILED
             self._failure = "receiver_submission_failed"
             raise
@@ -735,10 +775,11 @@ class CameraMediaSession:
             self._stop = None
             self._audio_encoder = None
             self._microphone_source.clear()
-            self._state = MediaSessionState.IDLE
-            self._failure = None
+            if not self._retiring_audio:
+                self._state = MediaSessionState.IDLE
+                self._failure = None
             self._condition.notify_all()
-            return None
+            return _ReceiverStopRequest(action.generation, None) if self._retiring_audio else None
         return _ReceiverStopRequest(action.generation, future)
 
     def _intercom_active_locked(self) -> bool:
@@ -772,6 +813,8 @@ class CameraMediaSession:
         with self._lock:
             if not self._accepts_media_locked(generation) or attempt == 1:
                 return
+            if self._retiring_audio:
+                raise AudioNormalizationError("Previous legacy audio cleanup pending")
             self._capture_attempt += 1
             self._clear_media_locked()
             self._state = MediaSessionState.STARTING
@@ -780,7 +823,10 @@ class CameraMediaSession:
             self._started_at = self._clock()
             self._first_video_at = None
             self._first_audio_at = None
-            self._audio_encoder = self._audio_encoder_factory()
+            self._audio_owner = LegacyAudioOwner(
+                self._audio_encoder_factory, retired=self._audio_retired
+            )
+            self._legacy_failure = None
             self._microphone_source.clear()
 
     def _attempt_ended(self, generation: int, _attempt: int, error: Exception | None) -> None:
@@ -885,58 +931,144 @@ class CameraMediaSession:
                 )
             return True
 
-    def _raw_audio(
-        self,
-        generation: int,
-        payload: bytes,
-        channels: int,
-        rate: int,
-    ) -> None:
-        callback = None
+    def _retire_audio_locked(self):
+        owner, self._audio_owner = self._audio_owner, None
+        self._audio_encoder = None
+        if owner is not None:
+            self._retiring_audio.add(owner)
+            owner.fence()
+
+    def _audio_retired(self, owner):
+        with self._condition:
+            self._retiring_audio.discard(owner)
+            self._finish_runner_locked()
+            self._condition.notify_all()
+
+    def _legacy_claim(self, generation):
         self._metric("count", "legacy_audio_calls")
         with self._measured_state_lock("legacy_audio_wait"):
-            if self._accepts_media_locked(generation):
-                now = self._clock()
-                if self._first_audio_at is None:
-                    self._first_audio_at = now
-                    _log.info(
-                        "Ring media first audio camera_id=%s generation=%d elapsed=%.3f "
-                        "bytes=%d channels=%d rate=%d",
-                        self._camera_id,
-                        generation,
-                        self._elapsed_locked(now),
-                        len(payload),
-                        channels,
-                        rate,
-                    )
-                callback = self._on_raw_audio
+            owner = self._audio_owner
+            if not self._accepts_media_locked(generation) or owner is None:
+                return None
+            if not owner.claim():
+                self._metric("count", "legacy_admission_busy")
+                return None
+            return (
+                generation,
+                self._buffer.capture_epoch,
+                owner,
+                self._stop,
+                self._capture_attempt,
+            )
+
+    def _legacy_current_locked(self, token):
+        generation, epoch, owner, stop, attempt = token
+        return (
+            self._accepts_media_locked(generation)
+            and self._buffer.capture_epoch == epoch
+            and self._audio_owner is owner
+            and self._stop is stop
+            and self._capture_attempt == attempt
+        )
+
+    def _legacy_result(self, token, result, error):
+        callback = None
+        with self._lock:
+            if not self._legacy_current_locked(token):
+                return
+            if isinstance(error, (LegacyTimingError, LegacyQueueError)):
+                # Unknown timing cannot justify invented legacy gap coverage.
+                # Original Opus/video ownership and delivery remain independent.
+                self._legacy_failure = (
+                    "legacy_audio_timing_unavailable"
+                    if isinstance(error, LegacyTimingError)
+                    else "legacy_audio_capacity"
+                )
+                self._metric(
+                    "count",
+                    "legacy_timing_unavailable"
+                    if isinstance(error, LegacyTimingError)
+                    else "legacy_admission_busy",
+                )
+                return
+            if error is None and result is not None:
                 try:
-                    encoder = self._audio_encoder
-                    if encoder is None:
-                        raise AudioNormalizationError("Opus encoder is unavailable")
-                    started = self._diagnostic_time()
-                    try:
-                        packets = encoder.encode(payload, channels, rate)
-                    finally:
-                        finished = self._diagnostic_time()
-                        if started is not None and finished is not None:
-                            self._metric("observe", "legacy_encode", max(0, finished - started))
-                    for packet in packets:
+                    for packet in result.packets:
                         self._buffer.append_audio(packet.payload, packet.rtp_timestamp)
                     self._opus_frame_duration_ms = OPUS_FRAME_DURATION_MS
-                except (AudioNormalizationError, MediaBufferError) as exc:
-                    self._state = MediaSessionState.FAILED
-                    self._failure = "audio_normalization_failed"
-                    if self._stop is not None:
-                        self._stop.set()
-                    _log.warning(
-                        "Could not normalize Ring audio for %s: %s",
-                        self._device.name,
-                        exc,
-                    )
-                    callback = None
+                    self._first_audio_at = self._first_audio_at or self._clock()
+                    self._legacy_failure = None
+                    self._metric("observe", "legacy_encode", result.encode_seconds)
+                    if result.discontinuity:
+                        self._metric("count", "legacy_discontinuities")
+                    callback = self._on_raw_audio
+                except MediaBufferError as exc:
+                    error = exc
+            if error is not None:
+                self._state = MediaSessionState.FAILED
+                self._failure = (
+                    "audio_encoder_initialization_failed"
+                    if isinstance(error, LegacyInitializationError)
+                    else "audio_normalization_failed"
+                )
+                self._legacy_failure = self._failure
+                if self._stop is not None:
+                    self._stop.set()
+                callback = None
         if callback is not None:
-            callback(payload, channels, rate)
+            # Preserve the existing Ring-loop callback affinity and retain the
+            # claim through the external call. No internal lock is held here.
+            with self._lock:
+                if not self._legacy_current_locked(token):
+                    return
+            self._legacy_callback_local.owner = token[2]
+            try:
+                callback(result.payload, result.channels, result.rate)
+            finally:
+                del self._legacy_callback_local.owner
+
+    def _raw_audio(self, generation, payload, channels, rate):
+        """Compatibility synchronous callback; waits outside camera state."""
+        token = self._legacy_claim(generation)
+        if token is None:
+            return
+        owner = token[2]
+        result = error = None
+        try:
+            try:
+                future = owner.submit(payload, channels, rate)
+                try:
+                    result = future.result(timeout=NATIVE_QUEUE_SECONDS)
+                except concurrent.futures.TimeoutError:
+                    owner.cancel_queued(future)
+                    result = future.result()
+            except BaseException as exc:
+                error = exc
+            self._legacy_result(token, result, error)
+        finally:
+            owner.release()
+            payload = result = error = None
+
+    async def _decoded_audio(self, generation, frame):
+        """Production private callback: one retained native job off Ring's loop."""
+        token = self._legacy_claim(generation)
+        if token is None:
+            return
+        owner = token[2]
+        result = error = None
+        try:
+            try:
+                result = await wait_native(owner.submit(frame=frame), owner)
+            except asyncio.CancelledError:
+                raise
+            except BaseException as exc:
+                error = exc
+            self._legacy_result(token, result, error)
+        finally:
+            owner.release()
+            # A retained cancelled Task may retain its traceback after native
+            # completion. Its frame must not keep uncharged decoded media.
+            frame = result = error = None
 
     def _incompatible(self, generation: int, kind: str, mime_type: str) -> None:
         with self._lock:
@@ -963,74 +1095,88 @@ class CameraMediaSession:
             if generation != self._runner_generation or future is not self._future:
                 self._condition.notify_all()
                 return
-            was_stopping = self._state is MediaSessionState.STOPPING
+            self._receiver_completed = (generation, self._state is MediaSessionState.STOPPING)
             self._future = None
-            self._stop = None
-            self._audio_encoder = None
-            self._microphone_source.clear()
-            leases = self._leases.snapshot()
-            if leases.upstream_requested and was_stopping:
-                try:
-                    self._start_locked(
-                        LeaseAction(
-                            LeaseActionType.START_UPSTREAM,
-                            leases.generation,
-                            "receiver_replacement",
-                        )
-                    )
-                except Exception as exc:
-                    self._state = MediaSessionState.FAILED
-                    self._failure = "receiver_submission_failed"
-                    self._schedule_retry_locked()
-                    _log.warning(
-                        "Could not replace stopped Ring media for camera %s: %s",
-                        self._camera_id,
-                        exc,
-                    )
-            elif leases.upstream_requested:
-                self._state = MediaSessionState.FAILED
-                self._failure = self._failure or "receiver_stopped"
-                self._schedule_retry_locked()
-            else:
-                self._state = MediaSessionState.IDLE
-                self._failure = None
-                self._cancel_retry_locked()
-            _log.info(
-                "Ring media generation completed camera_id=%s generation=%d state=%s "
-                "failure=%s elapsed=%.3f",
-                self._camera_id,
-                generation,
-                self._state,
-                self._failure or "none",
-                self._elapsed_locked(),
-            )
+            # Completion ends this receiver's callback authority immediately.
+            # Native cleanup may still be owned and joined asynchronously.
+            if self._stop is not None:
+                self._stop.set()
+            self._retire_audio_locked()
+            if self._retiring_audio:
+                self._state = MediaSessionState.STOPPING
+            self._finish_runner_locked()
             self._condition.notify_all()
 
-    def _wait_for_stop_requests(
-        self,
-        requests: list[_ReceiverStopRequest],
-    ) -> None:
+    def _finish_runner_locked(self):
+        if self._receiver_completed is None or self._retiring_audio:
+            return
+        generation, was_stopping = self._receiver_completed
+        self._receiver_completed = None
+        self._stop = None
+        self._audio_encoder = None
+        self._microphone_source.clear()
+        leases = self._leases.snapshot()
+        if leases.upstream_requested and was_stopping:
+            try:
+                self._start_locked(
+                    LeaseAction(
+                        LeaseActionType.START_UPSTREAM, leases.generation, "receiver_replacement"
+                    )
+                )
+            except Exception:
+                self._state = MediaSessionState.FAILED
+                self._failure = "receiver_submission_failed"
+                self._schedule_retry_locked()
+        elif leases.upstream_requested:
+            self._state = MediaSessionState.FAILED
+            self._failure = self._failure or "receiver_stopped"
+            self._schedule_retry_locked()
+        else:
+            self._state = MediaSessionState.IDLE
+            self._failure = None
+            self._cancel_retry_locked()
+        _log.info(
+            "Ring media generation completed camera_id=%s generation=%d state=%s failure=%s",
+            self._camera_id,
+            generation,
+            self._state,
+            self._failure or "none",
+        )
+
+    def _wait_for_stop_requests(self, requests):
+        with self._condition:
+            retiring = tuple(self._retiring_audio)
+            if not requests and retiring:
+                requests = [_ReceiverStopRequest(self._runner_generation, self._future)]
+        for owner in retiring:
+            owner.fence()  # Retry a retained close failure; never replace its owner.
         for request in requests:
             deadline = time.monotonic() + STOP_TIMEOUT
-            try:
-                request.future.result(timeout=STOP_TIMEOUT)
-            except concurrent.futures.TimeoutError:
-                pass
-            except Exception as exc:
-                _log.debug("Ring media receiver stopped with an error: %s", exc)
-
             with self._condition:
-                while self._future is request.future:
+                reentrant = any(
+                    owner.active_thread == threading.get_ident()
+                    or getattr(self._legacy_callback_local, "owner", None) is owner
+                    for owner in self._retiring_audio
+                )
+                if reentrant:
+                    self._failure = "receiver_cleanup_pending"
+                    return
+            if request.future is not None:
+                try:
+                    request.future.result(timeout=max(0.001, deadline - time.monotonic()))
+                except concurrent.futures.TimeoutError:
+                    pass
+                except Exception as exc:
+                    _log.debug("Ring media receiver stopped with an error: %s", exc)
+            with self._condition:
+                while (
+                    request.future is not None and self._future is request.future
+                ) or self._retiring_audio:
                     remaining = deadline - time.monotonic()
                     if remaining <= 0:
                         if request.generation == self._runner_generation:
                             self._state = MediaSessionState.STOPPING
                             self._failure = "receiver_stop_timeout"
-                        _log.warning(
-                            "Ring media receiver teardown timed out camera_id=%s generation=%d",
-                            self._camera_id,
-                            request.generation,
-                        )
                         break
                     self._condition.wait(remaining)
 
@@ -1039,6 +1185,7 @@ class CameraMediaSession:
             self._retry_at is None
             or now < self._retry_at
             or (self._future is not None and not self._future.done())
+            or self._retiring_audio
             or not self._leases.snapshot().leases
         ):
             return
@@ -1073,7 +1220,7 @@ class CameraMediaSession:
         if self._leases.snapshot().leases:
             return
         self._cancel_retry_locked()
-        if self._future is None:
+        if self._future is None and not self._retiring_audio:
             self._state = MediaSessionState.IDLE
             self._failure = None
 
@@ -1111,3 +1258,68 @@ def _validate_retry_delay(value: float, label: str) -> None:
         or value <= 0
     ):
         raise ValueError(f"{label} must be finite and positive")
+
+
+def _safe_pipeline(value):
+    """A fixed numeric schema; receiver snapshots cannot smuggle identities."""
+    if not isinstance(value, dict) or value.get("period_ms") != 100 or value.get("capacity") != 64:
+        return None
+
+    def number(item):
+        if type(item) is not int or not 0 <= item <= 2**53 - 1:
+            raise ValueError("Invalid diagnostic number")
+        return item
+
+    bins = value.get("bins")
+    if not isinstance(bins, list) or len(bins) > 64:
+        return None
+    result = {
+        "period_ms": 100,
+        "capacity": 64,
+        "end_elapsed_ms": number(value.get("end_elapsed_ms")),
+        "shared_dtls": value.get("shared_dtls") if type(value.get("shared_dtls")) is bool else None,
+        "bins": [
+            {
+                field: number(row.get(field))
+                for field in (
+                    "elapsed_ms",
+                    "audio_rtp",
+                    "video_rtp",
+                    "audio_frames",
+                    "video_frames",
+                )
+            }
+            for row in bins
+        ],
+    }
+    metrics = value["metrics"]
+    fields = ("audio_rtp", "video_rtp", "audio_frames", "video_frames")
+    timings = (
+        "audio_rtp_gap",
+        "video_rtp_gap",
+        "audio_frame_gap",
+        "video_frame_gap",
+        "audio_handler",
+        "video_handler",
+        "wakeup_lag",
+    )
+    bounds = StreamMetrics().snapshot()["bucket_bounds_us"]
+    if metrics.get("bucket_bounds_us") != bounds:
+        return None
+    safe_timings = {}
+    for name in timings:
+        row = metrics["timings"][name]
+        if not isinstance(row["buckets"], list) or len(row["buckets"]) != len(bounds) + 1:
+            return None
+        safe_timings[name] = {
+            **{field: number(row[field]) for field in ("count", "sum_us", "max_us")},
+            "buckets": [number(item) for item in row["buckets"]],
+        }
+    result["metrics"] = {
+        "counters": {field: number(metrics["counters"][field]) for field in fields},
+        "maxima": {},
+        "timings": safe_timings,
+        "bucket_bounds_us": bounds,
+        "overflow": metrics.get("overflow") is True,
+    }
+    return result

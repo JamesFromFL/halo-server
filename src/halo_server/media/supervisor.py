@@ -82,6 +82,7 @@ async def supervise_receiver(
             "on_source_clock",
             "on_encoded_ingress",
             "on_receiver_stats",
+            "on_decoded_audio",
         ):
             if callback_name in attempt_kwargs:
                 attempt_kwargs[callback_name] = _track_media(
