@@ -9,7 +9,8 @@ separate from synthetic and installed-artifact checks.
 | 1 | Bounded stream diagnostics | Complete: `47ffd76`; 2,025 Python / 265 Node tests passed |
 | 2 | Audio recovery and bounded sending | Complete: `78e0e81`; 2,040 Python / 265 Node tests passed |
 | 3 | Camera-state lock isolation | Complete: `4adb0c2`; 2,097 Python / 265 Node tests passed |
-| 4 | Video cadence and IDR timing | Implementation complete; verification recorded in the slice receipt |
+| 4 | Video cadence and IDR timing | Complete: `d9b38ed`; 2,124 Python / 265 Node tests passed |
+| 4b | Captured-burst audio repair and receive/snapshot diagnostics | Implementation complete; verification recorded with the slice receipt |
 | 5 | Complete-frame delivery and loss recovery | Pending |
 | 6 | Quality, A/V timeline and reconfigure | Pending |
 | 7 | Installed and real-device qualification | Pending |
@@ -136,3 +137,49 @@ feed was awaiting completion could retroactively require that already-dispatched
 P frame to be an IDR, then erase the pending request. A request revision now
 separates dispatched and newer requests. Held-feed and skipped-output regressions
 preserve the next actual forced IDR. Twenty-seven focused cadence/native tests pass.
+
+## Full-session diagnosis and slice 4b
+
+A fresh closed/open/153-second-running/closed capture on the installed R3 build
+showed synchronized audio/video gaps already at routed/decrypted RTP handler
+entry. Sixty-two simultaneous quiet periods of at least 500 ms, after the first 3 s,
+had a median 600 ms duration and 2 s start spacing. The 100 ms source timer remained
+responsive (maximum 14.84 ms lag). This does not establish the kernel/network,
+Ring relay, or pre-dispatch receive layer as the cause. Historical host UDP
+receive-buffer drop counters cannot be attributed to this session.
+
+The same capture proved an additional local audio failure: 150.48 s source read,
+103.16 s sent, 45.34 s output expired. Fixed nominal egress spacing cannot recover
+these fresh incoming bursts inside the existing 500 ms deadline. Slice 4b adds
+bounded backlog catch-up with unchanged source/media clocks and codec payloads,
+plus independent RTP packet and IP-family-aware wire-byte credit. It preserves
+ordinary nominal pacing, final privacy/epoch/deadline checks and inclusive
+ownership bounds. The cap covers RTP media; periodic SRTCP remains separately
+bounded. No denoising, gating, gain change, time stretching or invented silence
+is added. Native captured-timing replay uses synthetic audio, never saved camera
+media, and its coarse 100 ms-bin fidelity is explicit.
+
+The capture also recorded seven generic snapshot-source-failed warnings before
+and after live view. Existing swallowed transport/SDK failures did not preserve
+their reason. A per-operation diagnostic now retains a fixed failure category,
+HTTP status and allowlisted exception class without exception text or images.
+Existing TLS, host, byte, timeout and authority rules remain unchanged; no new
+Ring snapshot endpoint is adopted without evidence.
+
+To resolve the earlier incoming-gap ambiguity, bounded instance-owned hooks
+observe UDP callback, ICE enqueue/dequeue and successful DTLS dispatch on one
+common 100 ms timeline. Missing or incompatible observation is explicitly marked
+unavailable. These measurements preserve the media behavior and omit addresses,
+SSRCs, credentials, SDP and payloads. Global host counters are not represented
+as per-socket loss. Packet classification and queue/timing coverage limits are
+part of the diagnostic contract.
+
+This additional measured follow-up precedes the original slices 5–7. Complete
+video access-unit delivery/recovery, the stable A/V clock/reconfigure work and
+final paired-Apple qualification remain required; a synthetic audio improvement
+is not a claim that the user's full playback problem is solved.
+
+Focused slice4b checks:200 audio tests,123 snapshot/service checks,174 lower-receive/
+source/service checks and43 independent observer review checks passed. The exact
+source and installed-package receipts distinguish these overlapping focused
+suites from the integrated suite count and from paired-device qualification.

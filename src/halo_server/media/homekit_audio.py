@@ -33,6 +33,12 @@ MAX_INPUT_SPANS = 512
 MAX_QUEUED_OUTPUTS = 32
 MAX_NATIVE_OUTPUTS = 16
 MAX_RETAINED_OUTPUT_BYTES = 40 * 1024
+# Preserve nominal pacing for ordinary batches. A backlog can use at most twice
+# its negotiated packet rate (100pps at20ms), with finite packet/wire credit.
+MAX_CATCHUP_DATAGRAM_RATE = 100
+MAX_PACING_PACKET_CREDIT = 3
+CATCHUP_QUEUE_SAMPLES = 5760  # One maximum120ms Opus packet, in the48kHz clock.
+CATCHUP_AGE = 0.1
 _LOGGER = logging.getLogger(__name__)
 _COUNTER_MAX = 2**31 - 1
 _SAMPLE_BINS = (120, 240, 480, 960, 1440, 1920, 2880, 5760)
@@ -59,6 +65,7 @@ _OUTPUT_CATEGORIES = (
     "output_queued",
     "output_overflow",
     "output_retired",
+    "output_budget_rejected",
 )
 
 
@@ -99,6 +106,39 @@ class _AudioLedger:
                     else "source_unprocessed"
                 )
             self.record(index, name)
+
+
+class _AudioPacer:
+    """Bounded RTP packet and IP/UDP/SRTP wire credit; never media timestamps."""
+
+    def __init__(self, config, family, now):
+        nominal_rate = 1000 / config.packet_time
+        self.packet_rate = min(MAX_CATCHUP_DATAGRAM_RATE, 2 * nominal_rate)
+        self.network_header = 48 if family == socket.AF_INET6 else 28
+        # The fixed RTP header and SRTP tag use22bytes. Header cost applies to
+        # the negotiated packet cadence, in addition to its media bitrate.
+        self.wire_rate = 2 * (config.max_bit_rate * 125 + (22 + self.network_header) * nominal_rate)
+        self.wire_capacity = MAX_PACING_PACKET_CREDIT * (MAX_AUDIO_PACKET + self.network_header)
+        self._packets = float(MAX_PACING_PACKET_CREDIT)
+        self._bytes = float(self.wire_capacity)
+        self._at = now
+
+    def _refresh(self, now):
+        elapsed = max(0, now - self._at)
+        self._packets = min(MAX_PACING_PACKET_CREDIT, self._packets + elapsed * self.packet_rate)
+        self._bytes = min(self.wire_capacity, self._bytes + elapsed * self.wire_rate)
+        self._at = now
+
+    def delay(self, size, now):
+        self._refresh(now)
+        return max(0, (1 - self._packets) / self.packet_rate, (size - self._bytes) / self.wire_rate)
+
+    def sent(self, size, now):
+        self._refresh(now)
+        # Only the single owned egress task spends this credit, after a real
+        # successful send. A blocked/fenced send cannot manufacture extra credit.
+        self._packets -= 1
+        self._bytes -= size
 
 
 class _AudioTiming:
@@ -355,6 +395,8 @@ class AudioTrack:
         self._last_feedback = self._clock()
         self._packets = self._octets = 0
         self._next_packet_at = 0.0
+        self._pacing_family = family
+        self._pacer = None
         self._capture_epoch = None
         self._input_spans = deque()
         self._input_end = None
@@ -376,6 +418,7 @@ class AudioTrack:
                 "source_invalid_packets",
                 "adapter_recreates",
                 "permission_pauses",
+                "catchup_packets",
                 *(
                     f"{name}_{unit}"
                     for name in (*_SOURCE_CATEGORIES, *_OUTPUT_CATEGORIES)
@@ -977,7 +1020,21 @@ class AudioTrack:
                 self._trace(
                     "maximum", "pacing_late_ms_max", (self._clock() - self._next_packet_at) * 1000
                 )
-            target = max(self._clock(), self._next_packet_at)
+            now = self._clock()
+            if self._pacer is None:
+                self._pacer = _AudioPacer(self.config, self._pacing_family, now)
+            wire_size = len(output.payload) + 22 + self._pacer.network_header
+            queued_samples = sum(
+                queued.output.duration for queued in self._outputs if queued.outcome is None
+            )
+            catchup = queued_samples > CATCHUP_QUEUE_SAMPLES or now - received_at >= CATCHUP_AGE
+            interval = output.duration / 48000 / (2 if catchup else 1)
+            target = max(now, self._next_packet_at, now + self._pacer.delay(wire_size, now))
+            if target > received_at + MAX_AUDIO_AGE:
+                # Do not block fresh successors on a head whose bounded packet
+                # or wire allowance cannot admit it before its own deadline.
+                self._output_result(item, "output_budget_rejected")
+                return
             if target > self._clock():
                 began = self._clock()
                 try:
@@ -1021,6 +1078,9 @@ class AudioTrack:
             ):
                 self._output_result(item, "output_send_fenced")
                 return
+            self._pacer.sent(wire_size, self._clock())
+            if catchup:
+                self._metric("count", "catchup_packets")
             self._output_result(item, "output_sent")
             self._last_timestamp = timestamp
             self._last_duration = output.duration * self.config.sample_rate // 48000
@@ -1039,7 +1099,7 @@ class AudioTrack:
                 self._clock(),
                 self._last_presentation,
             )
-            self._next_packet_at = target + output.duration / 48000
+            self._next_packet_at = target + interval
         finally:
             self._output_result(item, "output_unfinished")
             self._remove_output(item)

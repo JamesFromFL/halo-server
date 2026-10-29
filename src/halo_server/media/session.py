@@ -1322,4 +1322,62 @@ def _safe_pipeline(value):
         "bucket_bounds_us": bounds,
         "overflow": metrics.get("overflow") is True,
     }
+    with suppress(BaseException):
+        lower = _safe_lower_boundary(value.get("lower_boundary"), number, bounds)
+        if lower is not None:
+            result["lower_boundary"] = lower
     return result
+
+
+def _safe_lower_boundary(value, number, bounds):
+    if not isinstance(value, dict):
+        return None
+    from halo_server.media.receiver_metrics import (
+        LOWER_BIN_FIELDS,
+        LOWER_COUNTERS,
+        LOWER_TIMINGS,
+        MAX_LOWER_CONNECTIONS,
+        MAX_LOWER_PROTOCOLS,
+    )
+
+    if (
+        type(value.get("installed")) is not bool
+        or value.get("reason") not in {"ready", "contract_unavailable"}
+        or number(value.get("connections")) > MAX_LOWER_CONNECTIONS
+        or number(value.get("protocols")) > MAX_LOWER_PROTOCOLS
+        or value.get("udp_drops") is not None
+    ):
+        return None
+    bins = value.get("bins")
+    metrics = value.get("metrics")
+    if not isinstance(bins, list) or len(bins) > 64 or not isinstance(metrics, dict):
+        return None
+    if metrics.get("bucket_bounds_us") != bounds:
+        return None
+    timings = {}
+    for name in LOWER_TIMINGS:
+        row = metrics["timings"][name]
+        if not isinstance(row["buckets"], list) or len(row["buckets"]) != len(bounds) + 1:
+            return None
+        timings[name] = {
+            **{field: number(row[field]) for field in ("count", "sum_us", "max_us")},
+            "buckets": [number(item) for item in row["buckets"]],
+        }
+    return {
+        "installed": value["installed"],
+        "reason": value["reason"],
+        "connections": value["connections"],
+        "protocols": value["protocols"],
+        "udp_drops": None,
+        "bins": [
+            {field: number(row[field]) for field in ("elapsed_ms", *LOWER_BIN_FIELDS)}
+            for row in bins
+        ],
+        "metrics": {
+            "counters": {name: number(metrics["counters"][name]) for name in LOWER_COUNTERS},
+            "maxima": {},
+            "timings": timings,
+            "bucket_bounds_us": bounds,
+            "overflow": metrics.get("overflow") is True,
+        },
+    }

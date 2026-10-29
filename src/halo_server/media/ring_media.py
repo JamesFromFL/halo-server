@@ -1757,6 +1757,8 @@ class RingStreamReceiver:
                     async with asyncio.timeout(WEBRTC_OFFER_TIMEOUT):
                         offer = await pc.createOffer()
                         await pc.setLocalDescription(offer)
+                    if pipeline is not None:
+                        _diagnostic_notify(pipeline.install_lower_boundaries)
                 except TimeoutError as exc:
                     raise RingMediaNegotiationError(
                         "Ring WebRTC local offer preparation timed out"

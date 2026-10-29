@@ -575,3 +575,237 @@ async def test_snapshot_http_transport_rechecks_admission_at_request_entry():
     finally:
         await reader.close()
         await transport.close()
+
+
+def diagnostic_records(caplog):
+    prefix = "Ring snapshot result "
+    messages = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == snapshots.__name__ and record.getMessage().startswith(prefix)
+    ]
+    for message in messages:
+        assert all(
+            value not in message
+            for value in (
+                "camera_id",
+                "fixture-access",
+                "fixture-refresh",
+                "https://",
+                "SECRET",
+                "JPEG-BODY",
+            )
+        )
+    return [
+        dict(token.split("=", 1) for token in message[len(prefix) :].split())
+        for message in messages
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "status,reason",
+    [
+        (404, "cached_missing"),
+        (403, "forbidden"),
+        (429, "rate_limited"),
+        (302, "redirect_rejected"),
+        (500, "http_error"),
+    ],
+)
+async def test_real_sdk_snapshot_diagnostics_distinguish_cached_http_failures(
+    caplog, status, reason
+):
+    response = Response(b"SECRET JPEG-BODY", status=status)
+    reader, transport, session, device = fixture([response])
+    try:
+        assert await reader.fetch(device) is None
+        records = diagnostic_records(caplog)
+        assert len(records) == 1
+        assert records[0] | {"elapsed_ms": "bounded"} == {
+            "phase": "cached",
+            "stage": "image",
+            "reason": reason,
+            "http_status": str(status),
+            "error_class": "none" if status < 400 else "ClientResponseError",
+            "fresh_requested": "False",
+            "elapsed_ms": "bounded",
+        }
+        assert 0 <= int(records[0]["elapsed_ms"]) <= 3_600_000
+        assert response.closed and response.eager_reads == 0 and len(session.calls) == 1
+    finally:
+        await reader.close()
+        await transport.close()
+
+
+@pytest.mark.asyncio
+async def test_401_snapshot_diagnostic_keeps_image_status_after_real_token_refresh(caplog):
+    token = {
+        "access_token": "renewed-fixture",
+        "refresh_token": "fixture-refresh",
+        "token_type": "Bearer",
+        "expires_in": 3600,
+    }
+    response = Response(status=401)
+    reader, transport, session, device = fixture([response, Response(json.dumps(token).encode())])
+    updates = []
+    reader._ring.auth.token_updater = updates.append
+    try:
+        assert await reader.fetch(device) is None
+        records = diagnostic_records(caplog)
+        assert len(records) == 1
+        assert records[0]["reason"] == "unauthorized"
+        assert records[0]["stage"] == "image" and records[0]["http_status"] == "401"
+        assert records[0]["error_class"] == "ClientResponseError"
+        assert len(session.calls) == 2 and len(updates) == 1
+        assert response.closed and response.eager_reads == 0
+    finally:
+        await reader.close()
+        await transport.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "failure,reason,error_class",
+    [
+        (TimeoutError("SECRET URL"), "timeout", "TimeoutError"),
+        (aiohttp.ClientConnectionError("SECRET URL"), "network_error", "ClientConnectionError"),
+    ],
+)
+async def test_wrapped_sdk_transport_diagnostic_uses_types_not_messages(
+    caplog, failure, reason, error_class
+):
+    reader, transport, session, device = fixture([])
+
+    async def fail(*_args, **_kwargs):
+        raise failure
+
+    session.request = fail
+    try:
+        assert await reader.fetch(device) is None
+        record = diagnostic_records(caplog)[0]
+        assert record["reason"] == reason and record["error_class"] == error_class
+        assert record["stage"] == "image" and record["http_status"] == "None"
+        assert not reader._tasks
+    finally:
+        await reader.close()
+        await transport.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "body,headers,reason",
+    [
+        (b"SECRET JPEG-BODY", {}, "invalid_jpeg"),
+        (b"SECRET JPEG-BODY", {"Content-Encoding": "gzip"}, "encoding_rejected"),
+        (b"SECRET JPEG-BODY", {"Content-Length": "999999999"}, "size_limit"),
+    ],
+)
+async def test_image_rejection_diagnostic_preserves_exact_transport_guards(
+    caplog, body, headers, reason
+):
+    response = Response(body, headers=headers)
+    reader, transport, session, device = fixture([response])
+    try:
+        assert await reader.fetch(device) is None
+        record = diagnostic_records(caplog)[0]
+        assert record["reason"] == reason and record["http_status"] == "200"
+        assert response.closed and response.eager_reads == 0
+        if headers:
+            assert response.content.position == 0
+        assert len(session.calls) == 1
+        assert not session.calls[0][2]["allow_redirects"]
+        assert not session.calls[0][2]["auto_decompress"]
+    finally:
+        await reader.close()
+        await transport.close()
+
+
+@pytest.mark.asyncio
+async def test_parallel_diagnostic_provenance_is_per_operation(caplog, monkeypatch):
+    monkeypatch.setattr(snapshots, "_DIAGNOSTIC_SECONDS", 0)
+    responses = [Response(status=404), Response(status=403)]
+    reader, transport, session, device = fixture(responses)
+    both, gates = asyncio.Event(), {404: asyncio.Event(), 403: asyncio.Event()}
+    request = session.request
+
+    async def delayed(*args, **kwargs):
+        response = await request(*args, **kwargs)
+        if len(session.calls) == 2:
+            both.set()
+        await gates[response.status].wait()
+        return response
+
+    session.request = delayed
+    tasks = [asyncio.create_task(reader.fetch(device)) for _ in range(2)]
+    try:
+        await asyncio.wait_for(both.wait(), 1)
+        gates[403].set()
+        assert await tasks[1] is None
+        gates[404].set()
+        assert await tasks[0] is None
+        records = diagnostic_records(caplog)
+        assert [(item["http_status"], item["reason"]) for item in records] == [
+            ("403", "forbidden"),
+            ("404", "cached_missing"),
+        ]
+        assert all(item["stage"] == "image" for item in records)
+        assert snapshots._snapshot_scope.get() is None
+    finally:
+        for gate in gates.values():
+            gate.set()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await reader.close()
+        await transport.close()
+
+
+@pytest.mark.asyncio
+async def test_failed_diagnostic_handler_never_changes_snapshot_outcome_or_cleanup(monkeypatch):
+    response = Response(status=403)
+    reader, transport, _session, device = fixture([response])
+
+    def broken(*_args, **_kwargs):
+        raise RuntimeError("SECRET diagnostic failure")
+
+    monkeypatch.setattr(snapshots._LOG, "warning", broken)
+    try:
+        assert await reader.fetch(device) is None
+        assert not reader._tasks and response.closed
+    finally:
+        await reader.close()
+        await transport.close()
+
+
+@pytest.mark.asyncio
+async def test_snapshot_failure_diagnostics_are_throttled_and_success_is_quiet(caplog):
+    reader, transport, session, device = fixture(
+        [Response(b"\xff\xd8ok\xff\xd9"), Response(status=403), Response(status=429)]
+    )
+    try:
+        assert await reader.fetch(device) == b"\xff\xd8ok\xff\xd9"
+        assert diagnostic_records(caplog) == []
+        assert await reader.fetch(device) is None
+        assert await reader.fetch(device) is None
+        assert len(diagnostic_records(caplog)) == 1 and len(session.calls) == 3
+    finally:
+        await reader.close()
+        await transport.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("case", ["authority_retired", "capacity", "closed"])
+async def test_snapshot_admission_diagnostics_do_not_trigger_http(caplog, case):
+    reader, transport, session, device = fixture([])
+    if case == "capacity":
+        reader._tasks = {object(), object()}
+    elif case == "closed":
+        reader._closed = True
+    try:
+        assert await reader.fetch(device, admission=lambda: case != "authority_retired") is None
+        record = diagnostic_records(caplog)[0]
+        assert record["reason"] == case and record["stage"] == "admission"
+        assert record["http_status"] == "None" and session.calls == []
+    finally:
+        reader._tasks.clear()
+        await reader.close()
+        await transport.close()

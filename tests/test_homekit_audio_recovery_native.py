@@ -211,6 +211,7 @@ async def test_native_live_reuses_bursts_without_reset_discard_cascade(arrival):
                 "retired",
                 "unvisited",
                 "unfinished",
+                "budget_rejected",
             )
         )
         # Explain logical conversion tails/priming separately from queue loss.
