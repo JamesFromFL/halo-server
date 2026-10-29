@@ -68,10 +68,8 @@ async def test_native_moving_video_has_small_decodable_idrs_and_bounded_protecte
     try:
         for index, (timestamp, payload) in enumerate(source):
             encoded = await worker.feed(payload, timestamp)
-            assert len(encoded) == (0 if index == 0 else 1)
-            if not encoded:
-                continue
-            assert encoded[0][0] == source[index - 1][0]
+            assert len(encoded) == 1
+            assert encoded[0][0] == source[index][0]
             timestamp = encoded[0][0]
             output = encoded[0][1]
             nals = split_annexb(output)
@@ -104,9 +102,10 @@ async def test_native_moving_video_has_small_decodable_idrs_and_bounded_protecte
             rows.append((timestamp / 90000, protected_bytes))
             if 5 in types:
                 idrs.append((timestamp, protected_bytes))
-        assert decoded_count == len(source) - 1 == fps * 6 - 1
-        assert worker.last_pending_frames == 1
-        assert [timestamp for timestamp, _count in idrs] == [0, 180000, 360000]
+        assert decoded_count == len(source) == fps * 6
+        assert worker.last_pending_frames == 0
+        expected_idrs = [0, 48000, 228000, 408000] if fps == 15 else [0, 180000, 360000]
+        assert [timestamp for timestamp, _count in idrs] == expected_idrs
         # Startup partial windows can already establish an overshoot. Include
         # them as well as all covered one-second windows over original PTS.
         codec_windows = [
@@ -123,9 +122,9 @@ async def test_native_moving_video_has_small_decodable_idrs_and_bounded_protecte
         assert all(count * 8 / wire_rate < 0.2 for _timestamp, count in idrs)
         assert sum(count for _timestamp, count in rows) * 8 / 6 <= kbps * 1000
 
-        # Charge the native pending frame in addition to the explicit 250 ms
-        # original-source age and 50 ms conversion allowance. This verifies
-        # representative headroom, not wall-time guarantees on arbitrary hosts.
+        # Keep a conservative one-source-frame scheduling allowance on top of
+        # 250 ms original-source age and 50 ms conversion. The native encoder
+        # now has no pending frame; this is representative additional headroom.
         next_packet = 0
         for received, count in rows:
             ready = received + 0.250 + 0.050 + 1 / fps

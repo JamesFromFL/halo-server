@@ -390,3 +390,32 @@ establish physical Home continuity, universal rate compliance or Ring parity.
 
 Release qualification and a new real Home lifecycle remain separate acceptance
 steps. Preserve pairing, exact HKSV-off preferences and the installed R4d rollback.
+
+## Immediate native correction, R7a
+
+See [the immediate-video implementation record](halo-server-immediate-video-2026-10-29.md).
+The R6q pilot failed smooth-playback acceptance and exposed an additional native
+pending-frame expiry at recurring arrival gaps. R7a uses bounded source-PTS
+calibration with immediate CFR output, keeping the decoder warm and original
+timestamps, receipts and freshness limits intact. It adds no playout delay.
+The user confirmed clear sound between interruptions and working previews, and
+chose investigation of Ring's delivery path before a proposed 1.2-second buffer.
+
+## R6q paired acceptance correction
+
+R6q (`e0af362`) was qualified and deployed as selection revision 13 with pairing,
+exact HKSV-off preferences and the R4d rollback preserved. The 2026-10-29
+06:48:33 UTC pilot collected 195 samples, including 143 active samples and
+approximately 143 seconds live, then stopped cleanly. **Physical acceptance
+failed:** the owner reported that stutters or audio interruptions remain.
+
+Audio converter recreation and stale/budget loss fell to zero, but recurring
+incoming quiet periods persisted and steady video sent/source retention fell
+from 98.63% to 92.49%. A synthetic native probe reproduced pending-picture expiry;
+the live capture has no exact per-picture causal proof. The live 132-kbps codec
+domain also peaked at 145.480 kbits per rolling second, so the synthetic checks
+do not establish strict real-world rate compliance. See the
+[paired pilot record](halo-server-receiver-pilot-2026-10-29.md) for normalized
+numbers and limits. Zero-pending video and an explicit shared playout reservoir
+are under assessment, not implemented. No audio filters, HKSV enablement or push
+is part of this follow-up. Historical test counts above remain unchanged.

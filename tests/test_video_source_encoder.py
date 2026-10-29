@@ -18,22 +18,20 @@ CONFIG = VideoConfiguration(320, 240, 30, "main", "3.1", 1000)
 
 
 @pytest.mark.asyncio
-async def test_native_delayed_idr_ack_never_applies_to_older_p_or_refreshes_receipt():
+async def test_native_immediate_idr_ack_matches_exact_input_and_never_refreshes_receipt():
     source = encode_source(profile="high", level="5.0", frames=6)
     adapter = AccessUnitAdapter(CONFIG)
     try:
-        assert await adapter.feed(*source[0], capture_epoch=7, received_at=100) == ()
-        assert adapter._worker.last_pending_frames == 1 and adapter._force
-        first = (await adapter.feed(*source[1], capture_epoch=7, received_at=101))[0]
+        first = (await adapter.feed(*source[0], capture_epoch=7, received_at=100))[0]
         assert first.timestamp == 0 and first.received_at == 100 and first.is_keyframe
         assert not adapter._force and not adapter._pending_forces
+        assert adapter._worker.last_pending_frames == 0
+        assert not (await adapter.feed(*source[1], capture_epoch=7, received_at=101))[0].is_keyframe
         assert not (await adapter.feed(*source[2], capture_epoch=7, received_at=102))[0].is_keyframe
         adapter.request_keyframe()
         token = adapter._force_revision
-        older = (await adapter.feed(*source[3], capture_epoch=7, received_at=103))[0]
-        assert older.timestamp == source[2][1] and older.received_at == 102
-        assert not older.is_keyframe and adapter._force and token in adapter._pending_forces
-        forced = (await adapter.feed(*source[4], capture_epoch=7, received_at=104))[0]
+        assert adapter._force and token == adapter._force_revision
+        forced = (await adapter.feed(*source[3], capture_epoch=7, received_at=103))[0]
         assert forced.timestamp == source[3][1] and forced.received_at == 103
         assert forced.is_keyframe and {5, 7, 8} <= {
             nal[0] & 31 for nal in split_annexb(forced.payload)
@@ -43,7 +41,7 @@ async def test_native_delayed_idr_ack_never_applies_to_older_p_or_refreshes_rece
         independent.thread_count = 1
         assert len(independent.decode(av.Packet(forced.payload))) == 1
         worker = adapter._worker
-        assert worker.last_pending_frames == 1 and len(adapter._source_receipts) == 1
+        assert worker.last_pending_frames == 0 and not adapter._source_receipts
         await adapter.close()
         assert worker.pid is None and not adapter._source_receipts and not adapter._pending_forces
     finally:
@@ -66,7 +64,7 @@ async def test_native_force_requests_survive_empty_bframe_decoder_inputs_in_orde
                 if token:
                     assert {5, 7, 8} <= {nal[0] & 31 for nal in split_annexb(data)}
                     acknowledgments.append(token)
-            assert worker.last_pending_frames <= 1
+            assert worker.last_pending_frames == 0
         assert acknowledgments == [1, 2]
     finally:
         await worker.close()
@@ -245,7 +243,7 @@ async def test_native_known_bt709_rgb_bars_range_and_nonsquare_source_pixels(ful
             for stamp, output in await worker.feed(payload, index * 6000):
                 decoded.extend(decoder.decode(av.Packet(output)))
                 assert stamp == (len(decoded) - 1) * 6000
-        assert len(decoded) == 2 and worker.last_pending_frames == 1
+        assert len(decoded) == 3 and worker.last_pending_frames == 0
         frame = decoded[0]
         assert (frame.colorspace, frame.color_primaries, frame.color_trc, frame.color_range) == (
             1,
@@ -273,7 +271,7 @@ async def test_native_known_bt709_rgb_bars_range_and_nonsquare_source_pixels(ful
 @pytest.mark.parametrize(
     "width,height,kbps,minimum_psnr", [(640, 360, 132, 23), (1280, 720, 299, 20)]
 )
-async def test_moving_source15_selected30_has_real_source_time_budget_and_bounded_pending_tail(
+async def test_moving_source15_selected30_has_calibrated_budget_without_a_pending_tail(
     width, height, kbps, minimum_psnr
 ):
     source = encode_moving_source(15)
@@ -283,10 +281,9 @@ async def test_moving_source15_selected30_has_real_source_time_budget_and_bounde
         av.CodecContext.create("h264", "r"),
     )
     reference_decoder.thread_count = decoder.thread_count = 1
-    previous = None
     rows, errors = [], []
     try:
-        for index, (stamp, payload) in enumerate(source):
+        for stamp, payload in source:
             packet = av.Packet(payload)
             packet.pts = packet.dts = stamp
             packet.time_base = Fraction(1, 90000)
@@ -297,24 +294,23 @@ async def test_moving_source15_selected30_has_real_source_time_budget_and_bounde
             outputs = await adapter.feed(
                 payload, stamp, capture_epoch=2, received_at=100 + stamp / 90000
             )
-            assert len(outputs) == (0 if index == 0 else 1)
+            assert len(outputs) == 1
             if outputs:
                 output = outputs[0]
-                assert output.timestamp == source[index - 1][0]
+                assert output.timestamp == stamp
                 assert output.received_at == 100 + output.timestamp / 90000
                 decoded = decoder.decode(av.Packet(output.payload))
                 assert len(decoded) == 1
                 actual = decoded[0].to_ndarray(format="yuv420p")[:height].astype(float)
-                errors.append(float(np.mean((previous - actual) ** 2)))
+                errors.append(float(np.mean((reference - actual) ** 2)))
                 rows.append((output.timestamp, len(output.payload)))
                 if output.is_keyframe:
                     assert {5, 7, 8} <= {nal[0] & 31 for nal in split_annexb(output.payload)}
                     independent = av.CodecContext.create("h264", "r")
                     independent.thread_count = 1
                     assert len(independent.decode(av.Packet(output.payload))) == 1
-            previous = reference
-        assert len(rows) == len(source) - 1 and adapter._worker.last_pending_frames == 1
-        assert [stamp for stamp, _count in rows] == [stamp for stamp, _data in source[:-1]]
+        assert len(rows) == len(source) and adapter._worker.last_pending_frames == 0
+        assert [stamp for stamp, _count in rows] == [stamp for stamp, _data in source]
         mean_codec = sum(count for _stamp, count in rows) * 8 / 6
         assert kbps * 1000 * 0.65 < mean_codec <= kbps * 1000
         windows = [

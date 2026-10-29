@@ -556,8 +556,9 @@ async def test_actual_idr_with_wrong_current_geometry_never_clears_recovery(monk
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("width,height,kbps", [(640, 360, 132), (1280, 720, 299)])
+@pytest.mark.parametrize("input_gap", [0, 0.8])
 async def test_actual_native_motion_through_sender_pacer_and_independent_srtp_decode(
-    monkeypatch, sender_motion, width, height, kbps
+    monkeypatch, sender_motion, width, height, kbps, input_gap
 ):
     import av
 
@@ -572,24 +573,22 @@ async def test_actual_native_motion_through_sender_pacer_and_independent_srtp_de
         decoder.thread_count = 1
         decoded_count, last_end, first = 0, 0, None
         try:
-            for timestamp, payload in source:
+            for index, (timestamp, payload) in enumerate(source):
+                # Every two seconds, model an additional quiet arrival period.
+                # Original receipts stay distinct from source PTS and are never
+                # borrowed from the later input that could release a held frame.
+                receipt = 100 + timestamp / 90000 + (index // (fps * 2)) * input_gap
                 encoded = await worker.feed(payload, timestamp)
-                assert len(encoded) <= 1
-                assert worker.last_pending_frames == 1
-                # Source-time rate control has one explicitly pending picture.
-                # Do not borrow the newer triggering input's receipt for it.
-                if not encoded:
-                    assert timestamp == source[0][0]
-                    continue
+                assert len(encoded) == 1 and worker.last_pending_frames == 0
                 native_timestamp, native_payload = encoded[0]
+                assert native_timestamp == timestamp
                 if first is None:
                     first = native_payload
-                receipt = 100 + native_timestamp / 90000
                 # Model 250 ms source age plus 50 ms conversion allowance
-                # against the triggering input, then additionally charge this
-                # delayed output's actual earlier receipt. Native wall time is
-                # qualified separately; pacer and crypto are production methods.
-                clock.now = max(clock.now, 100 + timestamp / 90000 + 0.300)
+                # without an extra native frame waiting for the next arrival.
+                # Native wall time is qualified separately; pacer and crypto
+                # below are the production methods.
+                clock.now = max(clock.now, receipt + 0.300)
                 assert await manager._access_unit(
                     session,
                     output(native_payload, native_timestamp),
@@ -606,11 +605,13 @@ async def test_actual_native_motion_through_sender_pacer_and_independent_srtp_de
                 assert len(decoded) == 1
                 assert (decoded[0].width, decoded[0].height) == (width, height)
                 decoded_count += len(decoded)
-            assert decoded_count == fps * 6 - 1
-            assert worker.last_pending_frames == 1  # No invented live flush at STOP.
+            assert decoded_count == fps * 6
+            assert worker.last_pending_frames == 0  # No live flush or missing final picture.
             metrics = session.metrics.snapshot()["counters"]
-            assert metrics["sent_keyframes"] == 3
-            assert metrics["sent_access_units"] == len(source) - 1
+            # Source15 has one bounded calibration IDR in addition to periodic
+            # output. Source30 already matches the selected provisional rate.
+            assert metrics["sent_keyframes"] == (4 if fps == 15 else 3)
+            assert metrics["sent_access_units"] == len(source)
             assert metrics["partial_access_units"] == metrics["recovery_idr_rejected"] == 0
 
             # Existing source age and additional pacing backlog are additive.

@@ -106,8 +106,8 @@ async def test_native_faster_source_drops_leave_metadata_bounded_without_false_o
                 )
             )
             assert len(adapter._source_receipts) <= MAX_SOURCE_RECEIPTS
-        assert [output.timestamp for output in outputs] == list(range(0, 252000, 3000))
-        assert adapter._worker.last_pending_frames == 1
+        assert [output.timestamp for output in outputs] == list(range(0, 255000, 3000))
+        assert adapter._worker.last_pending_frames == 0
         assert all(output.received_at == receipts[output.timestamp] for output in outputs)
         assert all(output.capture_epoch == 4 for output in outputs)
     finally:

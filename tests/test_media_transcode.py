@@ -81,12 +81,12 @@ async def test_incompatible_source_is_scaled_letterboxed_profile_converted_and_r
     try:
         for payload, timestamp in source:
             result.extend(await adapter.feed(payload, timestamp, capture_epoch=1))
-        assert [frame.timestamp for frame in result] == [0, 6000, 12000]
-        assert adapter._worker.last_pending_frames == 1  # Final selected frame is not fabricated.
+        assert [frame.timestamp for frame in result] == [0, 6000, 12000, 18000]
+        assert adapter._worker.last_pending_frames == 0
         assert all(frame.mode == "adapt" and frame.output.profile == "baseline" for frame in result)
         decoder = av.CodecContext.create("h264", "r")
         frames = [frame for unit in result for frame in decoder.decode(av.Packet(unit.payload))]
-        assert len(frames) == 3
+        assert len(frames) == 4
         plane = frames[0].planes[0]
         pixels = bytes(plane)
         assert abs(pixels[100] - 16) <= 2  # Actual black letterbox, not aspect distortion.
@@ -135,9 +135,10 @@ async def test_transport_can_request_real_adaptation_and_retry_the_same_current_
     try:
         assert (await adapter.feed(*source[0], capture_epoch=1))[0].mode == "copy"
         adapter.force_adaptation()
-        assert await adapter.feed(*source[0], capture_epoch=1) == ()
+        output = await adapter.feed(*source[0], capture_epoch=1)
+        assert output[0].mode == "adapt" and output[0].is_keyframe
         output = await adapter.feed(*source[1], capture_epoch=1)
-        assert output and output[0].mode == "adapt" and output[0].is_keyframe
+        assert output and output[0].mode == "adapt" and not output[0].is_keyframe
         assert output[0].output.profile == "baseline"
     finally:
         await adapter.close()
@@ -151,7 +152,8 @@ async def test_reconfiguration_keeps_source_domain_but_requires_a_fresh_source_i
         await adapter.feed(*source[0], capture_epoch=1)
         await adapter.reconfigure(replace(adapter.configuration, width=640, height=480))
         assert await adapter.feed(*source[1], capture_epoch=1) == ()
-        assert await adapter.feed(*source[2], capture_epoch=1) == ()
+        restarted = await adapter.feed(*source[2], capture_epoch=1)
+        assert restarted[0].is_keyframe and restarted[0].timestamp == source[2][1]
         result = await adapter.feed(*source[3], capture_epoch=1)
         assert result[0].mode == "adapt" and result[0].output.width == 640
     finally:
@@ -258,9 +260,10 @@ async def test_observed_faster_timestamps_force_adaptation_even_if_sps_claims_ta
     try:
         assert (await adapter.feed(source[0][0], 0, capture_epoch=1))[0].mode == "copy"
         assert await adapter.feed(source[1][0], 3000, capture_epoch=1) == ()
-        assert await adapter.feed(source[2][0], 6000, capture_epoch=1) == ()
+        first = await adapter.feed(source[2][0], 6000, capture_epoch=1)
+        assert first[0].mode == "adapt" and first[0].is_keyframe
         result = await adapter.feed(source[3][0], 12000, capture_epoch=1)
-        assert result[0].mode == "adapt" and result[0].is_keyframe
+        assert result[0].mode == "adapt" and not result[0].is_keyframe
     finally:
         await adapter.close()
 
@@ -314,12 +317,11 @@ async def test_adapted_pli_forces_next_actual_idr_with_repeated_parameters():
     source = encode_source(profile="high", level="5.0", frames=4)
     adapter = AccessUnitAdapter(VideoConfiguration(320, 240, 15, "main", "3.1", 1000))
     try:
-        assert await adapter.feed(*source[0], capture_epoch=1) == ()
+        assert (await adapter.feed(*source[0], capture_epoch=1))[0].is_keyframe
         assert (await adapter.feed(*source[1], capture_epoch=1))[0].mode == "adapt"
         assert not any(nal[0] & 31 == 5 for nal in split_annexb(source[2][0]))
         adapter.request_keyframe()
-        assert not (await adapter.feed(*source[2], capture_epoch=1))[0].is_keyframe
-        output = (await adapter.feed(*source[3], capture_epoch=1))[0]
+        output = (await adapter.feed(*source[2], capture_epoch=1))[0]
         assert output.is_keyframe
         assert {7, 8, 5} <= {nal[0] & 31 for nal in split_annexb(output.payload)}
         decoder = av.CodecContext.create("h264", "r")

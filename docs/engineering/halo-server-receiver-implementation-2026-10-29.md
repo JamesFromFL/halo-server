@@ -1,5 +1,14 @@
 # Receiver-first implementation and qualification
 
+**Current physical status:** R6q was subsequently deployed as selection revision
+13, but paired acceptance failed: the owner still reported stutters or audio
+interruptions. The [paired pilot record](halo-server-receiver-pilot-2026-10-29.md)
+documents the measured improvements, remaining video/ingress problems and real
+bitrate overshoot. The historical implementation and synthetic qualification
+results below do not represent accepted playback or strict live-rate compliance.
+Zero-pending video and a shared playout reservoir are under assessment, not
+implemented; HKSV remains off.
+
 ## Scope and status
 
 The receiver-contract research is now implemented in locally committed slices.

@@ -40,6 +40,11 @@ HEADER = struct.Struct("!cQQI")
 MAX_PENDING_FRAMES = 8
 MAX_INPUT_ORIGINS = 64
 MAX_FORCE_REQUESTS = 8
+RATE_SAMPLES = 32
+RATE_INTERVALS = 8
+RATE_SPAN = 45000
+RATE_GAP = 90000
+RATE_COOLDOWN = 5 * 90000
 
 
 def read_exact(count):
@@ -100,15 +105,18 @@ def letterbox(frame, width, height, *, source_sar=None):
     return output
 
 
-def open_encoder(config, *, source=None):
-    """Use source PTS for rate control; selected fps remains a cadence ceiling."""
+def open_encoder(config, *, source=None, nominal_fps=None):
+    """Encode immediately; source PTS and the selected admission ceiling stay intact."""
     width, height, fps = config["width"], config["height"], config["fps"]
+    nominal_fps = fps if nominal_fps is None else nominal_fps
+    if type(nominal_fps) is not int or not 1 <= nominal_fps <= fps:
+        raise ValueError
     encoder = av.CodecContext.create("libx264", "w")
     encoder.width, encoder.height = width, height
     encoder.pix_fmt, encoder.time_base, encoder.framerate = (
         "yuv420p",
         Fraction(1, 90000),
-        Fraction(fps),
+        Fraction(nominal_fps),
     )
     # The negotiated value is a codec one-second maximum, not a protected-wire
     # serialization rate. Native moving-scene probes retain a measured codec
@@ -129,13 +137,63 @@ def open_encoder(config, *, source=None):
         "profile": config["profile"],
         "level": config["level"],
         "forced-idr": "1",
-        "x264-params": f"force-cfr=0:bframes=0:scenecut=0:repeat-headers=1:keyint={fps * 2}:"
+        "x264-params": f"force-cfr=1:bframes=0:scenecut=0:repeat-headers=1:keyint={fps * 2}:"
         f"vbv-maxrate={payload_rate}:vbv-bufsize={vbv_size}",
     }
     encoder.open()
     if encoder.options:
         raise ValueError
     return encoder
+
+
+class RateCadence:
+    """Bounded media-clock estimate, never based on SPS or arrival batches."""
+
+    def __init__(self, maximum):
+        self.maximum = self.target = maximum
+        self.samples = deque(maxlen=RATE_SAMPLES)
+        self.calibrated = False
+        self.changed_at = None
+        self.vote = None
+        self.votes = 0
+        self.vote_since = None
+
+    def observe(self, source):
+        if self.samples and source <= self.samples[-1]:
+            raise ValueError
+        if self.samples and source - self.samples[-1] > RATE_GAP:
+            self.samples.clear()
+            self.vote = self.vote_since = None
+            self.votes = 0
+        self.samples.append(source)
+        intervals = len(self.samples) - 1
+        span = source - self.samples[0]
+        if intervals < RATE_INTERVALS or span < RATE_SPAN:
+            return self.target
+        estimated = min(self.maximum, max(1, (intervals * 90000 + span // 2) // span))
+        if not self.calibrated:
+            self.calibrated = True
+            self.target = estimated
+            self.changed_at = source
+            return self.target
+        if abs(estimated - self.target) * 5 < self.target:
+            self.vote = self.vote_since = None
+            self.votes = 0
+            return self.target
+        if self.vote != estimated:
+            self.vote, self.votes, self.vote_since = estimated, 1, source
+        else:
+            self.votes += 1
+        if (
+            self.votes >= RATE_INTERVALS
+            and source - self.vote_since >= RATE_SPAN
+            and source - self.changed_at >= RATE_COOLDOWN
+        ):
+            self.target = estimated
+            self.changed_at = source
+            self.vote = self.vote_since = None
+            self.votes = 0
+        return self.target
 
 
 class Encoder:
@@ -147,6 +205,9 @@ class Encoder:
         self.decoder.thread_count = 1
         self.encoder = None
         self.cadence = _cadence.SourceCadence(config["fps"])
+        self.rate = RateCadence(config["fps"])
+        self.nominal_fps = config["fps"]
+        self.refreshes = 0
         self.last_idr_source = None
         self.inputs = OrderedDict()
         self.pending = {}
@@ -191,13 +252,23 @@ class Encoder:
         return self.resolve(packets)
 
     def encode(self, output, source):
+        desired = self.rate.observe(source)
         if self.encoder is None:
-            self.encoder = open_encoder(self.config, source=output)
+            self.encoder = open_encoder(self.config, source=output, nominal_fps=self.nominal_fps)
         elif any(
             getattr(self.encoder, name) != getattr(output, name)
             for name in ("colorspace", "color_primaries", "color_trc", "color_range")
         ):
             raise ValueError
+        if desired != self.nominal_fps and not self.pending:
+            # Earlier pictures in this decoder batch can have returned packets
+            # still awaiting resolve(). Never erase their origin/force metadata.
+            replacement = open_encoder(self.config, source=output, nominal_fps=desired)
+            previous = self.encoder
+            self.encoder, self.nominal_fps = replacement, desired
+            self.last_idr_source = None
+            self.refreshes += 1
+            del previous
         token = self.forces.popleft() if self.forces else 0
         needs_idr = (
             token
@@ -205,8 +276,10 @@ class Encoder:
             or source - self.last_idr_source >= _cadence.IDR_INTERVAL
         )
         output.pts, output.time_base = source, Fraction(1, 90000)
+        output.pict_type = (
+            av.video.frame.PictureType.I if needs_idr else av.video.frame.PictureType.NONE
+        )
         if needs_idr:
-            output.pict_type = av.video.frame.PictureType.I
             self.last_idr_source = source
         if source in self.pending or len(self.pending) >= MAX_PENDING_FRAMES:
             raise ValueError
