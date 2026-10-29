@@ -290,6 +290,7 @@ class LowerReceiverBoundary:
         self._previous = {}
         self._hooks = []
         self._states = []
+        self._udp_transports = {}
         self._connections = self._protocols = 0
 
     def _record(self, name, at=None):
@@ -567,6 +568,7 @@ class LowerReceiverBoundary:
             ):
                 raise ReceiverMetricsError("Receiver RTCP observation contract changed")
         # Validate the complete bounded target set before the first mutation.
+        self._udp_transports = {protocol: protocol.transport for protocol in protocols}
         for dtls in transports:
             ice, state = dtls.transport, _QueueTimes()
             connection = ice._connection
@@ -606,6 +608,7 @@ class LowerReceiverBoundary:
             state.unknown = 0
             state.dequeued_at = state.kind = None
         self._states.clear()
+        self._udp_transports.clear()
 
     def unavailable(self):
         with self._lifecycle_lock:
@@ -619,6 +622,116 @@ class LowerReceiverBoundary:
                 self._fenced = True
                 self._previous.clear()
             self._detach()
+
+    def _selected_coverage(self):
+        """Current object membership, never transport identities or addresses."""
+        unknown = {
+            "state": "unavailable",
+            "current_transports": None,
+            "current_protocols": None,
+            "nominated_pairs": None,
+            "transports_covered": None,
+            "protocols_covered": None,
+            "nominated_covered": None,
+            "wrappers_current": None,
+        }
+        with self._lifecycle_lock:
+            if self._fenced or not self._installed:
+                return unknown
+            try:
+                from aioice.ice import CandidatePair, Connection, StunProtocol
+                from aiortc.rtcicetransport import RTCIceTransport
+
+                with self._pipeline._lock:
+                    receivers = self._pipeline._receivers
+                if len(receivers) != 2:
+                    return unknown
+                transports, protocols, connections, nominated = [], [], [], []
+                for receiver in receivers:
+                    dtls = receiver.transport
+                    if dtls in transports:
+                        continue
+                    if len(transports) >= MAX_LOWER_CONNECTIONS:
+                        return unknown
+                    if type(dtls.transport) is not RTCIceTransport:
+                        return unknown
+                    connection = dtls.transport._connection
+                    if type(connection) is not Connection:
+                        return unknown
+                    local, selected = connection._protocols, connection._nominated
+                    if (
+                        not isinstance(local, list)
+                        or not local
+                        or len(protocols) + len(local) > MAX_LOWER_PROTOCOLS
+                        or not isinstance(selected, dict)
+                        or len(selected) > 2
+                        or any(type(item) is not StunProtocol for item in local)
+                        or any(type(item) is not CandidatePair for item in selected.values())
+                    ):
+                        return unknown
+                    transports.append(dtls)
+                    connections.append(connection)
+                    protocols.extend(local)
+                    nominated.extend(item.protocol for item in selected.values())
+
+                def hooked(target, name):
+                    return any(
+                        owner is target and field == name for owner, field, *_rest in self._hooks
+                    )
+
+                transport_covered = all(
+                    hooked(dtls, "_recv_next")
+                    and hooked(dtls.transport, "_recv")
+                    and hooked(connection, "data_received")
+                    for dtls, connection in zip(transports, connections, strict=True)
+                )
+                protocols_covered = all(
+                    hooked(item, "datagram_received")
+                    and isinstance(item.transport, asyncio.DatagramTransport)
+                    and item.transport is self._udp_transports.get(item)
+                    and any(item.receiver is connection for connection in connections)
+                    for item in protocols
+                )
+                nominated_covered = (
+                    all(
+                        item in protocols and hooked(item, "datagram_received")
+                        for item in nominated
+                    )
+                    if len(nominated) == len(connections)
+                    else None
+                )
+                targets = (
+                    *transports,
+                    *(item.transport for item in transports),
+                    *connections,
+                    *protocols,
+                    *receivers,
+                )
+                wrappers_current = all(
+                    owner.__dict__.get(name) is wrapper
+                    for owner, name, wrapper, *_rest in self._hooks
+                    if any(owner is target for target in targets)
+                )
+                complete = transport_covered and protocols_covered and wrappers_current
+                state = (
+                    "uncovered"
+                    if not complete or nominated_covered is False
+                    else "covered"
+                    if nominated_covered is True
+                    else "unobserved"
+                )
+                return {
+                    "state": state,
+                    "current_transports": len(transports),
+                    "current_protocols": len(protocols),
+                    "nominated_pairs": len(nominated),
+                    "transports_covered": transport_covered,
+                    "protocols_covered": protocols_covered,
+                    "nominated_covered": nominated_covered,
+                    "wrappers_current": wrappers_current,
+                }
+            except BaseException:
+                return unknown
 
     def snapshot(self):
         now = self._pipeline._now()
@@ -646,5 +759,6 @@ class LowerReceiverBoundary:
                 "bins": bins,
             }
         result["metrics"] = self.metrics.snapshot()
+        result["selected_transport_coverage"] = self._selected_coverage()
         with self._lock:
             return None if self._fenced else result

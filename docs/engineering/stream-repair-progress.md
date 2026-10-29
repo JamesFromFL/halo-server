@@ -16,9 +16,16 @@ separate from synthetic and installed-artifact checks.
 | 5 | Complete-frame delivery and loss recovery | Partial original scope: `4e0af7b`; 2,256 Python / 265 Node passed; packaged, not deployed; remaining recovery work below |
 | 6a | Original video receipt and worker ownership | Complete: `a59435f`; 2,294 Python / 265 Node passed; 1 host IPv6 skip |
 | 6p | HomeKit parameter-set packetization | Complete: `e7e89c2`; 2,348 Python / 265 Node passed; 1 host IPv6 skip |
-| 6t | Stable shared audio/video clock | Implemented; 371 affected tests passed / 1 host IPv6 skip; full gate pending |
-| 6b onward | Quality, A/V timeline and reconfigure | Receiver-first audit now governs sequencing; no new implementation from this audit |
-| 7 | Installed and real-device qualification | Pending |
+| 6t | Stable shared audio/video clock | Complete: `ef163e5`; 2,381 Python / 265 Node passed; 1 host IPv6 skip |
+| 6u | Bounded audio retention | Complete: `e3ed8e5`; 2,388 Python / 265 Node passed |
+| 6w | Separate codec and wire budgets | Complete: `101f997`; 2,413 Python / 265 Node passed |
+| 6e | Source-time encoding and provenance | Complete: `3866b59`; 2,426 Python / 265 Node passed; pending-picture regression corrected in R7a |
+| 6r | Bounded asynchronous loss repair | Complete: `156a4b0`; 2,444 Python / 265 Node passed |
+| 6k | Current-lease source keyframe requests | Complete: `3d56c0f`; 2,460 Python / 265 Node passed |
+| 6q | Receiver-format qualification | Complete: `e0af362`; 2,460 Python / 265 Node passed; installed revision 13; physical test still stuttered |
+| 7a | Immediate native video at measured cadence | Complete: `225b488`; 2,473 Python / 265 Node passed; physical acceptance pending |
+| 7b | Passive Ring delivery diagnostics | Implementation and qualification tracked in the minimum-delay investigation; no reservoir or negotiation change |
+| Physical qualification | Smooth Home playback and Ring parity | Open; clear audio between interruptions and working previews confirmed, continuous playback not accepted |
 
 ## Slice 1
 

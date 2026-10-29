@@ -154,6 +154,7 @@ class CameraMediaSession:
         self._receiver_statistics = None
         self._receiver_statistics_at = None
         self._receiver_pipeline = None
+        self._ring_stream_info = None
         self._metrics = StreamMetrics(
             counters=(
                 "audio_ingress_frames",
@@ -302,7 +303,9 @@ class CameraMediaSession:
                 return
         safe = None
         pipeline = None
+        stream_info = None
         if isinstance(snapshot, dict):
+            stream_info = _safe_stream_info(snapshot.get("stream_info"))
             with suppress(BaseException):
                 pipeline = _safe_pipeline(snapshot.get("pipeline"))
             safe = {}
@@ -330,6 +333,7 @@ class CameraMediaSession:
                 return
             self._receiver_statistics = safe
             self._receiver_pipeline = pipeline
+            self._ring_stream_info = stream_info
             self._receiver_statistics_at = self._diagnostic_time()
         if safe is None or all(row is None for row in safe.values()):
             self._metric("count", "receiver_stats_missing")
@@ -351,12 +355,18 @@ class CameraMediaSession:
             pipeline = (
                 copy.deepcopy(self._receiver_pipeline) if age is not None and age <= 3 else None
             )
+            stream_info = (
+                copy.deepcopy(self._ring_stream_info) if age is not None and age <= 3 else None
+            )
+            if stream_info is not None and stream_info["age_ms"] is not None:
+                stream_info["age_ms"] = min(2**53 - 1, stream_info["age_ms"] + round(age * 1000))
         return {
             "metrics": self._metrics.snapshot(),
             "receiver_stats": safe,
             "receiver_stats_age_ms": round(age * 1000) if age is not None else None,
             "receiver_stats_kind": "public_nonaggregate",
             "receiver_pipeline": pipeline,
+            "ring_stream_info": stream_info,
             "legacy_audio": {
                 "failure": self._legacy_failure,
                 "cleanup_pending": len(self._retiring_audio),
@@ -416,6 +426,7 @@ class CameraMediaSession:
             self._last_pts.clear()
             self._receiver_statistics = self._receiver_statistics_at = None
             self._receiver_pipeline = None
+            self._ring_stream_info = None
 
     def _source_clock(self, generation, observation):
         with self._measured_state_lock("source_clock_write_wait"):
@@ -1306,6 +1317,75 @@ def _validate_retry_delay(value: float, label: str) -> None:
         raise ValueError(f"{label} must be finite and positive")
 
 
+def _safe_stream_info(value):
+    """Finite SDK observation only; never a raw signaling dictionary."""
+    if not isinstance(value, dict):
+        return None
+    if (
+        type(value.get("state")) is not str
+        or value["state"] not in {"absent", "unavailable", "not_seen", "observed"}
+        or value.get("installed_before_reader") is not None
+        and type(value["installed_before_reader"]) is not bool
+        or value.get("transcoding") is not None
+        and type(value["transcoding"]) is not bool
+        or value.get("reason") is not None
+        and (
+            type(value["reason"]) is not str
+            or value["reason"] not in {"codec_mismatch", "other", "unknown"}
+        )
+    ):
+        return None
+    fields = ("observations", "invalid_messages", "oversized_messages")
+    if any(type(value.get(name)) is not int or not 0 <= value[name] < 2**53 for name in fields):
+        return None
+    age = value.get("age_ms")
+    if age is not None and (type(age) is not int or not 0 <= age < 2**53):
+        return None
+    if value["state"] == "observed":
+        if (
+            type(value.get("transcoding")) is not bool
+            or age is None
+            or value.get("reason") is None
+            or value["observations"] == 0
+        ):
+            return None
+    elif value.get("transcoding") is not None or value.get("reason") is not None or age is not None:
+        return None
+    return {
+        name: value.get(name)
+        for name in ("state", "installed_before_reader", "transcoding", "reason", *fields, "age_ms")
+    }
+
+
+def _safe_selected_coverage(value):
+    if (
+        not isinstance(value, dict)
+        or type(value.get("state")) is not str
+        or value["state"]
+        not in {
+            "covered",
+            "uncovered",
+            "unobserved",
+            "unavailable",
+        }
+    ):
+        return None
+    counts = {"current_transports": 2, "current_protocols": 16, "nominated_pairs": 4}
+    booleans = ("transports_covered", "protocols_covered", "nominated_covered", "wrappers_current")
+    for key, maximum in counts.items():
+        item = value.get(key)
+        if item is not None and (type(item) is not int or not 0 <= item <= maximum):
+            return None
+    if any(value.get(key) is not None and type(value[key]) is not bool for key in booleans):
+        return None
+    if value["state"] == "covered" and (
+        any(value.get(key) is not True for key in booleans)
+        or any(value.get(key) is None or value[key] == 0 for key in counts)
+    ):
+        return None
+    return {key: value.get(key) for key in ("state", *counts, *booleans)}
+
+
 def _safe_pipeline(value):
     """A fixed numeric schema; receiver snapshots cannot smuggle identities."""
     if not isinstance(value, dict) or value.get("period_ms") != 100 or value.get("capacity") != 64:
@@ -1409,7 +1489,7 @@ def _safe_lower_boundary(value, number, bounds):
             **{field: number(row[field]) for field in ("count", "sum_us", "max_us")},
             "buckets": [number(item) for item in row["buckets"]],
         }
-    return {
+    result = {
         "installed": value["installed"],
         "reason": value["reason"],
         "connections": value["connections"],
@@ -1427,3 +1507,7 @@ def _safe_lower_boundary(value, number, bounds):
             "overflow": metrics.get("overflow") is True,
         },
     }
+    coverage = _safe_selected_coverage(value.get("selected_transport_coverage"))
+    if coverage is not None:
+        result["selected_transport_coverage"] = coverage
+    return result

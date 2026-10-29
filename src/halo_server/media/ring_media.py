@@ -122,6 +122,7 @@ async def observe_receiver_statistics(
     interval=1.0,
     timeout=0.25,
     pipeline=None,
+    stream_info=None,
     wake_interval=0.1,
 ):
     """One retained receiver task: finite sampling, no raw media or log I/O."""
@@ -155,6 +156,10 @@ async def observe_receiver_statistics(
         except BaseException:
             pass
         if not stop.is_set() and not terminal.is_set():
+            if stream_info is not None:
+                if snapshot is None:
+                    snapshot = {"audio": None, "video": None}
+                snapshot["stream_info"] = _diagnostic_notify(stream_info.snapshot)
             if pipeline is not None:
                 safe_pipeline = _diagnostic_notify(pipeline.snapshot)
                 if snapshot is None:
@@ -1464,7 +1469,7 @@ class RingStreamReceiver:
         camera_kind = _diagnostic_value(getattr(self._device, "kind", "unknown"))
         loop = asyncio.get_running_loop()
         pc = None
-        decoded_lane = pipeline = keyframes = None
+        decoded_lane = pipeline = keyframes = stream_info = None
         audio_transceiver = None
         mic_track = None
         ring_session_started = False
@@ -1799,6 +1804,18 @@ class RingStreamReceiver:
                 ring_session_started = True
                 try:
                     async with asyncio.timeout(WEBRTC_SIGNALING_TIMEOUT):
+                        if self._on_receiver_stats is not None:
+                            from halo_server.media.ring_stream_info import RingStreamInfo
+
+                            stream_info = RingStreamInfo(
+                                self._device,
+                                session_id,
+                                current=lambda: not stop.is_set() and not terminal.is_set(),
+                            )
+                            spawn(
+                                stream_info.install(timeout=WEBRTC_SIGNALING_TIMEOUT),
+                                "Ring signaling observation",
+                            )
                         await self._device.generate_async_webrtc_stream(
                             pc.localDescription.sdp,
                             session_id,
@@ -1879,6 +1896,7 @@ class RingStreamReceiver:
                             terminal,
                             self._on_receiver_stats,
                             pipeline=pipeline,
+                            stream_info=stream_info,
                         ),
                         "receiver statistics",
                     )
@@ -1904,6 +1922,8 @@ class RingStreamReceiver:
         finally:
             terminal.set()
             stream_options.fence()
+            if stream_info is not None:
+                stream_info.fence()
             if keyframes is not None:
                 keyframes.fence()
             if pipeline is not None:
