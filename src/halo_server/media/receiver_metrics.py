@@ -12,6 +12,7 @@ from collections import deque
 
 import aiortc
 
+from halo_server.media.send_clock import SendClock
 from halo_server.media.telemetry import StreamMetrics
 
 PERIOD_MS = 100
@@ -53,6 +54,7 @@ class ReceiverPipeline:
         self._bins = [None] * CAPACITY
         self._previous = {}
         self._lower = None
+        self._send_clock = SendClock()
 
     def _now(self):
         with contextlib.suppress(BaseException):
@@ -143,6 +145,7 @@ class ReceiverPipeline:
                 shared = audio is video
         metrics = self.metrics.snapshot()
         lower = _safe(self._lower.snapshot) if self._lower is not None else None
+        send_clock = _safe(self._send_clock.snapshot)
         with self._lock:
             if self._fenced:
                 return None
@@ -156,6 +159,8 @@ class ReceiverPipeline:
         }
         if lower is not None:
             result["lower_boundary"] = lower
+        if send_clock is not None:
+            result["send_clock"] = send_clock
         return result
 
     def install_lower_boundaries(self):
@@ -178,6 +183,7 @@ class ReceiverPipeline:
             lower, self._lower = self._lower, None
         if lower is not None:
             lower.fence()
+        self._send_clock.fence()
 
 
 def install_rtp_observer(receiver, kind, pipeline):
@@ -185,7 +191,12 @@ def install_rtp_observer(receiver, kind, pipeline):
     handler = getattr(type(receiver), "_handle_rtp_packet", None)
     code = getattr(handler, "__code__", None)
     original = getattr(receiver, "_handle_rtp_packet", None)
-    required = {"_RTCRtpReceiver__jitter_buffer", "add", "_RTCRtpReceiver__decoder_queue"}
+    required = {
+        "_RTCRtpReceiver__jitter_buffer",
+        "add",
+        "_RTCRtpReceiver__decoder_queue",
+        "_RTCRtpReceiver__codecs",
+    }
     if (
         str(getattr(aiortc, "__version__", "")) != "1.15.0"
         or kind not in _KINDS
@@ -202,6 +213,7 @@ def install_rtp_observer(receiver, kind, pipeline):
 
     async def observed(packet, arrival_time_ms):
         entered = _safe(pipeline._entry, kind)
+        _safe(pipeline._send_clock.observe_receiver, kind, receiver, packet, entered)
         try:
             return await original(packet, arrival_time_ms)
         finally:

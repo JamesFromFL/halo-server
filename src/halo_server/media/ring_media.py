@@ -123,6 +123,7 @@ async def observe_receiver_statistics(
     timeout=0.25,
     pipeline=None,
     stream_info=None,
+    codecs=None,
     wake_interval=0.1,
 ):
     """One retained receiver task: finite sampling, no raw media or log I/O."""
@@ -156,6 +157,10 @@ async def observe_receiver_statistics(
         except BaseException:
             pass
         if not stop.is_set() and not terminal.is_set():
+            if codecs is not None:
+                if snapshot is None:
+                    snapshot = {"audio": None, "video": None}
+                snapshot["codec_negotiation"] = _diagnostic_notify(codecs.snapshot)
             if stream_info is not None:
                 if snapshot is None:
                     snapshot = {"audio": None, "video": None}
@@ -403,6 +408,7 @@ class _EncodedFrameQueue(queue.Queue):
         forward_to_decoder: bool,
         on_incompatible: Callable[[str, str], None] | None,
         decoder_queue=None,
+        on_codec=None,
     ) -> None:
         super().__init__()
         self._kind = kind
@@ -410,6 +416,7 @@ class _EncodedFrameQueue(queue.Queue):
         self._forward_to_decoder = forward_to_decoder
         self._on_incompatible = on_incompatible
         self._decoder_queue = decoder_queue
+        self._on_codec = on_codec
         self._reported_mime_types: set[str] = set()
 
     def put(self, item, block: bool = True, timeout: float | None = None) -> None:
@@ -423,6 +430,7 @@ class _EncodedFrameQueue(queue.Queue):
             return
 
         codec, frame = item
+        _diagnostic_notify(self._on_codec, self._kind, codec)
         mime_type = str(getattr(codec, "mimeType", "")).lower()
         if mime_type == _ENCODED_MIME_TYPES[self._kind]:
             self._callback(bytes(frame.data), int(frame.timestamp))
@@ -457,6 +465,7 @@ def install_encoded_frame_adapter(
     forward_to_decoder: bool,
     on_incompatible: Callable[[str, str], None] | None = None,
     decoder_queue=None,
+    on_codec=None,
 ) -> queue.Queue:
     """Install Halo's validated aiortc 1.15 encoded-frame queue on one receiver."""
     import aiortc
@@ -490,6 +499,7 @@ def install_encoded_frame_adapter(
         forward_to_decoder=forward_to_decoder,
         on_incompatible=on_incompatible,
         decoder_queue=decoder_queue,
+        on_codec=on_codec,
     )
     setattr(receiver, _DECODER_QUEUE_ATTRIBUTE, adapter)
     return adapter
@@ -1469,11 +1479,15 @@ class RingStreamReceiver:
         camera_kind = _diagnostic_value(getattr(self._device, "kind", "unknown"))
         loop = asyncio.get_running_loop()
         pc = None
-        decoded_lane = pipeline = keyframes = stream_info = None
+        decoded_lane = pipeline = keyframes = stream_info = codecs = None
         audio_transceiver = None
         mic_track = None
         ring_session_started = False
         terminal = asyncio.Event()
+        if self._on_receiver_stats is not None:
+            from halo_server.media.negotiated_codecs import NegotiatedCodecs
+
+            codecs = NegotiatedCodecs(current=lambda: not stop.is_set() and not terminal.is_set())
         stream_options = RingStreamOptions(
             self._device,
             session_id,
@@ -1596,6 +1610,8 @@ class RingStreamReceiver:
                 )
                 async with asyncio.timeout(WEBRTC_REMOTE_DESCRIPTION_TIMEOUT):
                     await pc.setRemoteDescription(RTCSessionDescription(sdp=sdp, type="answer"))
+                    if codecs is not None:
+                        _diagnostic_notify(codecs.answer, sdp)
                 try:
                     sent = await stream_options.enable()
                 except RingStreamOptionsError as exc:
@@ -1715,6 +1731,7 @@ class RingStreamReceiver:
                         source_callback(video_transceiver.receiver, "video", encoded_video),
                         forward_to_decoder=self._decode_video,
                         on_incompatible=on_encoded_incompatible,
+                        **({"on_codec": codecs.frame} if codecs is not None else {}),
                     )
                 if self._on_encoded_audio is not None:
                     install_encoded_frame_adapter(
@@ -1725,6 +1742,7 @@ class RingStreamReceiver:
                         ),
                         forward_to_decoder=self._decode_audio,
                         on_incompatible=on_encoded_incompatible,
+                        **({"on_codec": codecs.frame} if codecs is not None else {}),
                         **(
                             {"decoder_queue": decoded_lane.input}
                             if decoded_lane is not None
@@ -1897,6 +1915,7 @@ class RingStreamReceiver:
                             self._on_receiver_stats,
                             pipeline=pipeline,
                             stream_info=stream_info,
+                            codecs=codecs,
                         ),
                         "receiver statistics",
                     )
@@ -1924,6 +1943,8 @@ class RingStreamReceiver:
             stream_options.fence()
             if stream_info is not None:
                 stream_info.fence()
+            if codecs is not None:
+                codecs.fence()
             if keyframes is not None:
                 keyframes.fence()
             if pipeline is not None:

@@ -35,6 +35,7 @@ from halo_server.media.legacy_audio import (
     LegacyTimingError,
     wait_native,
 )
+from halo_server.media.negotiated_codecs import sanitize_codec_diagnostics
 from halo_server.media.opus import OpusError, OriginalOpusBuffer, parse_opus
 from halo_server.media.recording_capture import RecordingSourceBuffer
 from halo_server.media.ring_media import (
@@ -155,6 +156,7 @@ class CameraMediaSession:
         self._receiver_statistics_at = None
         self._receiver_pipeline = None
         self._ring_stream_info = None
+        self._codec_negotiation = None
         self._metrics = StreamMetrics(
             counters=(
                 "audio_ingress_frames",
@@ -304,8 +306,10 @@ class CameraMediaSession:
         safe = None
         pipeline = None
         stream_info = None
+        codec_negotiation = None
         if isinstance(snapshot, dict):
             stream_info = _safe_stream_info(snapshot.get("stream_info"))
+            codec_negotiation = sanitize_codec_diagnostics(snapshot.get("codec_negotiation"))
             with suppress(BaseException):
                 pipeline = _safe_pipeline(snapshot.get("pipeline"))
             safe = {}
@@ -334,6 +338,7 @@ class CameraMediaSession:
             self._receiver_statistics = safe
             self._receiver_pipeline = pipeline
             self._ring_stream_info = stream_info
+            self._codec_negotiation = codec_negotiation
             self._receiver_statistics_at = self._diagnostic_time()
         if safe is None or all(row is None for row in safe.values()):
             self._metric("count", "receiver_stats_missing")
@@ -358,6 +363,9 @@ class CameraMediaSession:
             stream_info = (
                 copy.deepcopy(self._ring_stream_info) if age is not None and age <= 3 else None
             )
+            codec_negotiation = (
+                copy.deepcopy(self._codec_negotiation) if age is not None and age <= 3 else None
+            )
             if stream_info is not None and stream_info["age_ms"] is not None:
                 stream_info["age_ms"] = min(2**53 - 1, stream_info["age_ms"] + round(age * 1000))
         return {
@@ -367,6 +375,7 @@ class CameraMediaSession:
             "receiver_stats_kind": "public_nonaggregate",
             "receiver_pipeline": pipeline,
             "ring_stream_info": stream_info,
+            "codec_negotiation": codec_negotiation,
             "legacy_audio": {
                 "failure": self._legacy_failure,
                 "cleanup_pending": len(self._retiring_audio),
@@ -427,6 +436,7 @@ class CameraMediaSession:
             self._receiver_statistics = self._receiver_statistics_at = None
             self._receiver_pipeline = None
             self._ring_stream_info = None
+            self._codec_negotiation = None
 
     def _source_clock(self, generation, observation):
         with self._measured_state_lock("source_clock_write_wait"):
@@ -1452,6 +1462,12 @@ def _safe_pipeline(value):
         lower = _safe_lower_boundary(value.get("lower_boundary"), number, bounds)
         if lower is not None:
             result["lower_boundary"] = lower
+    with suppress(BaseException):
+        from halo_server.media.send_clock import safe_send_clock
+
+        send_clock = safe_send_clock(value.get("send_clock"))
+        if send_clock is not None:
+            result["send_clock"] = send_clock
     return result
 
 
