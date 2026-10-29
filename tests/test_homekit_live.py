@@ -212,6 +212,14 @@ def encoded_picture(channel=0):
     return b"".join(bytes(packet) for packet in encoder.encode(frame) + encoder.encode(None))
 
 
+def wire_idr(size):
+    """Real selected headers plus a synthetic large NAL for packet-budget tests."""
+    headers = b"".join(
+        b"\0\0\1" + nal for nal in annexb_nalus(encoded_picture()) if nal[0] & 31 in {7, 8}
+    )
+    return headers + b"\0\0\1\x65" + b"\xab" * size
+
+
 class Handle:
     def __init__(self):
         self.buffer = EncodedMediaBuffer()
@@ -415,7 +423,7 @@ async def test_large_idr_is_not_burst_to_escape_selected_bitrate_budget():
     session.config = CONFIG
     session.handle = controller.handle
     output = SimpleNamespace(
-        payload=b"\0\0\1\x65" + b"\xab" * 1024 * 1024, timestamp=0, mode="copy", is_keyframe=True
+        payload=wire_idr(1024 * 1024), timestamp=0, mode="copy", is_keyframe=True
     )
     sequence = session.packetizer.sequence
     try:
@@ -450,9 +458,7 @@ async def test_packet_pacing_respects_actual_selected_bitrate_instead_of_clamped
     manager, controller, identity, _, receiver = await prepared()
     session = manager._sessions[identity]
     session.config, session.handle = CONFIG, controller.handle
-    output = SimpleNamespace(
-        payload=b"\0\0\1\x65" + b"\xab" * 10_000, timestamp=0, mode="copy", is_keyframe=True
-    )
+    output = SimpleNamespace(payload=wire_idr(10_000), timestamp=0, mode="copy", is_keyframe=True)
     try:
         began = time.monotonic()
         assert await manager._access_unit(session, output, controller.handle.capture_epoch)
@@ -472,9 +478,7 @@ async def test_capture_retry_during_idr_pacing_stops_remaining_old_attempt_datag
     manager, controller, identity, _, receiver = await prepared()
     session = manager._sessions[identity]
     session.config, session.handle = CONFIG, controller.handle
-    output = SimpleNamespace(
-        payload=b"\0\0\1\x65" + b"\xab" * 10_000, timestamp=0, mode="copy", is_keyframe=True
-    )
+    output = SimpleNamespace(payload=wire_idr(10_000), timestamp=0, mode="copy", is_keyframe=True)
     sending = asyncio.create_task(
         manager._access_unit(session, output, controller.handle.capture_epoch)
     )

@@ -17,6 +17,8 @@ from test_homekit_live import (
     encoded_picture,
     native_crypto,
     prepared,
+    reconstruct,
+    wire_idr,
 )
 
 from halo_server.media import homekit_live as module
@@ -25,6 +27,7 @@ from halo_server.media.rtp import (
     MAX_RECENT_SENDER_REPORTS,
     ReceiverReport,
     ReceiverReportStats,
+    annexb_nalus,
     parse_feedback,
     sender_report,
 )
@@ -142,27 +145,35 @@ async def test_live_srtcp_report_is_evidence_only_after_authentication_and_match
 
 @pytest.mark.asyncio
 async def test_partial_au_counts_packets_but_not_a_complete_frame(monkeypatch):
-    manager, controller, identity, _, receiver = await prepared()
+    manager, controller, identity, result, receiver = await prepared()
     session = manager._sessions[identity]
     session.config, session.handle = CONFIG, controller.handle
-    output = SimpleNamespace(
-        payload=b"\0\0\1\x65" + b"a" * 3000, timestamp=0, mode="copy", is_keyframe=True
-    )
+    output = SimpleNamespace(payload=wire_idr(3000), timestamp=0, mode="copy", is_keyframe=True)
     calls = 0
+    protected = []
 
     async def send(_session, _packet, **_kwargs):
         nonlocal calls
         calls += 1
-        if calls == 2:
+        if calls == 4:
             raise OSError("private address and media must never be inspected")
+        protected.append(_packet)
 
     monkeypatch.setattr(manager, "_paced_send", send)
     try:
         with pytest.raises(OSError):
             await manager._access_unit(session, output, controller.handle.capture_epoch)
         counters = manager.diagnostics()["active"][0]["video"]["counters"]
-        assert counters["sent_packets"] == 1 and counters["sent_access_units"] == 0
-        assert counters["sent_protected_bytes"] == counters["sent_payload_bytes"] + 22
+        assert calls == 4 and counters["sent_packets"] == 3
+        assert counters["sent_access_units"] == 0
+        assert counters["sent_protected_bytes"] == counters["sent_payload_bytes"] + 22 * 3
+        crypto = native_crypto(result.ssrc)
+        clear = [crypto.unprotect(packet) for packet in protected]
+        # Real matching SPS/PPS preceded the first IDR fragment. The next
+        # fragment failed, so the observed unit still is genuinely incomplete.
+        assert [packet[12] & 31 for packet in clear] == [7, 8, 28]
+        assert clear[-1][13] & 0x80 and not clear[-1][13] & 0x40
+        assert not clear[-1][1] & 0x80
     finally:
         receiver.close()
         await manager.close()
@@ -179,11 +190,18 @@ async def test_diagnostic_failure_cannot_change_packet_bytes_or_cleanup(monkeypa
             raise RuntimeError("private telemetry exception")
 
     session.metrics = Broken()
-    output = SimpleNamespace(payload=b"\0\0\1\x65abc", timestamp=0, mode="copy", is_keyframe=True)
+    payload = encoded_picture()
+    output = SimpleNamespace(payload=payload, timestamp=0, mode="copy", is_keyframe=True)
     try:
         assert await manager._access_unit(session, output, controller.handle.capture_epoch)
-        encrypted = await asyncio.wait_for(asyncio.get_running_loop().sock_recv(receiver, 2048), 1)
-        assert native_crypto(result.ssrc).unprotect(encrypted)[12:] == b"\x65abc"
+        crypto, clear = native_crypto(result.ssrc), []
+        async with asyncio.timeout(1):
+            while True:
+                encrypted = await asyncio.get_running_loop().sock_recv(receiver, 2048)
+                clear.append(crypto.unprotect(encrypted))
+                if clear[-1][1] & 0x80:
+                    break
+        assert reconstruct(clear) == annexb_nalus(payload)
         await manager.stop(controller.boot, controller.scope, identity)
         assert manager.pending_resources == 0 and controller.handle.closed
     finally:

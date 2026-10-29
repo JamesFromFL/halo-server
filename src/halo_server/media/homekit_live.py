@@ -18,6 +18,7 @@ from uuid import UUID
 
 from halo_server.homekit.models import HomeKitOperationError, MediaScope
 from halo_server.media.buffer import MediaStreamKind
+from halo_server.media.h264 import H264Error, parse_sps, pps_sequence_id
 from halo_server.media.homekit_audio import AudioEndpointRequest, AudioTrack, PreparedAudio
 from halo_server.media.manager import settle_owned
 from halo_server.media.rtp import (
@@ -25,6 +26,7 @@ from halo_server.media.rtp import (
     H264Packetizer,
     ReceiverReportStats,
     RtpError,
+    annexb_nalus,
     parse_feedback,
     sender_report,
 )
@@ -45,6 +47,8 @@ MAX_STOP_TOMBSTONES = 512
 STOP_TOMBSTONE_SECONDS = 60.0
 MAX_FRAME_AGE = 0.5
 MAX_ACCESS_UNIT_SECONDS = 1.0
+RECOVERY_SECONDS = 6.0
+MAX_RECOVERY_IDRS = 3
 _log = logging.getLogger(__name__)
 _TRACE_STAGES = frozenset(
     {
@@ -165,6 +169,9 @@ def _video_metrics():
             "pli_applied",
             "sender_reports",
             "access_unit_budget_rejected",
+            "access_unit_deadline_rejected",
+            "partial_access_units",
+            "recovery_idr_rejected",
         ),
         maxima=("source_access_unit_bytes", "output_access_unit_bytes", "batch_packets"),
         timings=(
@@ -191,6 +198,10 @@ def _measure(session, method, name, value=1):
 
 class _SourceChanged(RuntimeError):
     """An inner capture attempt retired while encoded output was being prepared."""
+
+
+class _VideoDeadline(RuntimeError):
+    """A datagram cannot be admitted within its original source deadline."""
 
 
 @dataclass(frozen=True)
@@ -241,7 +252,11 @@ class _Session:
     output_base: int = field(default_factory=lambda: secrets.randbits(32))
     last_timestamp: int | None = None
     last_packet_at: float = 0
-    discarded_stale: bool = False
+    awaiting_idr: bool = True
+    idr_requested: bool = False
+    recovery_since: float | None = None
+    recovery_attempts: int = 0
+    recovery_revision: int = 0
     capture_epoch: int | None = None
     next_packet_at: float = 0
     packets: int = 0
@@ -785,18 +800,26 @@ class HomeKitLiveManager:
             await self._settle_retirement(session)
             raise
 
-    async def _send(self, session, packet, *, epoch=None):
-        deadline = self._clock() + SEND_SECONDS
+    async def _send(self, session, packet, *, epoch=None, deadline=None, repair=None):
+        retry_deadline = self._clock() + SEND_SECONDS
+        if deadline is not None:
+            retry_deadline = min(retry_deadline, deadline)
         while True:
             self._current(session)
             if epoch is not None and session.handle.capture_epoch != epoch:
                 raise _SourceChanged
+            if repair is not None and session.retransmit.get(repair[0]) is not repair[1]:
+                raise _SourceChanged
+            if deadline is not None and self._clock() > deadline:
+                raise _VideoDeadline
             try:
                 if session.socket.send(packet) != len(packet):
                     raise HomeKitOperationError("media_failed")
                 return
             except BlockingIOError:
-                if self._clock() >= deadline:
+                if self._clock() >= retry_deadline:
+                    if deadline is not None and self._clock() >= deadline:
+                        raise _VideoDeadline from None
                     raise HomeKitOperationError("media_saturated") from None
                 await asyncio.sleep(0.002)
 
@@ -819,6 +842,81 @@ class HomeKitLiveManager:
             session.output_base = (session.last_timestamp + step) & 0xFFFFFFFF
         session.retransmit.clear()
         session.retransmit_bytes = 0
+        self._need_idr(
+            session,
+            bounded=session.trace_first_frame,
+            request=False,
+            reset=not session.awaiting_idr,
+        )
+        session.idr_requested = False
+
+    def _need_idr(self, session, *, bounded=True, request=True, reset=False):
+        if reset:
+            session.recovery_since = None
+            session.recovery_attempts = 0
+            session.idr_requested = False
+        if bounded and session.recovery_since is None:
+            session.recovery_since = self._clock()
+        session.awaiting_idr = True
+        session.recovery_revision += 1
+        session.retransmit.clear()
+        session.retransmit_bytes = 0
+        if request and not session.idr_requested and session.adapter is not None:
+            session.adapter.request_keyframe()
+            session.idr_requested = True
+
+    def _check_recovery(self, session):
+        if session.recovery_since is not None and (
+            session.recovery_attempts >= MAX_RECOVERY_IDRS
+            or self._clock() - session.recovery_since >= RECOVERY_SECONDS
+        ):
+            raise HomeKitOperationError("media_saturated")
+
+    def _stale_access_unit(self, session, output):
+        # A stale actual IDR may have consumed the adapter's pending force.
+        # Request a fresh one without counting the stale unit as an attempt.
+        with contextlib.suppress(RtpError):
+            if any(nal[0] & 31 == 5 for nal in annexb_nalus(output.payload)):
+                session.idr_requested = False
+        self._need_idr(session)
+        self._check_recovery(session)
+
+    def _actual_idr(self, session, output):
+        nals = annexb_nalus(output.payload)
+        if not any(nal[0] & 31 == 5 for nal in nals):
+            return False
+        sps = next((nal for nal in reversed(nals) if nal[0] & 31 == 7), None)
+        pps = next((nal for nal in reversed(nals) if nal[0] & 31 == 8), None)
+        if sps is None or pps is None:
+            raise RtpError("Video IDR lacks current parameters")
+        try:
+            info = parse_sps(sps)
+            selected = session.config
+            valid = (
+                pps_sequence_id(pps) == info.sequence_id
+                and info.profile == selected.profile
+                and info.level_idc <= int(selected.level.replace(".", ""))
+                and (info.width, info.height) == (selected.width, selected.height)
+                and info.progressive
+                and info.chroma_format == 1
+                and info.bit_depth == 8
+            )
+        except H264Error as exc:
+            raise RtpError("Video IDR parameters are invalid") from exc
+        if not valid:
+            raise RtpError("Video IDR parameters do not match selection")
+        return True
+
+    def _reject_access_unit(self, session, *, idr, partial=False):
+        session.idr_requested = False
+        self._need_idr(session)
+        if idr:
+            session.recovery_attempts += 1
+            _measure(session, "count", "recovery_idr_rejected")
+        if partial:
+            _measure(session, "count", "partial_access_units")
+        self._check_recovery(session)
+        return False
 
     def _presentation_time(self, session, kind, timestamp, received_at):
         """Use one source SR anchor for both tracks, with an honest fallback.
@@ -897,6 +995,7 @@ class HomeKitLiveManager:
         try:
             while not session.retired:
                 self._current(session)
+                self._check_recovery(session)
                 read_started = self._clock()
                 batch = await session.handle.read(timeout=0.25)
                 now = self._clock()
@@ -915,6 +1014,9 @@ class HomeKitLiveManager:
                     session.diagnostic_source_receipt = session.diagnostic_keyframe_pts = None
                     self._reset_timestamp(session)
                     session.capture_epoch = batch.capture_epoch
+                elif batch.resynchronized:
+                    self._need_idr(session)
+                self._check_recovery(session)
                 for packet in batch.packets:
                     if packet.stream is not MediaStreamKind.VIDEO:
                         continue
@@ -946,16 +1048,8 @@ class HomeKitLiveManager:
                             )
                             if self._clock() - packet.received_at > MAX_FRAME_AGE:
                                 _measure(session, "count", "stale_output_units")
-                                session.discarded_stale = True
-                                if output.mode == "copy":
-                                    session.adapter.request_keyframe()
+                                self._stale_access_unit(session, output)
                                 continue
-                            if session.discarded_stale:
-                                session.discarded_stale = False
-                                if not output.is_keyframe:
-                                    _measure(session, "count", "dependency_skips")
-                                    session.adapter.request_keyframe()
-                                    continue
                             try:
                                 sent = await self._access_unit(
                                     session,
@@ -965,7 +1059,7 @@ class HomeKitLiveManager:
                                 )
                                 if not sent and output.mode == "copy":
                                     session.adapter.force_adaptation()
-                                    if output.is_keyframe:
+                                    if self._actual_idr(session, output):
                                         feed_started = self._clock()
                                         _measure(session, "count", "adapter_feeds")
                                         adapted = await session.adapter.feed(
@@ -981,15 +1075,12 @@ class HomeKitLiveManager:
                                         )
                                         self._observe_outputs(session, adapted)
                                         for unit in adapted:
-                                            if not await self._access_unit(
+                                            await self._access_unit(
                                                 session,
                                                 unit,
                                                 packet.capture_epoch,
                                                 received_at=packet.received_at,
-                                            ):
-                                                raise HomeKitOperationError("media_saturated")
-                                elif not sent:
-                                    raise HomeKitOperationError("media_saturated")
+                                            )
                             except _SourceChanged:
                                 break
         except asyncio.CancelledError:
@@ -1001,57 +1092,94 @@ class HomeKitLiveManager:
         send_started = self._clock()
         if len(output.payload) > MAX_ACCESS_UNIT_BYTES:
             raise HomeKitOperationError("media_saturated")
-        config = session.config
-        sequence = session.packetizer.sequence
-        datagrams = session.packetizer.packetize(
-            output.payload, 0, payload_type=config.payload_type, mtu=config.mtu
-        )
-        # A full access unit is retained and paced. Native/UDP queues never
-        # accumulate an unbounded series of partially transmitted reference frames.
-        started = max(self._clock(), session.next_packet_at)
-        rate = config.max_bit_rate * 1000
-        duration = sum(len(item.packet) + 10 for item in datagrams) * 8 / rate
-        session.packetizer.sequence = sequence
-        if started + duration > self._clock() + MAX_ACCESS_UNIT_SECONDS:
-            _measure(session, "count", "access_unit_budget_rejected")
+        receipt = send_started if received_at is None else received_at
+        deadline = min(receipt + MAX_FRAME_AGE, send_started + MAX_ACCESS_UNIT_SECONDS)
+        if self._clock() > deadline:
+            _measure(session, "count", "access_unit_deadline_rejected")
+            self._stale_access_unit(session, output)
             return False
-        timestamp = self._timestamp(session, output.timestamp)
-        datagrams = session.packetizer.packetize(
-            output.payload, timestamp, payload_type=config.payload_type, mtu=config.mtu
-        )
-        presentation = self._presentation_time(
-            session,
-            "video",
-            output.timestamp,
-            self._clock() if received_at is None else received_at,
-        )
-        for item in datagrams:
+        idr = self._actual_idr(session, output)
+        if session.awaiting_idr and not idr:
+            _measure(session, "count", "dependency_skips")
+            if not session.idr_requested:
+                self._need_idr(session, bounded=session.recovery_since is not None)
+            self._check_recovery(session)
+            return False
+        # Reserve the byte clock for this complete AU. Repairs cannot steal
+        # completion slots between its packets; authority/deadline stay live.
+        async with session.send_lock:
             self._current(session)
-            protected = session.secure.protect(item.packet)
-            await self._paced_send(
-                session, protected, epoch=epoch, deadline=started + MAX_ACCESS_UNIT_SECONDS
+            if session.handle.capture_epoch != epoch:
+                self._need_idr(session)
+                raise _SourceChanged
+            if self._clock() > deadline:
+                _measure(session, "count", "access_unit_deadline_rejected")
+                self._stale_access_unit(session, output)
+                return False
+            config = session.config
+            sequence = session.packetizer.sequence
+            try:
+                datagrams = session.packetizer.packetize(
+                    output.payload, 0, payload_type=config.payload_type, mtu=config.mtu
+                )
+            finally:
+                session.packetizer.sequence = sequence
+            started = max(self._clock(), session.next_packet_at)
+            rate = config.max_bit_rate * 1000
+            duration = sum(len(item.packet) + 10 for item in datagrams) * 8 / rate
+            if started + duration > deadline:
+                _measure(session, "count", "access_unit_budget_rejected")
+                return self._reject_access_unit(session, idr=idr)
+            timestamp = self._timestamp(session, output.timestamp)
+            datagrams = session.packetizer.packetize(
+                output.payload, timestamp, payload_type=config.payload_type, mtu=config.mtu
             )
-            session.last_timestamp = item.timestamp
-            session.last_packet_at = presentation
-            session.packets += 1
-            session.octets += item.payload_bytes
-            _measure(session, "count", "sent_packets")
-            _measure(session, "count", "sent_payload_bytes", item.payload_bytes)
-            _measure(session, "count", "sent_protected_bytes", len(protected))
-            previous = session.retransmit.pop(item.sequence, None)
-            if previous is not None:
-                session.retransmit_bytes -= len(previous[1])
-            session.retransmit[item.sequence] = (
-                self._clock(),
-                protected,
-                item.payload_bytes,
-                epoch,
-            )
-            session.retransmit_bytes += len(protected)
-            self._prune_retransmit(session)
+            presentation = self._presentation_time(session, "video", output.timestamp, receipt)
+            revision, before = session.recovery_revision, session.packets
+            try:
+                for item in datagrams:
+                    self._current(session)
+                    protected = session.secure.protect(item.packet)
+                    await self._paced_send(
+                        session, protected, epoch=epoch, deadline=deadline, reserved=True
+                    )
+                    session.last_timestamp = item.timestamp
+                    session.last_packet_at = presentation
+                    session.packets += 1
+                    session.octets += item.payload_bytes
+                    _measure(session, "count", "sent_packets")
+                    _measure(session, "count", "sent_payload_bytes", item.payload_bytes)
+                    _measure(session, "count", "sent_protected_bytes", len(protected))
+                    if revision == session.recovery_revision:
+                        previous = session.retransmit.pop(item.sequence, None)
+                        if previous is not None:
+                            session.retransmit_bytes -= len(previous[1])
+                        session.retransmit[item.sequence] = (
+                            self._clock(),
+                            protected,
+                            item.payload_bytes,
+                            epoch,
+                            deadline,
+                        )
+                        session.retransmit_bytes += len(protected)
+                        self._prune_retransmit(session)
+            except _VideoDeadline:
+                _measure(session, "count", "access_unit_deadline_rejected")
+                return self._reject_access_unit(session, idr=idr, partial=session.packets > before)
+            except HomeKitOperationError as error:
+                if error.code != "media_saturated":
+                    raise
+                return self._reject_access_unit(session, idr=idr, partial=session.packets > before)
+            except _SourceChanged:
+                self._need_idr(session)
+                raise
+            if idr and revision == session.recovery_revision:
+                session.awaiting_idr = session.idr_requested = False
+                session.recovery_since = None
+                session.recovery_attempts = 0
         _measure(session, "count", "sent_access_units")
         _measure(session, "observe", "access_unit_send", max(0, self._clock() - send_started))
-        if output.is_keyframe:
+        if idr:
             _measure(session, "count", "sent_keyframes")
             if session.diagnostic_keyframe_pts is not None:
                 _measure(
@@ -1068,7 +1196,7 @@ class HomeKitLiveManager:
                     "HomeKit live first_frame mode=%s keyframe=%s bytes=%d video_packets=%d "
                     "elapsed_ms=%s source_age_ms=%s",
                     _trace_label(output.mode, {"copy", "adapt"}),
-                    output.is_keyframe is True,
+                    idr,
                     len(output.payload),
                     session.packets,
                     _trace_age(self._clock(), session.prepared_at),
@@ -1076,22 +1204,34 @@ class HomeKitLiveManager:
                 )
         return True
 
-    async def _paced_send(self, session, protected, *, epoch, deadline=None):
-        # Loss recovery shares the same byte clock as new media. An authenticated
-        # NACK cannot turn a bounded cache into a burst outside the selected rate.
-        async with session.send_lock:
-            now = self._clock()
-            target = max(now, session.next_packet_at)
-            if target > (deadline if deadline is not None else now + MAX_ACCESS_UNIT_SECONDS):
-                raise HomeKitOperationError("media_saturated")
-            if target > now:
-                _measure(session, "observe", "pacer_wait", target - now)
-                await asyncio.sleep(target - now)
-            _measure(session, "observe", "pacer_late", max(0, self._clock() - target))
-            await self._send(session, protected, epoch=epoch)
-            session.next_packet_at = target + len(protected) * 8 / (
-                session.config.max_bit_rate * 1000
+    async def _paced_send(
+        self, session, protected, *, epoch, deadline=None, reserved=False, repair=None
+    ):
+        if reserved:
+            return await self._paced_send_owned(
+                session, protected, epoch=epoch, deadline=deadline, repair=repair
             )
+        async with session.send_lock:
+            return await self._paced_send_owned(
+                session, protected, epoch=epoch, deadline=deadline, repair=repair
+            )
+
+    async def _paced_send_owned(self, session, protected, *, epoch, deadline, repair):
+        now = self._clock()
+        target = max(now, session.next_packet_at)
+        limit = deadline if deadline is not None else now + MAX_ACCESS_UNIT_SECONDS
+        service = len(protected) * 8 / (session.config.max_bit_rate * 1000)
+        admission_deadline = limit - service
+        if target > admission_deadline:
+            raise _VideoDeadline
+        if target > now:
+            _measure(session, "observe", "pacer_wait", target - now)
+            await asyncio.sleep(target - now)
+        _measure(session, "observe", "pacer_late", max(0, self._clock() - target))
+        await self._send(
+            session, protected, epoch=epoch, deadline=admission_deadline, repair=repair
+        )
+        session.next_packet_at = self._clock() + service
 
     def _prune_retransmit(self, session):
         cutoff = self._clock() - RETRANSMIT_SECONDS
@@ -1099,6 +1239,7 @@ class HomeKitLiveManager:
             first = next(iter(session.retransmit.values()))
             if (
                 first[0] >= cutoff
+                and first[4] >= self._clock()
                 and len(session.retransmit) <= MAX_RETRANSMIT_PACKETS
                 and session.retransmit_bytes <= MAX_RETRANSMIT_BYTES
             ):
@@ -1152,8 +1293,14 @@ class HomeKitLiveManager:
                     cached = session.retransmit.get(sequence)
                     if cached is not None:
                         try:
-                            await self._paced_send(session, cached[1], epoch=cached[3])
-                        except _SourceChanged:
+                            await self._paced_send(
+                                session,
+                                cached[1],
+                                epoch=cached[3],
+                                deadline=cached[4],
+                                repair=(sequence, cached),
+                            )
+                        except (_SourceChanged, _VideoDeadline):
                             continue
                         session.packets += 1
                         session.octets += cached[2]
@@ -1249,6 +1396,12 @@ class HomeKitLiveManager:
             except HomeKitOperationError:
                 self._end(session, "authority_changed")
             else:
+                if session.state == "active" and session.recovery_since is not None:
+                    try:
+                        self._check_recovery(session)
+                    except HomeKitOperationError as error:
+                        self._end(session, "media_failed", stage="video_send", error=error)
+                        continue
                 if (
                     session.state == "prepared"
                     and self._clock() - session.prepared_at >= PREPARE_SECONDS

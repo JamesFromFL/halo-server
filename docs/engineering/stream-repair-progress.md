@@ -233,3 +233,27 @@ filter or backend. A fixed `sent` diagnostic proves completion of the local
 WebSocket send, not acknowledgement or application by Ring. Seventy-seven
 focused actual-SDK/source/speaker/lifecycle tests passed. Only the next paired
 capture can establish whether this candidate changes the incoming cadence.
+
+Slice 5 now reserves the complete protected video access unit against its original
+500 ms source deadline and retains a recovery latch until an actual independently
+decodable IDR is sent. Cached repairs share the same byte reservation, epoch and
+source deadline. Scheduler oversleep and send retries recheck the remaining
+serialization allowance; these are conservative software admission checks, not a
+claim about physical NIC completion or Apple receipt. Three infeasible fresh IDRs
+or six seconds of unsuccessful recovery retire the view instead of sending an
+unbounded chain of undecodable dependent frames.
+
+The existing native encoder now leaves 14 percent payload headroom and uses a
+250 ms VBV buffer. In the four representative moving-scene cases, source15/30fps
+at selected132/299kbps, actual worker output passed through the actual sender,
+SRTP and an independent decoder: 540 frames and twelve independently decodable
+IDRs. An additional250ms pacing backlog on top of250ms source age is correctly
+rejected. These fixtures qualify the bounded mechanism, not every possible scene
+or the owner's physical playback. Combined focused checks passed197 tests with
+one host IPv6 skip; the full frozen gate and installed qualification follow.
+
+This is the measured complete-AU and decoder-recovery portion of the original
+slice5. Upstream keyframe-request bridging, a separate repair worker and decoder
+warmup remain outside this slice. The original-input receipt provenance and
+stable clock/reconfiguration work remain under slice6 review. None of these
+local sender results establishes a fix for the observed incoming AV gaps.

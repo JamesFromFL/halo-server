@@ -90,7 +90,13 @@ def open_encoder(config):
         Fraction(1, 90000),
         Fraction(fps),
     )
-    encoder.bit_rate, encoder.thread_count = config["max_bit_rate"] * 1000, 1
+    # The selected maximum also has to carry RTP/SRTP and recoverable IDRs.
+    # Leave payload headroom and keep VBV bursts well below the 500 ms AU
+    # deadline. Actual complete protected-AU admission remains authoritative;
+    # these encoder targets cannot guarantee every scene fits that deadline.
+    payload_rate = max(1, config["max_bit_rate"] * 86 // 100)
+    vbv_size = max(1, (payload_rate + 3) // 4)
+    encoder.bit_rate, encoder.thread_count = payload_rate * 1000, 1
     encoder.gop_size, encoder.max_b_frames = fps * 2, 0
     encoder.options = {
         "preset": "veryfast",
@@ -99,7 +105,7 @@ def open_encoder(config):
         "level": config["level"],
         "forced-idr": "1",
         "x264-params": f"bframes=0:scenecut=0:repeat-headers=1:keyint={fps * 2}:"
-        f"vbv-maxrate={config['max_bit_rate']}:vbv-bufsize={config['max_bit_rate']}",
+        f"vbv-maxrate={payload_rate}:vbv-bufsize={vbv_size}",
     }
     encoder.open()
     if encoder.options:
