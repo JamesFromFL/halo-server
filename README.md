@@ -182,9 +182,11 @@ credentials are random, rotate when plugin access is revoked, and are never disp
 daemon status. Connecting to one starts a bounded Scrypted media lease; disconnecting releases
 it. Do not configure these URLs as permanent DVR inputs.
 
-Snapshot requests use Ring's cached image endpoint by default and do not ask the camera for a
-new image. An authenticated plugin can explicitly request a fresh snapshot for an event; that
-operation may wake the camera and falls back to the cached image when Ring does not publish a
+Snapshot requests use Ring's cached image endpoint by default. If that image returns HTTP 404,
+positively identified mains-only cameras can make one bounded fresh snapshot attempt through
+the existing Ring SDK. Battery, mixed-power and unknown models remain cache-only unless the
+caller explicitly requests fresh capture. An authenticated plugin can request a fresh event
+snapshot; that operation may wake the camera and falls back to the cached image when Ring does not publish a
 new timestamp. Snapshot work is limited to 8 seconds and 8 MiB, accepts JPEG data only, and is
 always returned with `Cache-Control: no-store`.
 

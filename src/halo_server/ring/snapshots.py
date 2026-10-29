@@ -24,6 +24,8 @@ from urllib.parse import urlsplit
 import aiohttp
 from ring_doorbell.exceptions import RingError
 
+from halo_server.ring.power import MAINS_ONLY_KINDS
+
 MAX_SNAPSHOT_BYTES = 8 * 1024 * 1024
 MAX_TIMESTAMP_BYTES = 64 * 1024
 SNAPSHOT_TOTAL_SECONDS = 8.0
@@ -148,8 +150,10 @@ def _exception_reason(scope, error):
             scope.reason = current.reason
         elif isinstance(current, asyncio.CancelledError):
             scope.reason = "cancelled"
+            break
         elif isinstance(current, TimeoutError):
             scope.reason = "timeout"
+            break
         elif isinstance(current, aiohttp.ClientResponseError):
             if type(current.status) is int and 100 <= current.status <= 599:
                 scope.http_status = current.status
@@ -393,6 +397,41 @@ class SnapshotReader:
         self._closed = False
         self._diagnostic_last = float("-inf")
 
+    @staticmethod
+    def _can_refresh_missing_cache(device):
+        # A false/missing battery flag alone never proves mains power. Require
+        # both an already-reviewed mains-only kind and explicit SDK evidence.
+        try:
+            checker = getattr(device, "has_capability", None)
+            return (
+                getattr(device, "kind", None) in MAINS_ONLY_KINDS
+                and callable(checker)
+                and checker("video") is True
+                and checker("battery") is False
+                and callable(getattr(device, "async_get_snapshot", None))
+            )
+        except Exception:
+            return False
+
+    async def _refresh_missing_cache(self, device, scope, admission):
+        if admission is not None and not admission():
+            scope.reason = "authority_retired"
+            return None
+        scope.phase = "fresh"
+        scope.stage = "reader"
+        scope.http_status = None
+        scope.reason = None
+        scope.error_class = "none"
+        raw = await device.async_get_snapshot(retries=2, delay=1)
+        if admission is not None and not admission():
+            scope.reason = "authority_retired"
+            return None
+        image = validated_snapshot_bytes(raw)
+        scope.success = image is not None
+        if image is None:
+            scope.reason = "source_empty" if raw is None else "invalid_jpeg"
+        return image
+
     def _diagnostic(self, scope, fresh, began):
         # One scalar throttle is not operation state. Every reason/status/type
         # above belongs to the individual fetch's ContextVar scope.
@@ -467,7 +506,28 @@ class SnapshotReader:
                     scope.reason = "authority_retired"
                     return None
                 scope.phase = "cached"
-                response = await self._ring.async_query(SNAPSHOT_ENDPOINT.format(api_id))
+                cached_missing = False
+                try:
+                    response = await self._ring.async_query(SNAPSHOT_ENDPOINT.format(api_id))
+                except (RingError, aiohttp.ClientResponseError) as exc:
+                    _exception_reason(scope, exc)
+                    if (
+                        not fresh
+                        and scope.phase == "cached"
+                        and scope.stage == "image"
+                        and scope.http_status == 404
+                        and scope.reason == "cached_missing"
+                        and self._can_refresh_missing_cache(device)
+                    ):
+                        cached_missing = True
+                    else:
+                        raise
+                if cached_missing:
+                    # Reuse this exact operation's deadline, authority and
+                    # image/metadata budgets. Leave the handled404 exception
+                    # context before awaiting so a later timeout does not
+                    # inherit that old response as its failure cause.
+                    return await self._refresh_missing_cache(device, scope, admission)
                 if response.status_code == 200:
                     image = validated_snapshot_bytes(response.content)
                     scope.success = image is not None

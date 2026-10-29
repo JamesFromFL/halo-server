@@ -11,6 +11,7 @@ import aiohttp
 import pytest
 from ring_doorbell import Auth, Ring
 from ring_doorbell.doorbot import RingDoorBell
+from ring_doorbell.stickup_cam import RingStickUpCam
 
 from halo_server.ring import snapshots
 from halo_server.ring.snapshots import SnapshotError, SnapshotHttpSession, SnapshotReader
@@ -103,6 +104,12 @@ def fixture(responses):
     device = SimpleNamespace(id=42, _attrs={"id": 42}, _ring=ring)
     device.async_get_snapshot = MethodType(RingDoorBell.async_get_snapshot, device)
     return SnapshotReader(ring), transport, session, device
+
+
+def mains_fixture(responses, *, kind="floodlight_pro"):
+    reader, transport, session, _device = fixture(responses)
+    reader._ring.devices_data = {"stickup_cams": {42: {"id": 42, "kind": kind}}}
+    return reader, transport, session, RingStickUpCam(reader._ring, 42)
 
 
 @pytest.mark.asyncio
@@ -807,5 +814,276 @@ async def test_snapshot_admission_diagnostics_do_not_trigger_http(caplog, case):
         assert record["http_status"] == "None" and session.calls == []
     finally:
         reader._tasks.clear()
+        await reader.close()
+        await transport.close()
+
+
+def fresh_responses(image=b"\xff\xd8fresh\xff\xd9"):
+    timestamp = json.dumps({"timestamps": [{"timestamp": (time.time() + 60) * 1000}]}).encode()
+    return [Response(b"{}"), Response(timestamp), Response(image)]
+
+
+@pytest.fixture
+def instant_snapshot_poll(monkeypatch):
+    sleep = asyncio.sleep
+
+    async def immediate(_delay):
+        await sleep(0)
+
+    monkeypatch.setattr("ring_doorbell.doorbot.asyncio.sleep", immediate)
+
+
+@pytest.mark.asyncio
+async def test_mains_cached_404_uses_one_existing_sdk_fresh_sequence_in_same_scope(
+    caplog, instant_snapshot_poll
+):
+    responses = [Response(status=404), *fresh_responses()]
+    reader, transport, session, device = mains_fixture(responses)
+    try:
+        assert await reader.fetch(device, fresh=False) == b"\xff\xd8fresh\xff\xd9"
+        assert [
+            (method, url.removeprefix("https://api.ring.com")) for method, url, _ in session.calls
+        ] == [
+            ("GET", "/clients_api/snapshots/image/42"),
+            ("POST", "/clients_api/snapshots/timestamps"),
+            ("POST", "/clients_api/snapshots/timestamps"),
+            ("GET", "/clients_api/snapshots/image/42"),
+        ]
+        assert not reader._tasks and snapshots._snapshot_scope.get() is None
+        assert all(response.closed and response.eager_reads == 0 for response in responses)
+        for _method, _url, options in session.calls:
+            assert options["allow_redirects"] is False and options["auto_decompress"] is False
+            assert options["ssl"].verify_mode == ssl.CERT_REQUIRED
+            assert options["ssl"].check_hostname and options["timeout"].total == 7
+            assert options["headers"]["Accept-Encoding"] == "identity"
+        # A recovered initial miss is not falsely emitted as a failed request.
+        assert diagnostic_records(caplog) == []
+    finally:
+        await reader.close()
+        await transport.close()
+
+
+@pytest.mark.asyncio
+async def test_mains_cache_hit_does_not_trigger_fresh_capture():
+    reader, transport, session, device = mains_fixture([Response(b"\xff\xd8cached\xff\xd9")])
+    try:
+        assert await reader.fetch(device) == b"\xff\xd8cached\xff\xd9"
+        assert len(session.calls) == 1 and session.calls[0][0] == "GET"
+    finally:
+        await reader.close()
+        await transport.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [401, 403, 429, 302, 500])
+async def test_mains_non_404_errors_never_trigger_fresh_capture(caplog, status):
+    responses = [Response(status=status)]
+    if status == 401:
+        responses.append(
+            Response(
+                json.dumps(
+                    {
+                        "access_token": "new-fixture",
+                        "refresh_token": "fixture-refresh",
+                        "token_type": "Bearer",
+                        "expires_in": 3600,
+                    }
+                ).encode()
+            )
+        )
+    reader, transport, session, device = mains_fixture(responses)
+    try:
+        assert await reader.fetch(device) is None
+        assert not any("/snapshots/timestamps" in url for _method, url, _options in session.calls)
+        assert diagnostic_records(caplog)[0]["http_status"] == str(status)
+    finally:
+        await reader.close()
+        await transport.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["stickup_cam", "stickup_cam_v3", "spotlight_pro", "unknown"])
+async def test_battery_mixed_and_unknown_hardware_stay_cached_only_on_404(kind):
+    reader, transport, session, device = mains_fixture([Response(status=404)], kind=kind)
+    try:
+        assert await reader.fetch(device) is None
+        assert len(session.calls) == 1 and session.calls[0][0] == "GET"
+    finally:
+        await reader.close()
+        await transport.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("video,battery", [(False, False), (True, True), (True, None), (1, 0)])
+async def test_positive_kind_still_requires_explicit_sdk_video_and_no_battery(video, battery):
+    reader, transport, session, device = mains_fixture([Response(status=404)])
+    device.has_capability = lambda capability: {"video": video, "battery": battery}[capability]
+    try:
+        assert await reader.fetch(device) is None
+        assert len(session.calls) == 1
+    finally:
+        await reader.close()
+        await transport.close()
+
+
+@pytest.mark.asyncio
+async def test_revocation_after_cached_404_prevents_the_fresh_trigger(caplog):
+    reader, transport, session, device = mains_fixture([Response(status=404)])
+    permitted = True
+    request = session.request
+
+    async def revoke(*args, **kwargs):
+        nonlocal permitted
+        result = await request(*args, **kwargs)
+        permitted = False
+        return result
+
+    session.request = revoke
+    try:
+        assert await reader.fetch(device, admission=lambda: permitted) is None
+        assert len(session.calls) == 1
+        assert diagnostic_records(caplog)[0]["reason"] == "authority_retired"
+        assert not reader._tasks
+    finally:
+        await reader.close()
+        await transport.close()
+
+
+@pytest.mark.asyncio
+async def test_cached_miss_fallback_whole_deadline_does_not_restart(caplog, monkeypatch):
+    monkeypatch.setattr(snapshots, "SNAPSHOT_TOTAL_SECONDS", 0.05)
+    waiting = Response(content=Content(wait=asyncio.Event()))
+    reader, transport, session, device = mains_fixture([Response(status=404), waiting])
+    request = session.request
+
+    async def delayed(*args, **kwargs):
+        if not session.calls:
+            await asyncio.sleep(0.025)
+        return await request(*args, **kwargs)
+
+    session.request = delayed
+    began = asyncio.get_running_loop().time()
+    try:
+        assert await reader.fetch(device) is None
+        elapsed = asyncio.get_running_loop().time() - began
+        assert 0.04 <= elapsed < 0.5
+        assert len(session.calls) == 2 and waiting.closed and not reader._tasks
+        assert diagnostic_records(caplog)[0]["reason"] == "timeout"
+    finally:
+        await reader.close()
+        await transport.close()
+
+
+@pytest.mark.asyncio
+async def test_close_cancels_cached_miss_fallback_and_joins_its_original_owner():
+    waiting = Response(content=Content(wait=asyncio.Event()))
+    reader, transport, session, device = mains_fixture([Response(status=404), waiting])
+    task = asyncio.create_task(reader.fetch(device))
+    try:
+        await asyncio.wait_for(waiting.content.entered.wait(), 1)
+        assert len(reader._tasks) == 1  # Fallback does not acquire a second job.
+        await reader.close()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert len(session.calls) == 2 and waiting.closed and not reader._tasks
+    finally:
+        await reader.close()
+        await transport.close()
+
+
+@pytest.mark.asyncio
+async def test_revocation_during_fallback_body_never_returns_an_image(instant_snapshot_poll):
+    responses = [Response(status=404), *fresh_responses()]
+    waiting = responses[-1]
+    waiting.content.wait = asyncio.Event()
+    reader, transport, _session, device = mains_fixture(responses)
+    permitted = True
+    task = asyncio.create_task(reader.fetch(device, admission=lambda: permitted))
+    try:
+        await asyncio.wait_for(waiting.content.entered.wait(), 1)
+        permitted = False
+        waiting.content.wait.set()
+        assert await task is None
+        assert waiting.closed and not reader._tasks
+    finally:
+        waiting.content.wait.set()
+        await asyncio.gather(task, return_exceptions=True)
+        await reader.close()
+        await transport.close()
+
+
+@pytest.mark.asyncio
+async def test_cached_miss_fallback_metadata_retains_existing_byte_bound(monkeypatch):
+    monkeypatch.setattr(snapshots, "MAX_TIMESTAMP_BYTES", 16)
+    large = Response(b"x" * 100)
+    reader, transport, session, device = mains_fixture([Response(status=404), large])
+    try:
+        assert await reader.fetch(device) is None
+        assert large.content.position == 17 and large.closed
+        assert len(session.calls) == 2 and not reader._tasks
+    finally:
+        await reader.close()
+        await transport.close()
+
+
+@pytest.mark.asyncio
+async def test_invalid_fallback_image_reports_final_fresh_failure_only(
+    caplog, instant_snapshot_poll
+):
+    reader, transport, session, device = mains_fixture(
+        [Response(status=404), *fresh_responses(b"invalid-jpeg")]
+    )
+    try:
+        assert await reader.fetch(device) is None
+        assert len(session.calls) == 4
+        records = diagnostic_records(caplog)
+        assert len(records) == 1
+        assert records[0]["phase"] == "fresh" and records[0]["reason"] == "invalid_jpeg"
+        assert records[0]["http_status"] == "200" and records[0]["fresh_requested"] == "False"
+    finally:
+        await reader.close()
+        await transport.close()
+
+
+@pytest.mark.asyncio
+async def test_missing_fresh_image_never_restarts_cached_miss_recovery(
+    caplog, instant_snapshot_poll
+):
+    replies = fresh_responses()
+    replies[-1] = Response(status=404)
+    reader, transport, session, device = mains_fixture([Response(status=404), *replies])
+    try:
+        assert await reader.fetch(device) is None
+        assert len(session.calls) == 4
+        record = diagnostic_records(caplog)[0]
+        assert record["phase"] == "fresh" and record["stage"] == "image"
+        assert record["http_status"] == "404" and record["reason"] == "http_error"
+        assert not reader._tasks
+    finally:
+        await reader.close()
+        await transport.close()
+
+
+@pytest.mark.asyncio
+async def test_no_new_sdk_timestamp_ends_bounded_fallback_without_another_get(
+    caplog, instant_snapshot_poll
+):
+    old = b'{"timestamps":[{"timestamp":0}]}'
+    reader, transport, session, device = mains_fixture(
+        [Response(status=404), Response(b"{}"), Response(old), Response(old)]
+    )
+    try:
+        assert await reader.fetch(device) is None
+        assert [method for method, _url, _options in session.calls] == [
+            "GET",
+            "POST",
+            "POST",
+            "POST",
+        ]
+        record = diagnostic_records(caplog)[0]
+        assert record["phase"] == "fresh" and record["stage"] == "timestamps"
+        assert record["http_status"] == "200" and record["reason"] == "source_empty"
+        assert not reader._tasks
+    finally:
         await reader.close()
         await transport.close()

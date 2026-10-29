@@ -10,7 +10,8 @@ separate from synthetic and installed-artifact checks.
 | 2 | Audio recovery and bounded sending | Complete: `78e0e81`; 2,040 Python / 265 Node tests passed |
 | 3 | Camera-state lock isolation | Complete: `4adb0c2`; 2,097 Python / 265 Node tests passed |
 | 4 | Video cadence and IDR timing | Complete: `d9b38ed`; 2,124 Python / 265 Node tests passed |
-| 4b | Captured-burst audio repair and receive/snapshot diagnostics | Implementation complete; verification recorded with the slice receipt |
+| 4b | Captured-burst audio repair and receive/snapshot diagnostics | Complete: `6db2aeb`; 2,189 Python / 265 Node tests passed; installed and paired pilot captured |
+| 4c | Mains-camera snapshot cache-miss recovery | Implementation complete; frozen integrated verification pending |
 | 5 | Complete-frame delivery and loss recovery | Pending |
 | 6 | Quality, A/V timeline and reconfigure | Pending |
 | 7 | Installed and real-device qualification | Pending |
@@ -183,3 +184,40 @@ Focused slice4b checks:200 audio tests,123 snapshot/service checks,174 lower-rec
 source/service checks and43 independent observer review checks passed. The exact
 source and installed-package receipts distinguish these overlapping focused
 suites from the integrated suite count and from paired-device qualification.
+
+The R4b package was built twice identically and qualified after extraction,
+including real native conversion, public HAP lifecycle and the synthetic burst
+replay (629 sent/received/independently decoded packets, 12.58 s of 12.72 s input,
+zero expired output). It was installed as selection revision 11 with pairing
+preserved, recording preferences byte-identical and the previous release retained.
+
+The subsequent complete pilot (2026-10-29 02:15:32–02:19:09 UTC) collected 218
+samples, including 158 active samples and settled cleanup. Final audio accounting
+improved to 154.38 s sent from 156.00 s read, with zero expired, budget-rejected or
+overflow output. The remaining 1.62 s is not represented in complete emitted
+20 ms packets across native conversion starts/retirements; it is not claimed as
+recovered. The owner described a small possible improvement, with pauses remaining.
+
+Seventy-six completed-bin RTP quiet periods of at least 500 ms were identical
+at direct-UDP callback, successful decryption and routed audio/video observation.
+Median duration was 700 ms and median start spacing 2 s. ICE queue wait peaked at
+11.045 ms and DTLS service at 19.467 ms. Sampled daemon-owned UDP socket counters
+showed no drops, subject to socket-lifetime and between-sample visibility limits.
+These observations locate the remaining burst delivery before the observed
+post-callback processing; they do not prove camera, relay, LAN or host-kernel cause.
+The owner confirmed that both audio and video are smooth in the Ring app, so Ring
+connection behavior and receive/playout timing still need comparison.
+
+Four snapshot failures now have a concrete cause: cached image HTTP 404,
+`cached_missing`, with `fresh_requested=false`. They occurred before/after the
+live session. A bounded cache-miss refresh for positively identified mains-only
+cameras is the next targeted snapshot repair; permission, timeout, byte and
+concurrency limits remain authoritative.
+
+Slice 4c implements that one-attempt fallback only after an actual cached-image
+404 on positively identified mains-only hardware. Existing SDK timestamp capture
+and image retrieval stay within the original eight-second operation. Battery,
+mixed-power and unknown models retain cached-only behavior for periodic requests.
+The existing immutable hardware allowlist is shared without adding models. The
+focused snapshot, service/privacy, public HomeKit and power-policy suite passed
+178 tests. The physical fresh-image result remains to be qualified.

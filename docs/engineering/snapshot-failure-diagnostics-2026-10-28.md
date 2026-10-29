@@ -10,6 +10,10 @@ expected SDK, HTTP, timeout and image-validation failures to `None` without a
 diagnostic. The HomeKit layer then exposed one generic `source-failed` code.
 The actual Ring snapshot failure remains unconfirmed.
 
+The later complete R4b pilot confirmed four cached-image HTTP404 failures.
+The bounded mains-only recovery and its remaining live qualification are
+documented in [snapshot cache-miss recovery](snapshot-cache-miss-recovery-2026-10-29.md).
+
 ## Fixed operational diagnostic
 
 Each fetch owns its diagnostic state in the existing per-operation ContextVar.
