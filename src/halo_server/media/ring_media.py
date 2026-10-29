@@ -31,6 +31,7 @@ from aiortc.mediastreams import AudioStreamTrack, MediaStreamError
 from av import AudioFrame
 
 from halo_server.media.buffer import h264_nal_types
+from halo_server.media.keyframes import SourceKeyframes
 from halo_server.media.ring_speaker import (
     RingSpeakerControlError,
     activate_ring_camera_speaker,
@@ -493,44 +494,44 @@ async def request_startup_keyframes(
     receiver,
     stop: threading.Event,
     terminal: asyncio.Event,
+    *,
+    requester=None,
 ) -> None:
-    """Request a bounded set of startup IDRs for encoded pass-through."""
-    import aiortc
-
-    version = str(getattr(aiortc, "__version__", "unknown"))
-    sender = getattr(receiver, "_send_rtcp_pli", None)
-    if (
-        version not in _ENCODED_FRAME_AIORTC_VERSIONS
-        or not callable(sender)
-        or not hasattr(receiver, _ACTIVE_SSRC_ATTRIBUTE)
-        or not hasattr(receiver, _RTX_SSRC_ATTRIBUTE)
-    ):
-        _log.warning(
-            "aiortc %s does not expose Halo's validated startup keyframe boundary",
-            version,
-        )
+    """Startup and live recovery share one validated per-source PLI owner."""
+    if stop.is_set() or terminal.is_set():
         return
-
+    owned = requester is None
+    if owned:
+        requester = SourceKeyframes(
+            receiver,
+            current=lambda: not stop.is_set() and not terminal.is_set(),
+            spawn=lambda coroutine, _label: asyncio.create_task(coroutine),
+        )
+    if not requester.supported:
+        _log.warning("Ring upstream keyframe boundary unavailable")
+        return
     loop = asyncio.get_running_loop()
     deadline = loop.time() + STARTUP_KEYFRAME_DEADLINE_SECONDS
-    sent = 0
-    while (
-        sent < STARTUP_KEYFRAME_REQUESTS
-        and loop.time() < deadline
-        and not stop.is_set()
-        and not terminal.is_set()
-    ):
-        active_ssrcs = set(getattr(receiver, _ACTIVE_SSRC_ATTRIBUTE))
-        rtx_ssrcs = set(getattr(receiver, _RTX_SSRC_ATTRIBUTE))
-        media_ssrcs = sorted(active_ssrcs - rtx_ssrcs)
-        if not media_ssrcs:
-            await asyncio.sleep(STARTUP_KEYFRAME_POLL_SECONDS)
-            continue
-        for media_ssrc in media_ssrcs:
-            await sender(media_ssrc)
-        sent += 1
-        if sent < STARTUP_KEYFRAME_REQUESTS:
-            await asyncio.sleep(STARTUP_KEYFRAME_INTERVAL_SECONDS)
+    count = 0
+    try:
+        while (
+            count < STARTUP_KEYFRAME_REQUESTS
+            and loop.time() < deadline
+            and not stop.is_set()
+            and not terminal.is_set()
+        ):
+            attempted = await requester.request(lambda: not stop.is_set() and not terminal.is_set())
+            if attempted:
+                count += 1
+            if count < STARTUP_KEYFRAME_REQUESTS:
+                await asyncio.sleep(
+                    STARTUP_KEYFRAME_INTERVAL_SECONDS
+                    if attempted
+                    else STARTUP_KEYFRAME_POLL_SECONDS
+                )
+    finally:
+        if owned:
+            await requester.close()
 
 
 def patch_aiortc_h264() -> bool:
@@ -1414,6 +1415,7 @@ class RingStreamReceiver:
         on_encoded_video: Callable[[bytes, int], None] | None = None,
         on_encoded_audio: Callable[[bytes, int], None] | None = None,
         on_source_clock: Callable[[SourceClockObservation], None] | None = None,
+        on_keyframe_requester: Callable | None = None,
         on_encoded_ingress: Callable | None = None,
         on_receiver_stats: Callable | None = None,
         on_decoded_audio: Callable | None = None,
@@ -1431,6 +1433,7 @@ class RingStreamReceiver:
         self._on_encoded_video = on_encoded_video
         self._on_encoded_audio = on_encoded_audio
         self._on_source_clock = on_source_clock
+        self._on_keyframe_requester = on_keyframe_requester
         self._on_encoded_ingress = on_encoded_ingress
         self._on_receiver_stats = on_receiver_stats
         self._on_decoded_audio = on_decoded_audio
@@ -1461,7 +1464,7 @@ class RingStreamReceiver:
         camera_kind = _diagnostic_value(getattr(self._device, "kind", "unknown"))
         loop = asyncio.get_running_loop()
         pc = None
-        decoded_lane = pipeline = None
+        decoded_lane = pipeline = keyframes = None
         audio_transceiver = None
         mic_track = None
         ring_session_started = False
@@ -1851,11 +1854,19 @@ class RingStreamReceiver:
                         "intercom speaker controller",
                     )
                 if answer_applied.is_set() and self._on_encoded_video is not None:
+                    keyframes = SourceKeyframes(
+                        video_transceiver.receiver,
+                        current=lambda: not stop.is_set() and not terminal.is_set(),
+                        spawn=spawn,
+                    )
+                    if self._on_keyframe_requester is not None:
+                        self._on_keyframe_requester(keyframes.submit)
                     spawn(
                         request_startup_keyframes(
                             video_transceiver.receiver,
                             stop,
                             terminal,
+                            requester=keyframes,
                         ),
                         "startup keyframe requests",
                     )
@@ -1893,6 +1904,8 @@ class RingStreamReceiver:
         finally:
             terminal.set()
             stream_options.fence()
+            if keyframes is not None:
+                keyframes.fence()
             if pipeline is not None:
                 _diagnostic_notify(pipeline.fence)
             if decoded_lane is not None:
@@ -1915,6 +1928,8 @@ class RingStreamReceiver:
             )
 
             async def cleanup():
+                if keyframes is not None:
+                    await keyframes.close()
                 if mic_track is not None:
                     with contextlib.suppress(Exception):
                         mic_track.stop()

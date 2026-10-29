@@ -80,6 +80,7 @@ async def supervise_receiver(
             "on_encoded_audio",
             "on_encoded_incompatible",
             "on_source_clock",
+            "on_keyframe_requester",
             "on_encoded_ingress",
             "on_receiver_stats",
             "on_decoded_audio",

@@ -19,6 +19,7 @@ class BufferedMediaConsumer:
     validity_callback: Callable[[], bool] | None = None
     original_audio_buffer: object | None = None
     source_clock_callback: Callable[[], tuple] | None = None
+    keyframe_callback: Callable[[int], bool] | None = None
 
     def __post_init__(self) -> None:
         self._lock = threading.Lock()
@@ -39,6 +40,19 @@ class BufferedMediaConsumer:
             renewed = bool(self.renew_callback())
             current = self.is_current()
             return renewed and current
+
+    def request_keyframe(self, capture_epoch: int) -> bool:
+        if type(capture_epoch) is not int or capture_epoch < 0:
+            return False
+        with self._renew_lock:
+            if (
+                not self.is_current()
+                or capture_epoch != self.buffer.capture_epoch
+                or self.keyframe_callback is None
+            ):
+                return False
+            attempted = bool(self.keyframe_callback(capture_epoch))
+            return attempted and self.is_current() and capture_epoch == self.buffer.capture_epoch
 
     def is_current(self) -> bool:
         """Check source authority before each private media delivery."""

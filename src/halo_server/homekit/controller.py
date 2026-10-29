@@ -775,6 +775,25 @@ class NativeLiveHandle:
         finally:
             self._controller._finish_work(self._claim, task)
 
+    async def request_keyframe(self, *, capture_epoch: int) -> bool:
+        if self._recording or type(capture_epoch) is not int or capture_epoch < 0:
+            raise HomeKitOperationError("invalid_request")
+        task = self._controller._begin_work(self._claim)
+        try:
+            self._controller.authorize(self._claim.boot_id, self.scope, "streaming")
+            if not self.is_current() or capture_epoch != self.capture_epoch:
+                raise HomeKitOperationError("authority_changed")
+            callback = getattr(self._claim.resource, "request_keyframe", None)
+            if callback is None:
+                return False
+            result = await owned_thread(callback, capture_epoch)
+            self._controller.authorize(self._claim.boot_id, self.scope, "streaming")
+            if not self.is_current() or capture_epoch != self.capture_epoch:
+                raise HomeKitOperationError("authority_changed")
+            return bool(result)
+        finally:
+            self._controller._finish_work(self._claim, task)
+
     async def renew(self) -> bool:
         return await _resource_call(self._controller, self._claim, "renew", threaded=True)
 

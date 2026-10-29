@@ -239,6 +239,7 @@ class ServiceHomeKitBackend:
         except RuntimeError as exc:
             raise HomeKitOperationError("camera_unavailable") from exc
         consumer_type = _RecordingMediaConsumer if recording else BufferedMediaConsumer
+        request_keyframe = getattr(session, "request_keyframe", None)
         consumer = consumer_type(
             buffer=(
                 getattr(session, "recording_video_buffer", session.buffer)
@@ -247,6 +248,9 @@ class ServiceHomeKitBackend:
             ),
             original_audio_buffer=getattr(session, "original_audio_buffer", None),
             source_clock_callback=getattr(session, "source_clock_snapshot", None),
+            keyframe_callback=(lambda epoch: request_keyframe(lease_id, epoch, admission=guard))
+            if not recording and callable(request_keyframe)
+            else None,
             renew_callback=lambda: service._run_gateway_call(
                 service._renew_camera_consumer(
                     scope.camera_id,

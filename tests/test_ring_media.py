@@ -695,21 +695,32 @@ async def test_encoded_frame_adapter_rejects_unvalidated_aiortc_version(monkeypa
 async def test_startup_keyframe_requests_target_media_not_rtx_ssrc(monkeypatch):
     requested = []
 
-    class Receiver:
-        _RTCRtpReceiver__active_ssrc = {
-            1001: object(),
-            2001: object(),
-        }
-        _RTCRtpReceiver__rtx_ssrc = {2001: 1001}
+    from datetime import UTC, datetime
 
-        async def _send_rtcp_pli(self, media_ssrc):
-            requested.append(media_ssrc)
+    from aiortc.rtcrtpreceiver import RTCRtpReceiver
+    from aiortc.rtp import RtcpPacket
+
+    from halo_server.media import keyframes
+
+    class Transport:
+        state = "connected"
+        _stats_id = "offline"
+
+        async def _send_rtp(self, packet):
+            requested.append(RtcpPacket.parse(packet)[0].media_ssrc)
+
+    receiver = RTCRtpReceiver("video", Transport())
+    receiver._set_rtcp_ssrc(77)
+    receiver._RTCRtpReceiver__active_ssrc = {1001: datetime.now(UTC), 2001: datetime.now(UTC)}
+    receiver._RTCRtpReceiver__remote_streams = {1001: object(), 2001: object()}
+    receiver._RTCRtpReceiver__rtx_ssrc = {2001: 1001}
+    monkeypatch.setattr(keyframes, "KEYFRAME_COOLDOWN_SECONDS", 0)
 
     monkeypatch.setattr(ring_media, "STARTUP_KEYFRAME_REQUESTS", 2)
     monkeypatch.setattr(ring_media, "STARTUP_KEYFRAME_INTERVAL_SECONDS", 0)
 
     await ring_media.request_startup_keyframes(
-        Receiver(),
+        receiver,
         threading.Event(),
         asyncio.Event(),
     )

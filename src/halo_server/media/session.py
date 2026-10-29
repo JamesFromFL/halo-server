@@ -132,6 +132,7 @@ class CameraMediaSession:
         self._audio_owner = None
         self._retiring_audio = set()
         self._receiver_completed = None
+        self._keyframe_requester = None
         self._legacy_failure = None
         self._legacy_callback_local = threading.local()
         self._microphone_source = MicrophonePcmBuffer()
@@ -399,6 +400,7 @@ class CameraMediaSession:
             )
 
     def _clear_media_locked(self):
+        self._keyframe_requester = None
         self._retire_audio_locked()
         self._buffer.clear()
         self._original_audio_buffer.clear(capture_epoch=self._buffer.capture_epoch)
@@ -475,6 +477,47 @@ class CameraMediaSession:
         with self._measured_state_lock("authority_wait"):
             lease = self._current_lease_locked(lease_id)
             return lease is not None and self._clock() < lease.expires_at
+
+    def _attach_keyframes(self, generation, callback):
+        with self._lock:
+            if self._accepts_media_locked(generation) and callable(callback):
+                self._keyframe_requester = (generation, self._buffer.capture_epoch, callback)
+
+    def request_keyframe(self, lease_id, capture_epoch, *, admission):
+        if type(capture_epoch) is not int or capture_epoch < 0:
+            return False
+        with self._lock:
+            owner = self._keyframe_requester
+
+        def current():
+            if not admission():
+                return False
+            with self._lock:
+                lease = self._current_lease_locked(lease_id)
+                return bool(
+                    owner is not None
+                    and self._keyframe_requester is owner
+                    and owner[1] == capture_epoch == self._buffer.capture_epoch
+                    and self._accepts_media_locked(owner[0])
+                    and lease is not None
+                    and lease.purpose is LeasePurpose.HOMEKIT_LIVE
+                    and self._clock() < lease.expires_at
+                )
+
+        if not current():
+            return False
+        try:
+            future = owner[2](current)
+        except Exception:
+            return False
+        try:
+            attempted = bool(future.result(timeout=1.1))
+        except (TimeoutError, concurrent.futures.CancelledError):
+            future.cancel()
+            return False
+        except Exception:
+            return False
+        return attempted and current()
 
     def acquire(
         self,
@@ -689,6 +732,9 @@ class CameraMediaSession:
             ),
             "on_encoded_audio": lambda payload, timestamp: self._encoded_audio(
                 action.generation, payload, timestamp
+            ),
+            "on_keyframe_requester": lambda callback: self._attach_keyframes(
+                action.generation, callback
             ),
             "on_source_clock": lambda observation: self._source_clock(
                 action.generation, observation

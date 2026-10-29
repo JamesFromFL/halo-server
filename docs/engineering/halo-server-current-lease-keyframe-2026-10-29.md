@@ -1,0 +1,15 @@
+# Current-lease source keyframe requests
+
+This additive bridge reuses the current Ring receiver. It creates no new capture, connection, decoder or SDK session and changes no codec, bitrate, media freshness or privacy setting.
+
+The private live handle's request requires exact boot/fullscope/streaming authority and the expected capture epoch before and after owned work. Recording handles cannot use it. The optional buffered-consumer callback shares renewal serialization, so its short state lock never spans a gateway/receiver wait. Close fences delivery immediately, then joins serialized operations before releasing the lease; failed release remains retryable.
+
+The source session snapshots its exact generation, capture epoch and receiver callback under its short lock, then releases that lock before waiting. It requires an unexpired HOMEKIT_LIVE lease and a current scope/admission callback. The receiver publishes a thread-safe submitter bound to its already-running event loop; no `RingClient._ensure_loop` or new client submission can create a replacement loop. Attempt retirement clears the callback, and every actual PLI checks the original receiver token, lease, scope and epoch before admission.
+
+One actual send task is allowed per source, with a500ms cooldown and1s operation deadline. Cross-loop caller waiters remain bounded by existing controller work claims. The pinned aiortc1.15 receiver contract, known RTP streams, recent active primary sources and RTX exclusion are checked; source metadata is limited to16identities before inspection. Startup and runtime requests share the same validated helper. Cancellation or timeout of a caller does not disguise the actual source task as retired. Source termination fences the helper synchronously and cleanup joins its real task, even if cancellation takes time.
+
+A positive result means the pinned local PLI method completed while authority remained valid. It does not mean Ring acknowledged the request or supplied an IDR. In particular, aiortc may swallow a closed-transport ConnectionError. Diagnostics therefore count `attempted`, never remote delivery or completion of recovery.
+
+The HomeKit manager coalesces authenticated PLI/copy recovery into a boolean intent. It drains that intent between fully completed video batches, before the next read. A source request never delays an already-read fresh AU, never runs from the feedback reader and never allocates a task per Home PLI. The existing controller work budget is preserved. Adapted output keeps its local native IDR force; copied output can request a genuine source IDR. Existing recovery deadlines still determine whether recovery succeeded.
+
+Focused tests use actual pinned aiortc RTCP serialization without camera IO, authenticated local Home feedback, synthetic leases, current-scope/epoch/boot/privacy/stop races, concurrent coalescing, noncooperative cancellation ownership, timeout, exact primary-versus-RTX selection, release retry and the prior gateway lock-inversion pattern. The ordering regression explicitly verifies `read → feed → send → source request → next read`. A physical Ring keyframe response is not qualified here.

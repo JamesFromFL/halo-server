@@ -196,6 +196,9 @@ def _video_metrics():
             "pli_requests",
             "pli_applied",
             "sender_reports",
+            "source_keyframe_requests",
+            "source_keyframe_attempted",
+            "source_keyframe_rejected",
             "access_unit_budget_rejected",
             "access_unit_deadline_rejected",
             "partial_access_units",
@@ -300,6 +303,8 @@ class _Session:
     repair_requests: RepairRate = field(default_factory=RepairRate)
     repair_sends: RepairRate = field(default_factory=RepairRate)
     last_pli: float = 0
+    upstream_keyframe_pending: bool = False
+    last_upstream_keyframe: float = 0
     timeline: LiveTimeline | None = None
     timing_mode: str = "receiver_estimated"
     trace_first_frame: bool = False
@@ -912,6 +917,44 @@ class HomeKitLiveManager:
         if request and not session.idr_requested and session.adapter is not None:
             session.adapter.request_keyframe()
             session.idr_requested = True
+            if getattr(session.adapter, "mode", None) in {"copy", "waiting"}:
+                session.upstream_keyframe_pending = True
+
+    async def _request_upstream_keyframe(self, session):
+        # Run between completed batches, before the next source read. Never
+        # age an already-read fresh AU while waiting for source feedback.
+        # Audio may keep the other bounded controller work token.
+        if getattr(session.adapter, "mode", None) == "adapt":
+            session.upstream_keyframe_pending = False
+            return
+        callback = getattr(session.handle, "request_keyframe", None)
+        if not callable(callback) or not (
+            session.upstream_keyframe_pending or session.awaiting_idr
+        ):
+            return
+        now = self._clock()
+        if now - session.last_upstream_keyframe < 0.5:
+            return
+        self._current(session)
+        epoch = session.handle.capture_epoch
+        session.last_upstream_keyframe = now
+        session.upstream_keyframe_pending = False
+        _measure(session, "count", "source_keyframe_requests")
+        try:
+            attempted = await callback(capture_epoch=epoch)
+        except HomeKitOperationError as error:
+            if error.code != "busy":
+                raise
+            attempted = False
+            session.upstream_keyframe_pending = True
+        self._current(session)
+        if epoch != session.handle.capture_epoch:
+            attempted = False
+        _measure(
+            session,
+            "count",
+            "source_keyframe_attempted" if attempted else "source_keyframe_rejected",
+        )
 
     def _check_recovery(self, session):
         if session.recovery_since is not None and (
@@ -1054,6 +1097,7 @@ class HomeKitLiveManager:
             while not session.retired:
                 self._current(session)
                 self._check_recovery(session)
+                await self._request_upstream_keyframe(session)
                 read_started = self._clock()
                 batch = await session.handle.read(timeout=0.25)
                 now = self._clock()
@@ -1370,6 +1414,8 @@ class HomeKitLiveManager:
                     _measure(session, "count", "pli_applied")
                     session.last_pli = now
                     session.adapter.request_keyframe()
+                    if getattr(session.adapter, "mode", None) in {"copy", "waiting"}:
+                        session.upstream_keyframe_pending = True
                 if now - session.last_nack_window >= 1:
                     session.last_nack_window, session.nack_count = now, 0
                 self._prune_retransmit(session)
