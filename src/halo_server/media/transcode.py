@@ -10,6 +10,7 @@ import threading
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+from halo_server.media.cadence import IDR_INTERVAL, SourceCadence
 from halo_server.media.h264 import (
     MAX_ACCESS_UNIT_BYTES,
     MAX_OUTPUT_ACCESS_UNIT_BYTES,
@@ -244,9 +245,12 @@ class AccessUnitAdapter:
         self._epoch = None
         self._waiting_idr = True
         self._force = True
+        self._force_revision = 0
         self._mode = "waiting"
         self._adapt_requested = False
         self._last_raw = self._timestamp = None
+        self._copy_cadence = SourceCadence(configuration.fps)
+        self._last_output_idr = None
         self._bucket_timestamp = None
         self._tokens = configuration.max_bit_rate * 1000
 
@@ -265,6 +269,7 @@ class AccessUnitAdapter:
     def request_keyframe(self):
         if self._mode == "adapt":
             self._force = True
+            self._force_revision += 1
         else:
             self._waiting_idr = True
 
@@ -283,6 +288,7 @@ class AccessUnitAdapter:
             if self.configuration != configuration:
                 await self._reset(clear_parameters=False)
                 self.configuration = configuration
+                self._copy_cadence = SourceCadence(configuration.fps)
                 self._adapt_requested = False
                 self._tokens = configuration.max_bit_rate * 1000
 
@@ -291,8 +297,11 @@ class AccessUnitAdapter:
             await self._worker.close()
             self._worker = None
         self._waiting_idr, self._force, self._mode = True, True, "waiting"
+        self._force_revision += 1
         self._output = None
         self._last_raw = self._timestamp = self._bucket_timestamp = None
+        self._copy_cadence = SourceCadence(self.configuration.fps)
+        self._last_output_idr = None
         self._tokens = self.configuration.max_bit_rate * 1000
         if clear_parameters:
             self._sps = self._pps = self._source = None
@@ -356,7 +365,7 @@ class AccessUnitAdapter:
                 return ()
             raw = rtp_timestamp & 0xFFFFFFFF
             if self._last_raw is None:
-                timestamp = raw
+                timestamp = rtp_timestamp
             else:
                 delta = ((raw - self._last_raw + 2**31) & 0xFFFFFFFF) - 2**31
                 if (
@@ -369,16 +378,12 @@ class AccessUnitAdapter:
                     await self._reset(clear_parameters=False)
                     if not keyframe:
                         return ()
-                    timestamp = raw
+                    timestamp = rtp_timestamp
                 else:
                     timestamp = self._timestamp + delta
-                    if (
-                        self._source.max_reorder_frames == 0
-                        and delta > 0
-                        and delta * self.configuration.fps < 90000
-                    ):
-                        self._adapt_requested = True
             self._last_raw, self._timestamp = raw, timestamp
+            if self._source.max_reorder_frames == 0 and not self._copy_cadence.accept(timestamp):
+                self._adapt_requested = True
             self._waiting_idr = False
             if keyframe:
                 types = {nal[0] & 31 for nal in nals}
@@ -407,26 +412,51 @@ class AccessUnitAdapter:
                 self._worker = VideoWorker(self.configuration)
             if not self._source.progressive:
                 raise VideoTransformError("Interlaced source video is not qualified")
-            encoded = await self._worker.feed(payload, timestamp, force_idr=self._force)
+            # Feedback may request an IDR while the native feed is in flight.
+            # Validate only the request actually dispatched, and retain a newer
+            # request for the next input rather than rejecting this valid P frame.
+            force_required, force_revision = self._force, self._force_revision
+            encoded = await self._worker.feed(payload, timestamp, force_idr=force_required)
             result = []
             for timestamp, output in encoded:
                 out_nals = split_annexb(output)
+                types = {nal[0] & 31 for nal in out_nals}
+                output_pps = None
                 for nal in out_nals:
                     if nal[0] & 31 == 7:
                         self._output = parse_sps(nal)
+                    elif nal[0] & 31 == 8:
+                        output_pps = nal
                 if self._output is None or not _actual_output(self._output, self.configuration):
                     raise VideoTransformError("Actual encoder output does not match selection")
+                keyframe = 5 in types
+                due = (
+                    force_required
+                    or self._last_output_idr is None
+                    or timestamp - self._last_output_idr >= IDR_INTERVAL
+                )
+                if due and not keyframe:
+                    raise VideoTransformError("Actual encoder output missed source-time IDR")
+                if keyframe:
+                    if (
+                        not {5, 7, 8} <= types
+                        or output_pps is None
+                        or pps_sequence_id(output_pps) != self._output.sequence_id
+                    ):
+                        raise VideoTransformError("Actual encoder IDR lacks current parameters")
+                    self._last_output_idr = timestamp
+                force_required = False
                 result.append(
                     OutputAccessUnit(
                         output,
                         timestamp,
-                        any(nal[0] & 31 == 5 for nal in out_nals),
+                        keyframe,
                         "adapt",
                         self._source,
                         self._output,
                     )
                 )
-            if result:
+            if result and self._force_revision == force_revision:
                 self._force = False
             return tuple(result)
 

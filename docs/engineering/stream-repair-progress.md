@@ -8,8 +8,8 @@ separate from synthetic and installed-artifact checks.
 | --- | --- | --- |
 | 1 | Bounded stream diagnostics | Complete: `47ffd76`; 2,025 Python / 265 Node tests passed |
 | 2 | Audio recovery and bounded sending | Complete: `78e0e81`; 2,040 Python / 265 Node tests passed |
-| 3 | Camera-state lock isolation | Implemented: bounded legacy lane and finer shared-path diagnostics; full gate required before commit |
-| 4 | Video cadence and IDR timing | Pending |
+| 3 | Camera-state lock isolation | Complete: `4adb0c2`; 2,097 Python / 265 Node tests passed |
+| 4 | Video cadence and IDR timing | Implementation complete; verification recorded in the slice receipt |
 | 5 | Complete-frame delivery and loss recovery | Pending |
 | 6 | Quality, A/V timeline and reconfigure | Pending |
 | 7 | Installed and real-device qualification | Pending |
@@ -108,3 +108,31 @@ aid, not a claim that a post-jitter encoded gap originated on the network. A
 synthetic reordered-packet case reproduces a long encoded gap despite shorter
 raw packet gaps and final zero cumulative loss. Only the next paired-device
 measurement can attribute the owner's repeated joint audio/video pauses.
+
+
+## Slice 4
+
+A rational source-time phase replaces restarting the frame interval after every
+accepted picture. Small clock jitter no longer discards alternating nominal
+frames. Adaptation keeps each selected picture's actual90kHz PTS and never
+duplicates a slower camera's pictures. Copy remains byte-exact when compatible;
+a real repeated phase triggers the existing adaptation/IDR boundary.
+
+Managed encoding forces and verifies actual NAL5 plus current SPS/PPS on a
+source-time recovery interval. Quantization and a missing source picture allow
+one available input interval; no exact wall-clock promise is made when Ring
+provides no picture. Copy still needs a real source IDR; current-lease upstream
+requests and bounded recovery belong to slice5.
+
+Native investigation also found that x264 zerolatency uses constant-rate input
+accounting. A15fps source under nominal30 can spend about half its payload
+target. Enabling variable-rate accounting restores the tested moving-fixture
+budget but introduces one frame of lookahead and non-fixed VUI timing. Slice4
+preserves the existing immediate-output mode; slice6 must qualify that explicit
+tradeoff with original-source receipt attribution before any adoption.
+
+The R4 review also found a keyframe-request race: feedback arriving while a native
+feed was awaiting completion could retroactively require that already-dispatched
+P frame to be an IDR, then erase the pending request. A request revision now
+separates dispatched and newer requests. Held-feed and skipped-output regressions
+preserve the next actual forced IDR. Twenty-seven focused cadence/native tests pass.

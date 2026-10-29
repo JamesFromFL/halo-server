@@ -9,7 +9,6 @@ from __future__ import annotations
 import contextlib
 import importlib.util
 import json
-import math
 import os
 import resource
 import struct
@@ -26,6 +25,12 @@ if __name__ == "__main__":
     _limits.apply_child_cpu_limit()
 
 import av
+
+_cadence_spec = importlib.util.spec_from_file_location(
+    "_halo_source_cadence", Path(__file__).with_name("cadence.py")
+)
+_cadence = importlib.util.module_from_spec(_cadence_spec)
+_cadence_spec.loader.exec_module(_cadence)
 
 MAX_AU = 8 * 1024 * 1024
 MAX_OUTPUT = 2 * 1024 * 1024
@@ -75,6 +80,33 @@ def letterbox(frame, width, height):
     return output
 
 
+def open_encoder(config):
+    """Open the fixed managed encoder, preserving source-time PTS precision."""
+    width, height, fps = config["width"], config["height"], config["fps"]
+    encoder = av.CodecContext.create("libx264", "w")
+    encoder.width, encoder.height = width, height
+    encoder.pix_fmt, encoder.time_base, encoder.framerate = (
+        "yuv420p",
+        Fraction(1, 90000),
+        Fraction(fps),
+    )
+    encoder.bit_rate, encoder.thread_count = config["max_bit_rate"] * 1000, 1
+    encoder.gop_size, encoder.max_b_frames = fps * 2, 0
+    encoder.options = {
+        "preset": "veryfast",
+        "tune": "zerolatency",
+        "profile": config["profile"],
+        "level": config["level"],
+        "forced-idr": "1",
+        "x264-params": f"bframes=0:scenecut=0:repeat-headers=1:keyint={fps * 2}:"
+        f"vbv-maxrate={config['max_bit_rate']}:vbv-bufsize={config['max_bit_rate']}",
+    }
+    encoder.open()
+    if encoder.options:
+        raise ValueError
+    return encoder
+
+
 def main():
     os.umask(0o077)
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
@@ -85,27 +117,11 @@ def main():
         raise ValueError
     config = json.loads(read_exact(size))
     width, height, fps = config["width"], config["height"], config["fps"]
-    encoder = av.CodecContext.create("libx264", "w")
-    encoder.width, encoder.height = width, height
-    encoder.pix_fmt, encoder.time_base, encoder.framerate = (
-        "yuv420p",
-        Fraction(1, fps),
-        Fraction(fps),
-    )
-    encoder.bit_rate, encoder.thread_count = config["max_bit_rate"] * 1000, 1
-    encoder.gop_size, encoder.max_b_frames = fps * 2, 0
-    encoder.options = {
-        "preset": "veryfast",
-        "tune": "zerolatency",
-        "profile": config["profile"],
-        "level": config["level"],
-        "x264-params": f"bframes=0:scenecut=0:repeat-headers=1:keyint={fps * 2}:"
-        f"vbv-maxrate={config['max_bit_rate']}:vbv-bufsize={config['max_bit_rate']}",
-    }
-    encoder.open()
+    encoder = open_encoder(config)
     decoder = av.CodecContext.create("h264", "r")
     decoder.thread_count = 1
-    counter, last_source = 0, None
+    cadence = _cadence.SourceCadence(fps)
+    last_idr_source = None
     write(b"S")
     while True:
         try:
@@ -141,11 +157,16 @@ def main():
                 if frame.pts is None
                 else int(frame.pts * (frame.time_base or Fraction(1, 90000)) * 90000)
             )
-            if last_source is not None and source - last_source < math.ceil(90000 / fps):
+            if not cadence.accept(source):
                 continue
             output = letterbox(frame, width, height)
-            output.pts, output.time_base = counter, Fraction(1, fps)
-            if force:
+            output.pts, output.time_base = source, Fraction(1, 90000)
+            needs_idr = (
+                force
+                or last_idr_source is None
+                or source - last_idr_source >= _cadence.IDR_INTERVAL
+            )
+            if needs_idr:
                 output.pict_type = av.video.frame.PictureType.I
             packets = encoder.encode(output)
             encoded = b"".join(bytes(packet) for packet in packets)
@@ -161,8 +182,9 @@ def main():
                 if len(decoded) != 1 or (decoded[0].width, decoded[0].height) != (width, height):
                     raise ValueError
             outputs.append(struct.pack("!QI", source, len(encoded)) + encoded)
-            counter += 1
-            last_source = source
+            if needs_idr or any(packet.is_keyframe for packet in packets):
+                last_idr_source = source
+            force = 0
         write(b"V" + bytes([len(outputs)]) + b"".join(outputs))
 
 
