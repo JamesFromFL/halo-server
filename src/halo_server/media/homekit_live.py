@@ -18,7 +18,7 @@ from uuid import UUID
 
 from halo_server.homekit.models import HomeKitOperationError, MediaScope
 from halo_server.media.buffer import MediaStreamKind
-from halo_server.media.h264 import H264Error, parse_sps, pps_sequence_id
+from halo_server.media.h264 import H264Error, SpsInfo, parse_sps, pps_sequence_id
 from halo_server.media.homekit_audio import AudioEndpointRequest, AudioTrack, PreparedAudio
 from halo_server.media.live_timeline import LiveTimeline
 from halo_server.media.manager import settle_owned
@@ -33,6 +33,7 @@ from halo_server.media.rtp import (
 )
 from halo_server.media.srtp import SecureVideo, SrtpError
 from halo_server.media.telemetry import StreamMetrics, safe_diagnostics
+from halo_server.media.video_budget import CodecRateMonitor, VideoBudgetError, VideoWirePolicy
 
 PREPARE_SECONDS = 15.0
 SOURCE_SECONDS = 25.0
@@ -134,6 +135,26 @@ def _trace_age(now, observed):
     if type(observed) not in (int, float) or not observed or not math.isfinite(observed):
         return None
     return min(3_600_000, round(max(0, now - observed) * 1000))
+
+
+def _format_diagnostics(adapter, attribute):
+    with contextlib.suppress(Exception):
+        info = getattr(adapter, attribute, None)
+        if isinstance(info, SpsInfo):
+            rate = info.frame_rate
+            return {
+                "width": info.width,
+                "height": info.height,
+                "profile": _trace_label(info.profile, {"baseline", "main", "high"}),
+                "level_idc": info.level_idc,
+                "frame_rate": (
+                    {"numerator": rate.numerator, "denominator": rate.denominator}
+                    if rate is not None
+                    else None
+                ),
+                "max_reorder_frames": info.max_reorder_frames,
+            }
+    return None
 
 
 def _video_metrics():
@@ -272,6 +293,7 @@ class _Session:
     trace_terminal: bool = False
     metrics: StreamMetrics = field(default_factory=_video_metrics)
     receiver_stats: ReceiverReportStats = field(default_factory=ReceiverReportStats)
+    codec_rate: CodecRateMonitor = field(default_factory=CodecRateMonitor)
     diagnostic_source_pts: int | None = None
     diagnostic_source_receipt: float | None = None
     diagnostic_output_pts: int | None = None
@@ -398,6 +420,12 @@ class HomeKitLiveManager:
             "source_age_ms": _trace_age(now, session.last_source),
             "feedback_age_ms": _trace_age(now, session.last_feedback),
             "video_format": video_format,
+            "actual_source_format": _format_diagnostics(session.adapter, "source_format"),
+            "actual_output_format": _format_diagnostics(session.adapter, "output_format"),
+            "codec_source_time_window": session.codec_rate.snapshot(),
+            "local_wire_peak_bps": (
+                VideoWirePolicy(config.max_bit_rate).peak_bps if config is not None else None
+            ),
             "audio_enabled": session.audio_config is not None,
             "mode": _trace_label(
                 getattr(session.adapter, "mode", None), {"waiting", "copy", "adapt"}
@@ -959,6 +987,14 @@ class HomeKitLiveManager:
                     else:
                         metrics.observe("output_pts_step", delta / 90000)
                 session.diagnostic_output_pts = output.timestamp
+                with contextlib.suppress(Exception):
+                    session.codec_rate.observe(
+                        epoch=output.capture_epoch,
+                        generation=output.configuration_generation,
+                        selected_kbps=session.config.max_bit_rate,
+                        source_pts=output.timestamp,
+                        encoded_bytes=len(output.payload),
+                    )
 
     @staticmethod
     def _configuration_generation(session):
@@ -1144,10 +1180,16 @@ class HomeKitLiveManager:
                 )
             finally:
                 session.packetizer.sequence = sequence
-            started = max(self._clock(), session.next_packet_at)
-            rate = config.max_bit_rate * 1000
-            duration = sum(len(item.packet) + 10 for item in datagrams) * 8 / rate
-            if started + duration > deadline:
+            try:
+                reservation = VideoWirePolicy(config.max_bit_rate).reserve(
+                    tuple(len(item.packet) + 10 for item in datagrams),
+                    now=self._clock(),
+                    next_packet_at=session.next_packet_at,
+                    deadline=deadline,
+                )
+            except VideoBudgetError:
+                reservation = None
+            if reservation is None:
                 _measure(session, "count", "access_unit_budget_rejected")
                 return self._reject_access_unit(session, idr=idr)
             timestamp = self._timestamp(session, output.timestamp)
@@ -1241,7 +1283,7 @@ class HomeKitLiveManager:
         now = self._clock()
         target = max(now, session.next_packet_at)
         limit = deadline if deadline is not None else now + MAX_ACCESS_UNIT_SECONDS
-        service = len(protected) * 8 / (session.config.max_bit_rate * 1000)
+        service = VideoWirePolicy(session.config.max_bit_rate).service(len(protected))
         admission_deadline = limit - service
         if target > admission_deadline:
             raise _VideoDeadline

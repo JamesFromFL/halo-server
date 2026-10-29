@@ -484,7 +484,7 @@ async def test_capture_epoch_change_between_packetization_and_udp_write_rejects_
 
 
 @pytest.mark.asyncio
-async def test_packet_pacing_respects_actual_selected_bitrate_instead_of_clamped_idr_burst():
+async def test_packet_pacing_respects_finite_wire_peak_without_clamping_idr_duration():
     manager, controller, identity, _, receiver = await prepared()
     session = manager._sessions[identity]
     session.config, session.handle = CONFIG, controller.handle
@@ -496,9 +496,14 @@ async def test_packet_pacing_respects_actual_selected_bitrate_instead_of_clamped
         elapsed = time.monotonic() - began
         # The first UDP packet may leave immediately; every later packet waits
         # for its byte budget, carrying debt across access units.
-        assert elapsed >= (10_000 - CONFIG.mtu) * 8 / (CONFIG.max_bit_rate * 1000)
+        from halo_server.media.video_budget import VideoWirePolicy
+
+        assert elapsed >= (10_000 - CONFIG.mtu) * 8 / VideoWirePolicy(CONFIG.max_bit_rate).peak_bps
         assert elapsed < 1.0
-        assert session.next_packet_at > began + 0.25
+        assert (
+            session.next_packet_at
+            > began + 10_000 * 8 / VideoWirePolicy(CONFIG.max_bit_rate).peak_bps
+        )
     finally:
         receiver.close()
         await manager.close()
@@ -906,7 +911,7 @@ async def test_blocked_codec_cleanup_is_bounded_and_retains_claim_until_actual_c
 
 
 @pytest.mark.asyncio
-async def test_retransmissions_share_the_selected_media_byte_clock():
+async def test_retransmissions_share_the_bounded_local_wire_peak():
     manager, controller, identity, _, receiver = await prepared()
     session = manager._sessions[identity]
     session.config, session.handle = CONFIG, controller.handle
@@ -915,7 +920,12 @@ async def test_retransmissions_share_the_selected_media_byte_clock():
         began = time.monotonic()
         for _ in range(5):
             await manager._paced_send(session, packet, epoch=controller.handle.capture_epoch)
-        assert time.monotonic() - began >= 4 * len(packet) * 8 / (CONFIG.max_bit_rate * 1000)
+        from halo_server.media.video_budget import VideoWirePolicy
+
+        assert (
+            time.monotonic() - began
+            >= 4 * len(packet) * 8 / VideoWirePolicy(CONFIG.max_bit_rate).peak_bps
+        )
     finally:
         receiver.close()
         await manager.close()

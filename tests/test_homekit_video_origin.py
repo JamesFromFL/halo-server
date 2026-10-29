@@ -204,7 +204,7 @@ async def test_copy_to_native_retry_passes_original_receipt_and_validates_native
     async with controlled(monkeypatch, bitrate=132) as (manager, controller, session, clock, sink):
         session.config = replace(CONFIG, max_bit_rate=132)
         receipt = clock() - 0.100
-        source = wire_idr(10000)
+        source = wire_idr(150000)
         session.adapter = Adapter(
             [
                 (origin(receipt, payload=source, mode="copy"),),

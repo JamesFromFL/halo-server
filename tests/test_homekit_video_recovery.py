@@ -118,7 +118,7 @@ async def test_predictable_whole_au_miss_rejects_before_any_wire_or_crypto_index
         session.secure.protect = lambda packet: protects.append(packet) or original(packet)
         sequence = session.packetizer.sequence
         assert not await manager._access_unit(
-            session, output(wire_idr(10000)), session.capture_epoch, received_at=clock()
+            session, output(wire_idr(150000)), session.capture_epoch, received_at=clock()
         )
         assert not sink.sent and not protects
         assert session.packetizer.sequence == sequence
@@ -141,15 +141,15 @@ async def test_pacing_oversleep_never_admits_a_stale_datagram(monkeypatch):
 @pytest.mark.asyncio
 async def test_small_oversleep_rejects_virtual_service_overrun_before_source_deadline(monkeypatch):
     async with controlled(monkeypatch) as (manager, _, session, clock, sink):
-        session.next_packet_at = clock() + 0.470
-        clock.overshoot = 0.010
+        session.next_packet_at = clock() + 0.490
+        clock.overshoot = 0.007
         deadline = clock() + 0.500
         with pytest.raises(module._VideoDeadline):
             await manager._paced_send(
                 session, b"p" * 1000, epoch=session.capture_epoch, deadline=deadline
             )
         assert clock() < deadline
-        assert clock() + 1000 * 8 / 300000 > deadline
+        assert clock() + 1000 * 8 / 2000000 > deadline
         assert not sink.sent
 
 
@@ -183,7 +183,7 @@ async def test_blocking_udp_retry_reserves_remaining_datagram_service_time(monke
                 session, b"p" * 1000, epoch=session.capture_epoch, deadline=deadline
             )
         assert not sink.sent and clock() < deadline
-        assert clock() + 1000 * 8 / 300000 > deadline
+        assert clock() + 1000 * 8 / 2000000 > deadline
 
 
 @pytest.mark.asyncio
@@ -265,12 +265,15 @@ async def test_infeasible_fresh_idrs_have_finite_attempts_but_p_skips_do_not_cou
             if index == module.MAX_RECOVERY_IDRS - 1:
                 with pytest.raises(HomeKitOperationError) as failure:
                     await manager._access_unit(
-                        session, output(wire_idr(10000)), session.capture_epoch, received_at=clock()
+                        session,
+                        output(wire_idr(150000)),
+                        session.capture_epoch,
+                        received_at=clock(),
                     )
                 assert failure.value.code == "media_saturated"
             else:
                 assert not await manager._access_unit(
-                    session, output(wire_idr(10000)), session.capture_epoch, received_at=clock()
+                    session, output(wire_idr(150000)), session.capture_epoch, received_at=clock()
                 )
                 for _ in range(4):
                     assert not await manager._access_unit(
@@ -432,7 +435,7 @@ async def test_age490ms_rejects_whole_idr_before_first_packet_when_it_cannot_fit
     async with controlled(monkeypatch) as (manager, _, session, clock, sink):
         seq = session.packetizer.sequence
         assert not await manager._access_unit(
-            session, output(), session.capture_epoch, received_at=clock() - 0.49
+            session, output(wire_idr(10000)), session.capture_epoch, received_at=clock() - 0.49
         )
         assert not sink.sent and session.packetizer.sequence == seq
         assert session.awaiting_idr and not session.retired
