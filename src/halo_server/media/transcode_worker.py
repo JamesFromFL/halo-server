@@ -124,10 +124,20 @@ def open_encoder(config, *, source=None, nominal_fps=None):
     # The negotiated value is a codec one-second maximum, not a protected-wire
     # serialization rate. Native moving-scene probes retain a measured codec
     # reserve; full-target/larger-VBV probes exceeded startup or covered windows. This is
-    # an empirical target, not a universal bound; the separate monitor observes
-    # actual encoded windows and transport owns its finite byte/burst budget.
+    # an empirical target, not a universal bound; reserve VBV capacity from
+    # the selected one-second budget instead of adding half the target again.
+    # Fixed-CFR cadence transitions and context resets still need monitoring.
+    # Both changes are qualified only through 720p. Preserve the original
+    # preset/VBV above that geometry; fast failed the 1080p30 CPU benchmark.
+    # The separate monitor observes actual encoded windows and transport owns
+    # its finite byte/burst budget.
     payload_rate = max(1, config["max_bit_rate"] * 82 // 100)
-    vbv_size = max(1, (payload_rate + 1) // 2)
+    qualified_fast = width * height <= 1280 * 720
+    vbv_size = (
+        max(1, config["max_bit_rate"] - payload_rate)
+        if qualified_fast
+        else max(1, (payload_rate + 1) // 2)
+    )
     encoder.bit_rate, encoder.thread_count = payload_rate * 1000, 1
     encoder.gop_size, encoder.max_b_frames = fps * 2, 0
     encoder.sample_aspect_ratio = Fraction(1)
@@ -135,7 +145,7 @@ def open_encoder(config, *, source=None, nominal_fps=None):
         for name in ("colorspace", "color_primaries", "color_trc", "color_range"):
             setattr(encoder, name, getattr(source, name))
     encoder.options = {
-        "preset": "veryfast",
+        "preset": "fast" if qualified_fast else "veryfast",
         "tune": "zerolatency",
         "profile": config["profile"],
         "level": config["level"],

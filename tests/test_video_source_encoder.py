@@ -269,12 +269,18 @@ async def test_native_known_bt709_rgb_bars_range_and_nonsquare_source_pixels(ful
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "width,height,kbps,minimum_psnr", [(640, 360, 132, 23), (1280, 720, 299, 20)]
+    "source_fps,width,height,kbps,minimum_psnr",
+    [
+        (15, 640, 360, 132, 24),
+        (15, 1280, 720, 299, 21),
+        (30, 640, 360, 132, 24),
+        (30, 1280, 720, 299, 20),
+    ],
 )
-async def test_moving_source15_selected30_has_calibrated_budget_without_a_pending_tail(
-    width, height, kbps, minimum_psnr
+async def test_moving_source_selected_max30_has_quality_budget_without_a_pending_tail(
+    source_fps, width, height, kbps, minimum_psnr
 ):
-    source = encode_moving_source(15)
+    source = encode_moving_source(source_fps)
     adapter = AccessUnitAdapter(VideoConfiguration(width, height, 30, "high", "3.1", kbps))
     reference_decoder, decoder = (
         av.CodecContext.create("h264", "r"),
