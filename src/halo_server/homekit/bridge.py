@@ -36,6 +36,7 @@ from halo_server.homekit.settings import (
 )
 from halo_server.media.manager import owned_thread, settle_owned
 from halo_server.media.recording_policy import RecordingAuthority, RecordingPolicyOwner
+from halo_server.media.telemetry import safe_diagnostics
 from halo_server.paths import PathSecurityError, open_private_directory
 
 _LOGGER = logging.getLogger(__name__)
@@ -1126,6 +1127,7 @@ class HomeKitBridge:
             "publication_listening": publication["published"] if publication is not None else 0,
             "publication_advertised": publication["advertised"] if publication is not None else 0,
             "real_ring_apple_qualified": False,
+            "live_stream_diagnostics": safe_diagnostics(self._live),
             "live_video_ready": self._live.ready,
             "live_video_resources": self._live.pending_resources,
             "live_video_cleanup_failures": self._live.cleanup_failures,

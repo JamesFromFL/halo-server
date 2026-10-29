@@ -6,9 +6,11 @@ RTCP after that boundary and never changes source NAL bytes or codec labels.
 
 from __future__ import annotations
 
+import math
 import secrets
 import struct
 import time
+from collections import OrderedDict
 from dataclasses import dataclass
 
 from aiortc.rtp import (
@@ -28,6 +30,9 @@ MAX_NAL_UNITS = 256
 MAX_RTCP_BYTES = 16 * 1024
 MAX_RTCP_PACKETS = 32
 MAX_NACK_PACKETS = 128
+MAX_RECEIVER_REPORTS = 32
+MAX_RECENT_SENDER_REPORTS = 128
+SENDER_REPORT_HISTORY_SECONDS = 60.0
 RTP_HEADER_BYTES = 12
 SRTP_TAG_BYTES = 10
 MAX_UDP_PAYLOAD_BYTES = 1200
@@ -124,11 +129,125 @@ def sender_report(
 
 
 @dataclass(frozen=True)
+class ReceiverReport:
+    """Only the bounded report block for this output, without either SSRC."""
+
+    fraction_lost: int
+    packets_lost: int
+    highest_sequence: int
+    jitter: int
+    lsr: int
+    dlsr: int
+
+
+@dataclass(frozen=True)
 class Feedback:
     pli: bool = False
     nack: tuple[int, ...] = ()
     bye: bool = False
     reports: int = 0
+    receiver_reports: tuple[ReceiverReport, ...] = ()
+
+
+class ReceiverReportStats:
+    """Read-side evidence, never a congestion or feedback admission decision.
+
+    RFC3550 RTT is usable only when LSR identifies a recent report we actually
+    sent. Local monotonic elapsed time avoids wall-clock adjustments; DLSR is
+    the receiver's delay in units of 1/65536 second. No report means unknown.
+    """
+
+    def __init__(self, clock_rate: int = 90000):
+        if type(clock_rate) is not int or not 1 <= clock_rate <= 192000:
+            raise ValueError("Invalid receiver-report clock rate")
+        self._clock_rate = clock_rate
+        self._sent: OrderedDict[int, float] = OrderedDict()
+        self._latest: ReceiverReport | None = None
+        self._received_at: float | None = None
+        self._rtt: float | None = None
+        self._rtt_at: float | None = None
+        self._samples = self._rtt_samples = self._unmatched = self._invalid = 0
+        self._reordered = self._advance = 0
+
+    def _prune(self, now):
+        while self._sent:
+            first = next(iter(self._sent.values()))
+            if (
+                now - first <= SENDER_REPORT_HISTORY_SECONDS
+                and len(self._sent) <= MAX_RECENT_SENDER_REPORTS
+            ):
+                break
+            self._sent.popitem(last=False)
+
+    def sent(self, payload: bytes, now: float):
+        # This is our own serialized SR, called only after a successful send.
+        if not isinstance(payload, bytes) or len(payload) < 28 or not math.isfinite(now):
+            return
+        compact = (struct.unpack_from("!Q", payload, 8)[0] >> 16) & 0xFFFFFFFF
+        if compact:
+            self._sent.pop(compact, None)
+            self._sent[compact] = now
+        self._prune(now)
+
+    def observe(self, reports: tuple[ReceiverReport, ...], now: float):
+        if not math.isfinite(now):
+            return
+        self._prune(now)
+        for report in reports[:MAX_RECEIVER_REPORTS]:
+            if self._latest is not None:
+                advance = (report.highest_sequence - self._latest.highest_sequence) & 0xFFFFFFFF
+                if advance >= 0x80000000:
+                    self._reordered = min(2**53 - 1, self._reordered + 1)
+                    continue
+                self._advance = min(2**53 - 1, self._advance + advance)
+            self._latest, self._received_at = report, now
+            self._samples = min(2**53 - 1, self._samples + 1)
+            sent_at = self._sent.get(report.lsr) if report.lsr else None
+            if sent_at is None:
+                self._unmatched = min(2**53 - 1, self._unmatched + 1)
+                continue
+            elapsed = now - sent_at
+            rtt = elapsed - report.dlsr / 65536
+            if not 0 <= rtt <= SENDER_REPORT_HISTORY_SECONDS or elapsed < 0:
+                self._invalid = min(2**53 - 1, self._invalid + 1)
+                continue
+            self._rtt, self._rtt_at = rtt, now
+            self._rtt_samples = min(2**53 - 1, self._rtt_samples + 1)
+
+    def snapshot(self, now: float):
+        stale = (
+            self._received_at is not None
+            and now - self._received_at > SENDER_REPORT_HISTORY_SECONDS
+        )
+        report = self._latest if not stale else None
+        rtt_valid = self._rtt_at is not None and now - self._rtt_at <= SENDER_REPORT_HISTORY_SECONDS
+
+        def age(observed):
+            return (
+                min(3_600_000, round(max(0, now - observed) * 1000))
+                if observed is not None
+                else None
+            )
+
+        return {
+            "reports": self._samples,
+            "reordered_reports": self._reordered,
+            "highest_sequence_advance": self._advance,
+            "state": "unknown" if self._received_at is None else "stale" if stale else "current",
+            "age_ms": age(self._received_at),
+            "fraction_lost_256": report.fraction_lost if report is not None else None,
+            "packets_lost": report.packets_lost if report is not None else None,
+            "clock_rate": self._clock_rate,
+            "jitter_ticks": report.jitter if report is not None else None,
+            "jitter_us": round(report.jitter * 1_000_000 / self._clock_rate)
+            if report is not None
+            else None,
+            "rtt_us": round(self._rtt * 1_000_000) if rtt_valid else None,
+            "rtt_age_ms": age(self._rtt_at),
+            "rtt_samples": self._rtt_samples,
+            "rtt_unmatched": self._unmatched,
+            "rtt_invalid": self._invalid,
+        }
 
 
 def parse_feedback(payload: bytes, media_ssrc: int) -> Feedback:
@@ -143,10 +262,24 @@ def parse_feedback(payload: bytes, media_ssrc: int) -> Feedback:
         raise RtpError("RTCP compound packet count exceeds its limit")
     pli = bye = False
     reports = 0
+    receiver_reports = []
     nack = []
     for packet in packets:
-        if isinstance(packet, RtcpRrPacket):
-            reports += sum(report.ssrc == media_ssrc for report in packet.reports)
+        if isinstance(packet, (RtcpRrPacket, RtcpSrPacket)):
+            for report in packet.reports:
+                if report.ssrc == media_ssrc:
+                    reports += 1
+                    if len(receiver_reports) < MAX_RECEIVER_REPORTS:
+                        receiver_reports.append(
+                            ReceiverReport(
+                                report.fraction_lost,
+                                report.packets_lost,
+                                report.highest_sequence,
+                                report.jitter,
+                                report.lsr,
+                                report.dlsr,
+                            )
+                        )
         elif isinstance(packet, RtcpPsfbPacket) and packet.media_ssrc == media_ssrc:
             if packet.fmt == 1:
                 if packet.fci:
@@ -161,4 +294,4 @@ def parse_feedback(payload: bytes, media_ssrc: int) -> Feedback:
                     raise RtpError("NACK packet count exceeds its limit")
         elif isinstance(packet, RtcpByePacket):
             bye = True
-    return Feedback(pli, tuple(dict.fromkeys(nack)), bye, reports)
+    return Feedback(pli, tuple(dict.fromkeys(nack)), bye, reports, tuple(receiver_reports))

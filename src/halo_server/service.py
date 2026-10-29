@@ -51,6 +51,7 @@ from halo_server.media.manager import CaptureRegistry, acquire_owned, owned_thre
 from halo_server.media.ring_media import validate_media_compatibility
 from halo_server.media.ring_speaker import supports_ring_camera_intercom
 from halo_server.media.session import CameraMediaSession, MediaSessionState
+from halo_server.media.telemetry import safe_diagnostics
 from halo_server.paths import ServerPaths
 from halo_server.ring.client import RingSessionManager, SessionSupersededError
 from halo_server.ring.credentials import CredentialStore, CredentialStoreError
@@ -815,6 +816,7 @@ class HaloService:
                 "buffer_ready": snapshot.buffer_ready,
                 "buffer_packets": snapshot.buffer_packets,
                 "buffer_bytes": snapshot.buffer_bytes,
+                "diagnostics": safe_diagnostics(session),
                 "opus_frame_duration_ms": snapshot.opus_frame_duration_ms,
                 "failure": snapshot.failure,
             }

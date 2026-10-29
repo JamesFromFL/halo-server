@@ -8,6 +8,7 @@ import math
 import threading
 import time
 from collections.abc import Callable
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass, replace
 from enum import StrEnum
 
@@ -24,7 +25,7 @@ from halo_server.media.leases import (
     MediaLease,
     MediaLeaseCoordinator,
 )
-from halo_server.media.opus import OpusError, OriginalOpusBuffer
+from halo_server.media.opus import OpusError, OriginalOpusBuffer, parse_opus
 from halo_server.media.recording_capture import RecordingSourceBuffer
 from halo_server.media.ring_media import (
     EncodedFrameAdapterError,
@@ -34,6 +35,7 @@ from halo_server.media.ring_media import (
     SourceClockObservation,
 )
 from halo_server.media.supervisor import supervise_receiver
+from halo_server.media.telemetry import StreamMetrics
 
 _log = logging.getLogger(__name__)
 
@@ -127,6 +129,205 @@ class CameraMediaSession:
         self._retry_at: float | None = None
         self._capture_attempt = 0
         self._permanent_failure = False
+        self._diagnostic_clock = time.monotonic
+        self._diagnostic_lock = threading.Lock()
+        self._diagnostic_revision = object()
+        self._ingress_local = threading.local()
+        self._last_ingress = {}
+        self._last_pts = {}
+        self._receiver_statistics = None
+        self._receiver_statistics_at = None
+        self._metrics = StreamMetrics(
+            counters=(
+                "audio_ingress_frames",
+                "video_ingress_frames",
+                "audio_admitted_frames",
+                "video_admitted_frames",
+                "audio_admitted_bytes",
+                "video_admitted_bytes",
+                "audio_admitted_samples",
+                "audio_admission_rejected",
+                "video_admission_rejected",
+                "audio_pts_duplicate",
+                "video_pts_duplicate",
+                "audio_pts_backward",
+                "video_pts_backward",
+                "video_idrs",
+                "legacy_audio_calls",
+                "receiver_stats_missing",
+            ),
+            timings=(
+                "audio_ingress_interval",
+                "video_ingress_interval",
+                "audio_pre_admission",
+                "video_pre_admission",
+                "audio_entry_to_admission",
+                "video_entry_to_admission",
+                "audio_admission_wait",
+                "video_admission_wait",
+                "audio_pts_step",
+                "video_pts_step",
+                "source_clock_read_wait",
+                "source_clock_write_wait",
+                "authority_wait",
+                "legacy_audio_wait",
+                "legacy_encode",
+                "source_loop_wakeup_lag",
+                "receiver_stats_collection",
+            ),
+        )
+
+    def _diagnostic_time(self):
+        try:
+            value = self._diagnostic_clock()
+            return (
+                value
+                if type(value) in {int, float} and math.isfinite(value) and value >= 0
+                else None
+            )
+        except BaseException:
+            return None
+
+    def _metric(self, method, name, value=1):
+        with suppress(BaseException):
+            getattr(self._metrics, method)(name, value)
+
+    @contextmanager
+    def _measured_state_lock(self, name):
+        started = self._diagnostic_time()
+        acquired = None
+        try:
+            with self._lock:
+                acquired = self._diagnostic_time()
+                yield
+        finally:
+            if started is not None and acquired is not None:
+                self._metric("observe", name, max(0, acquired - started))
+
+    def _encoded_ingress(self, generation, kind, timestamp, entered):
+        if (
+            generation != self._runner_generation
+            or kind not in {"audio", "video"}
+            or type(timestamp) is not int
+            or type(entered) not in {int, float}
+            or not math.isfinite(entered)
+            or entered < 0
+        ):
+            return None
+        with self._diagnostic_lock:
+            if generation != self._runner_generation or self._stop is None or self._stop.is_set():
+                return None
+            token = (generation, kind, timestamp, entered, self._diagnostic_revision)
+            previous = self._last_ingress.get(kind)
+            self._last_ingress[kind] = entered
+        self._ingress_local.entry = token
+        self._metric("count", f"{kind}_ingress_frames")
+        if previous is not None:
+            self._metric("observe", f"{kind}_ingress_interval", max(0, entered - previous))
+
+        def clear():
+            if getattr(self._ingress_local, "entry", None) is token:
+                del self._ingress_local.entry
+
+        return clear
+
+    def _ingress_entry(self, generation, kind, timestamp):
+        token = getattr(self._ingress_local, "entry", None)
+        with self._diagnostic_lock:
+            return (
+                token[3]
+                if token is not None
+                and token[:3] == (generation, kind, timestamp)
+                and token[4] is self._diagnostic_revision
+                else None
+            )
+
+    def _admitted(self, kind, packet, entered):
+        with suppress(BaseException):
+            self._observe_admitted(kind, packet, entered)
+
+    def _observe_admitted(self, kind, packet, entered):
+        # Only metadata derived from already-admitted packets is observed here.
+        self._metric("count", f"{kind}_admitted_frames")
+        self._metric("count", f"{kind}_admitted_bytes", len(packet.payload))
+        finished = self._diagnostic_time()
+        if finished is not None and entered is not None:
+            self._metric("observe", f"{kind}_entry_to_admission", max(0, finished - entered))
+        with self._diagnostic_lock:
+            previous = self._last_pts.get(kind)
+            self._last_pts[kind] = packet.capture_epoch, packet.rtp_timestamp
+        if previous is not None and previous[0] == packet.capture_epoch:
+            delta = packet.rtp_timestamp - previous[1]
+            if delta > 0:
+                self._metric(
+                    "observe", f"{kind}_pts_step", delta / (48000 if kind == "audio" else 90000)
+                )
+            elif delta == 0:
+                self._metric("count", f"{kind}_pts_duplicate")
+            else:
+                self._metric("count", f"{kind}_pts_backward")
+        if kind == "audio":
+            with suppress(BaseException):
+                self._metric(
+                    "count", "audio_admitted_samples", parse_opus(packet.payload).duration_samples
+                )
+        elif 5 in packet.h264_nal_types:
+            self._metric("count", "video_idrs")
+
+    def _receiver_stats(self, generation, snapshot, lag, duration):
+        with self._diagnostic_lock:
+            stop = self._stop
+            revision = self._diagnostic_revision
+            if generation != self._runner_generation or stop is None or stop.is_set():
+                return
+        safe = None
+        if isinstance(snapshot, dict):
+            safe = {}
+            for kind in ("audio", "video"):
+                row = snapshot.get(kind)
+                safe[kind] = None
+                if not isinstance(row, dict):
+                    continue
+                fields = {}
+                for name in ("packets_received", "packets_lost", "jitter_ticks"):
+                    value = row.get(name)
+                    low = -(2**53 - 1) if name == "packets_lost" else 0
+                    fields[name] = (
+                        value if type(value) is int and low <= value <= 2**53 - 1 else None
+                    )
+                fields["clock_rate"] = 48000 if kind == "audio" else 90000
+                safe[kind] = fields
+        with self._diagnostic_lock:
+            if (
+                revision is not self._diagnostic_revision
+                or generation != self._runner_generation
+                or self._stop is not stop
+                or stop.is_set()
+            ):
+                return
+            self._receiver_statistics = safe
+            self._receiver_statistics_at = self._diagnostic_time()
+        if safe is None or all(row is None for row in safe.values()):
+            self._metric("count", "receiver_stats_missing")
+        self._metric("observe", "source_loop_wakeup_lag", lag)
+        self._metric("observe", "receiver_stats_collection", duration)
+
+    def diagnostics(self):
+        now = self._diagnostic_time()
+        with self._diagnostic_lock:
+            received = self._receiver_statistics_at
+            age = None if now is None or received is None else max(0, now - received)
+            statistics = self._receiver_statistics if age is not None and age <= 3 else None
+            safe = (
+                {kind: dict(row) if row is not None else None for kind, row in statistics.items()}
+                if statistics is not None
+                else None
+            )
+        return {
+            "metrics": self._metrics.snapshot(),
+            "receiver_stats": safe,
+            "receiver_stats_age_ms": round(age * 1000) if age is not None else None,
+        }
 
     @property
     def buffer(self) -> EncodedMediaBuffer:
@@ -141,7 +342,7 @@ class CameraMediaSession:
         return self._recording_video_buffer
 
     def source_clock_snapshot(self):
-        with self._lock:
+        with self._measured_state_lock("source_clock_read_wait"):
             epoch = self._buffer.capture_epoch
             return tuple(
                 observation
@@ -171,9 +372,15 @@ class CameraMediaSession:
         self._video_configuration_epoch = 0
         self._video_sps = self._video_pps = None
         self._recording_seen_idr = False
+        with self._diagnostic_lock:
+            # One opaque revision slot: no counter growth, wrap or ABA reuse.
+            self._diagnostic_revision = object()
+            self._last_ingress.clear()
+            self._last_pts.clear()
+            self._receiver_statistics = self._receiver_statistics_at = None
 
     def _source_clock(self, generation, observation):
-        with self._lock:
+        with self._measured_state_lock("source_clock_write_wait"):
             if (
                 not self._accepts_media_locked(generation)
                 or not isinstance(observation, SourceClockObservation)
@@ -188,19 +395,26 @@ class CameraMediaSession:
             )
 
     def _encoded_audio(self, generation, payload, timestamp):
-        with self._lock:
+        entered = self._ingress_entry(generation, "audio", timestamp)
+        started = self._diagnostic_time()
+        if entered is not None and started is not None:
+            self._metric("observe", "audio_pre_admission", max(0, started - entered))
+        with self._measured_state_lock("audio_admission_wait"):
             if not self._accepts_media_locked(generation):
+                self._metric("count", "audio_admission_rejected")
                 return False
             epoch = self._buffer.capture_epoch
             if self._original_audio_buffer.capture_epoch != epoch:
                 self._original_audio_buffer.clear(capture_epoch=epoch)
                 self._source_clocks.clear()
             try:
-                self._original_audio_buffer.append_audio(payload, timestamp)
+                packet = self._original_audio_buffer.append_audio(payload, timestamp)
             except OpusError:
                 # Original audio cannot compromise the legacy normalized lane
                 # or turn a functioning video session into a false failure.
+                self._metric("count", "audio_admission_rejected")
                 return False
+            self._admitted("audio", packet, entered)
             return True
 
     @property
@@ -220,7 +434,7 @@ class CameraMediaSession:
 
     def is_lease_active(self, lease_id: str) -> bool:
         """Check delivery authority without renewing or mutating lease state."""
-        with self._lock:
+        with self._measured_state_lock("authority_wait"):
             lease = self._current_lease_locked(lease_id)
             return lease is not None and self._clock() < lease.expires_at
 
@@ -441,6 +655,12 @@ class CameraMediaSession:
             "on_source_clock": lambda observation: self._source_clock(
                 action.generation, observation
             ),
+            "on_encoded_ingress": lambda kind, timestamp, entered: self._encoded_ingress(
+                action.generation, kind, timestamp, entered
+            ),
+            "on_receiver_stats": lambda snapshot, lag, duration: self._receiver_stats(
+                action.generation, snapshot, lag, duration
+            ),
             "decode_video": False,
             "decode_audio": True,
             "on_encoded_incompatible": lambda kind, mime_type: self._incompatible(
@@ -604,8 +824,13 @@ class CameraMediaSession:
             self._recording_seen_idr = False
 
     def _encoded_video(self, generation: int, payload: bytes, timestamp: int) -> bool:
-        with self._lock:
+        entered = self._ingress_entry(generation, "video", timestamp)
+        started = self._diagnostic_time()
+        if entered is not None and started is not None:
+            self._metric("observe", "video_pre_admission", max(0, started - entered))
+        with self._measured_state_lock("video_admission_wait"):
             if not self._accepts_media_locked(generation):
+                self._metric("count", "video_admission_rejected")
                 return False
             now = self._clock()
             if self._first_video_at is None:
@@ -622,12 +847,14 @@ class CameraMediaSession:
             try:
                 packet = self._buffer.append_video(payload, timestamp)
             except MediaBufferError as exc:
+                self._metric("count", "video_admission_rejected")
                 self._state = MediaSessionState.FAILED
                 self._failure = "encoded_video_rejected"
                 if self._stop is not None:
                     self._stop.set()
                 _log.warning("Rejected encoded Ring video for %s: %s", self._device.name, exc)
                 return False
+            self._admitted("video", packet, entered)
             self._observe_video_configuration_locked(payload, packet.received_at)
             self._recording_video_buffer.append(packet)
             if (
@@ -666,7 +893,8 @@ class CameraMediaSession:
         rate: int,
     ) -> None:
         callback = None
-        with self._lock:
+        self._metric("count", "legacy_audio_calls")
+        with self._measured_state_lock("legacy_audio_wait"):
             if self._accepts_media_locked(generation):
                 now = self._clock()
                 if self._first_audio_at is None:
@@ -686,7 +914,14 @@ class CameraMediaSession:
                     encoder = self._audio_encoder
                     if encoder is None:
                         raise AudioNormalizationError("Opus encoder is unavailable")
-                    for packet in encoder.encode(payload, channels, rate):
+                    started = self._diagnostic_time()
+                    try:
+                        packets = encoder.encode(payload, channels, rate)
+                    finally:
+                        finished = self._diagnostic_time()
+                        if started is not None and finished is not None:
+                            self._metric("observe", "legacy_encode", max(0, finished - started))
+                    for packet in packets:
                         self._buffer.append_audio(packet.payload, packet.rtp_timestamp)
                     self._opus_frame_duration_ms = OPUS_FRAME_DURATION_MS
                 except (AudioNormalizationError, MediaBufferError) as exc:

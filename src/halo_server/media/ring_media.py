@@ -46,6 +46,100 @@ _ACTIVE_SSRC_ATTRIBUTE = "_RTCRtpReceiver__active_ssrc"
 _RTX_SSRC_ATTRIBUTE = "_RTCRtpReceiver__rtx_ssrc"
 _TIMESTAMP_MAPPER_ATTRIBUTE = "_RTCRtpReceiver__timestamp_mapper"
 _REMOTE_STREAMS_ATTRIBUTE = "_RTCRtpReceiver__remote_streams"
+
+
+def _diagnostic_notify(callback, *args):
+    """Optional observations cannot change receiver delivery or cleanup."""
+    if callback is not None:
+        try:
+            return callback(*args)
+        except BaseException:
+            pass
+    return None
+
+
+def _encoded_source_callback(receiver, kind, callback, on_source_clock, on_ingress):
+    if on_source_clock is None and on_ingress is None:
+        return callback
+    observe = (
+        install_source_clock_observer(receiver, kind, on_source_clock)
+        if on_source_clock is not None
+        else None
+    )
+
+    def deliver(payload, timestamp):
+        cleanup = None
+        try:
+            try:
+                entered = time.monotonic()
+            except BaseException:
+                entered = None
+            if type(entered) in {int, float} and math.isfinite(entered) and entered >= 0:
+                cleanup = _diagnostic_notify(on_ingress, kind, timestamp, entered)
+            if observe is not None:
+                observe(timestamp)
+            return callback(payload, timestamp)
+        finally:
+            if callable(cleanup):
+                _diagnostic_notify(cleanup)
+
+    return deliver
+
+
+def _inbound_statistics(report, kind):
+    """Public receiver stats only; source/transport IDs never leave this seam."""
+    try:
+        if len(report) > 32:
+            return None
+        rows = [row for row in report.values() if row.type == "inbound-rtp" and row.kind == kind]
+        if len(rows) != 1:
+            return None
+        row = rows[0]
+        result = {}
+        for output, field, signed in (
+            ("packets_received", "packetsReceived", False),
+            ("packets_lost", "packetsLost", True),
+            ("jitter_ticks", "jitter", False),
+        ):
+            value = getattr(row, field, None)
+            low = -(2**53 - 1) if signed else 0
+            result[output] = value if type(value) is int and low <= value <= 2**53 - 1 else None
+        result["clock_rate"] = 48000 if kind == "audio" else 90000
+        return result
+    except Exception:
+        return None
+
+
+async def observe_receiver_statistics(
+    audio_receiver, video_receiver, stop, terminal, callback, *, interval=1.0, timeout=0.25
+):
+    """One retained receiver task: finite sampling, no raw media or log I/O."""
+    loop = asyncio.get_running_loop()
+    while not stop.is_set() and not terminal.is_set():
+        deadline = loop.time() + interval
+        await asyncio.sleep(interval)
+        woke = loop.time()
+        if stop.is_set() or terminal.is_set():
+            return
+        snapshot = None
+        try:
+            async with asyncio.timeout(timeout):
+                # Stay within this retained owner rather than creating hidden
+                # child tasks whose cancellation could outlive its retirement.
+                audio = await audio_receiver.getStats()
+                video = await video_receiver.getStats()
+            snapshot = {
+                "audio": _inbound_statistics(audio, "audio"),
+                "video": _inbound_statistics(video, "video"),
+            }
+        except asyncio.CancelledError:
+            raise
+        except BaseException:
+            pass
+        if not stop.is_set() and not terminal.is_set():
+            _diagnostic_notify(callback, snapshot, max(0, woke - deadline), loop.time() - woke)
+
+
 _ENCODED_MIME_TYPES = {
     "video": "video/h264",
     "audio": "audio/opus",
@@ -1282,6 +1376,8 @@ class RingStreamReceiver:
         on_encoded_video: Callable[[bytes, int], None] | None = None,
         on_encoded_audio: Callable[[bytes, int], None] | None = None,
         on_source_clock: Callable[[SourceClockObservation], None] | None = None,
+        on_encoded_ingress: Callable | None = None,
+        on_receiver_stats: Callable | None = None,
         decode_video: bool = True,
         decode_audio: bool = True,
         on_encoded_incompatible: Callable[[str, str], None] | None = None,
@@ -1296,6 +1392,8 @@ class RingStreamReceiver:
         self._on_encoded_video = on_encoded_video
         self._on_encoded_audio = on_encoded_audio
         self._on_source_clock = on_source_clock
+        self._on_encoded_ingress = on_encoded_ingress
+        self._on_receiver_stats = on_receiver_stats
         self._decode_video = decode_video
         self._decode_audio = decode_audio
         self._on_encoded_incompatible = on_encoded_incompatible
@@ -1494,15 +1592,13 @@ class RingStreamReceiver:
                 audio_transceiver = pc.addTransceiver(mic_track, direction="sendrecv")
 
                 def source_callback(receiver, kind, callback):
-                    if self._on_source_clock is None:
-                        return callback
-                    observe = install_source_clock_observer(receiver, kind, self._on_source_clock)
-
-                    def deliver(payload, timestamp):
-                        observe(timestamp)
-                        return callback(payload, timestamp)
-
-                    return deliver
+                    return _encoded_source_callback(
+                        receiver,
+                        kind,
+                        callback,
+                        self._on_source_clock,
+                        self._on_encoded_ingress,
+                    )
 
                 if self._on_encoded_video is not None:
                     install_encoded_frame_adapter(
@@ -1653,6 +1749,17 @@ class RingStreamReceiver:
                             terminal,
                         ),
                         "startup keyframe requests",
+                    )
+                if answer_applied.is_set() and self._on_receiver_stats is not None:
+                    spawn(
+                        observe_receiver_statistics(
+                            audio_transceiver.receiver,
+                            video_transceiver.receiver,
+                            stop,
+                            terminal,
+                            self._on_receiver_stats,
+                        ),
+                        "receiver statistics",
                     )
                 while not stop.is_set() and not terminal.is_set():
                     if last_video_at is None and loop.time() >= startup_expires_at:

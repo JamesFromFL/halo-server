@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import copy
 import ipaddress
 import logging
 import math
 import secrets
 import socket
 import time
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
 from uuid import UUID
@@ -22,11 +23,13 @@ from halo_server.media.manager import settle_owned
 from halo_server.media.rtp import (
     MAX_ACCESS_UNIT_BYTES,
     H264Packetizer,
+    ReceiverReportStats,
     RtpError,
     parse_feedback,
     sender_report,
 )
 from halo_server.media.srtp import SecureVideo, SrtpError
+from halo_server.media.telemetry import StreamMetrics, safe_diagnostics
 
 PREPARE_SECONDS = 15.0
 SOURCE_SECONDS = 25.0
@@ -127,6 +130,65 @@ def _trace_age(now, observed):
     return min(3_600_000, round(max(0, now - observed) * 1000))
 
 
+def _video_metrics():
+    return StreamMetrics(
+        counters=(
+            "source_access_units",
+            "source_bytes",
+            "source_nonincreasing_pts",
+            "adapter_feeds",
+            "output_access_units",
+            "output_keyframes",
+            "copy_units",
+            "adapted_units",
+            "output_nonincreasing_pts",
+            "stale_output_units",
+            "dependency_skips",
+            "epoch_changes",
+            "reconfigurations",
+            "sent_access_units",
+            "sent_keyframes",
+            "sent_packets",
+            "sent_payload_bytes",
+            "sent_protected_bytes",
+            "retransmit_packets",
+            "retransmit_payload_bytes",
+            "retransmit_protected_bytes",
+            "feedback_datagrams",
+            "feedback_rejected",
+            "feedback_rate_limited",
+            "receiver_reports",
+            "nack_requests",
+            "nack_cache_misses",
+            "nack_rate_limited",
+            "pli_requests",
+            "pli_applied",
+            "sender_reports",
+            "access_unit_budget_rejected",
+        ),
+        maxima=("source_access_unit_bytes", "output_access_unit_bytes", "batch_packets"),
+        timings=(
+            "source_pts_step",
+            "source_receipt_step",
+            "output_pts_step",
+            "source_read",
+            "adapter_feed",
+            "source_age",
+            "pacer_wait",
+            "pacer_late",
+            "access_unit_send",
+            "sent_keyframe_interval",
+            "loop_lag",
+        ),
+    )
+
+
+def _measure(session, method, name, value=1):
+    # Even an optional diagnostic implementation failure must not alter media.
+    with contextlib.suppress(Exception):
+        getattr(session.metrics, method)(name, value)
+
+
 class _SourceChanged(RuntimeError):
     """An inner capture attempt retired while encoded output was being prepared."""
 
@@ -193,6 +255,15 @@ class _Session:
     timing_mode: str = "receiver_estimated"
     trace_first_frame: bool = False
     trace_terminal: bool = False
+    metrics: StreamMetrics = field(default_factory=_video_metrics)
+    receiver_stats: ReceiverReportStats = field(default_factory=ReceiverReportStats)
+    diagnostic_source_pts: int | None = None
+    diagnostic_source_receipt: float | None = None
+    diagnostic_output_pts: int | None = None
+    diagnostic_keyframe_pts: int | None = None
+    terminal: dict | None = None
+    active_started_at: float | None = None
+    terminal_at: float | None = None
 
 
 def _uuid(value):
@@ -263,6 +334,7 @@ class HomeKitLiveManager:
         self._reaper: asyncio.Task | None = None
         self._ending: set[asyncio.Task] = set()
         self._closed = False
+        self._recent: deque[dict] = deque(maxlen=MAX_SESSIONS)
         self.ready = False
         self.capabilities = None
         self.audio_ready = False
@@ -280,6 +352,58 @@ class HomeKitLiveManager:
             and session.audio.cleanup_failed
             for session in self._sessions.values()
         )
+
+    def _diagnostics(self, session):
+        now = self._clock()
+        config = session.config
+        video_format = (
+            {
+                "width": config.width,
+                "height": config.height,
+                "fps": config.fps,
+                "profile": _trace_label(config.profile, {"baseline", "main", "high"}),
+                "level": _trace_label(config.level, {"3.1", "3.2", "4.0"}),
+                "bitrate_kbps": config.max_bit_rate,
+                "mtu": config.mtu,
+            }
+            if config is not None
+            else None
+        )
+        return {
+            "state": _trace_label(
+                session.state, {"prepared", "starting", "active", "failed", "stopped"}
+            ),
+            "retired": session.retired,
+            "cleanup_pending": session.failure is not None,
+            "elapsed_ms": _trace_age(now, session.prepared_at),
+            "active_elapsed_ms": _trace_age(
+                session.terminal_at if session.terminal_at is not None else now,
+                session.active_started_at,
+            ),
+            "source_age_ms": _trace_age(now, session.last_source),
+            "feedback_age_ms": _trace_age(now, session.last_feedback),
+            "video_format": video_format,
+            "audio_enabled": session.audio_config is not None,
+            "mode": _trace_label(
+                getattr(session.adapter, "mode", None), {"waiting", "copy", "adapt"}
+            ),
+            "timing_mode": _trace_label(
+                session.timing_mode, {"receiver_estimated", "source_sender_report"}
+            ),
+            "terminal": copy.deepcopy(session.terminal),
+            "video": session.metrics.snapshot(),
+            "receiver_report": session.receiver_stats.snapshot(now),
+            "audio": safe_diagnostics(session.audio),
+        }
+
+    def diagnostics(self):
+        # No controller/source reads or ownership locks are needed for status.
+        return {
+            "active": [
+                self._diagnostics(item) for item in tuple(self._sessions.values())[:MAX_SESSIONS]
+            ],
+            "recent": copy.deepcopy(list(self._recent)),
+        }
 
     async def qualify(self):
         from halo_server.media.transcode import video_capabilities
@@ -345,6 +469,7 @@ class HomeKitLiveManager:
         session.trace_terminal = True
         try:
             now = self._clock()
+            session.terminal_at = now
             error_class = (
                 _trace_label(type(error).__name__, _TRACE_ERRORS) if error is not None else "none"
             )
@@ -355,6 +480,13 @@ class HomeKitLiveManager:
             )
             number = getattr(error, "errno", None) if isinstance(error, OSError) else None
             number = number if type(number) is int and 0 <= number <= 4095 else None
+            session.terminal = {
+                "stage": _trace_label(stage, _TRACE_STAGES),
+                "reason": _trace_label(reason, _TRACE_REASONS),
+                "error_class": error_class,
+                "error_code": error_code,
+                "errno": number,
+            }
             mode = _trace_label(
                 getattr(session.adapter, "mode", None), {"waiting", "copy", "adapt"}
             )
@@ -616,6 +748,7 @@ class HomeKitLiveManager:
                     session.handle, session.audio_config, speaker_volume=session.speaker_volume
                 )
             session.last_source = session.last_feedback = session.last_renewal = self._clock()
+            session.active_started_at = session.last_source
             session.state = "active"
             session.sender = asyncio.create_task(
                 self._send_video(session), name="homekit-video-send"
@@ -646,6 +779,7 @@ class HomeKitLiveManager:
                 await session.adapter.reconfigure(config)
                 self._current(session)
                 session.config = config
+                _measure(session, "count", "reconfigurations")
                 self._reset_timestamp(session)
         except BaseException:
             await self._settle_retirement(session)
@@ -723,12 +857,51 @@ class HomeKitLiveManager:
         session.timing_mode = "receiver_estimated"
         return received_at
 
+    def _observe_source(self, session, packet):
+        with contextlib.suppress(Exception):
+            metrics = session.metrics
+            metrics.count("source_access_units")
+            metrics.count("source_bytes", len(packet.payload))
+            metrics.maximum("source_access_unit_bytes", len(packet.payload))
+            if session.diagnostic_source_pts is not None:
+                delta = packet.rtp_timestamp - session.diagnostic_source_pts
+                if delta <= 0:
+                    metrics.count("source_nonincreasing_pts")
+                else:
+                    metrics.observe("source_pts_step", delta / 90000)
+            if session.diagnostic_source_receipt is not None:
+                metrics.observe(
+                    "source_receipt_step", packet.received_at - session.diagnostic_source_receipt
+                )
+            session.diagnostic_source_pts = packet.rtp_timestamp
+            session.diagnostic_source_receipt = packet.received_at
+
+    def _observe_outputs(self, session, outputs):
+        with contextlib.suppress(Exception):
+            metrics = session.metrics
+            for output in outputs:
+                metrics.count("output_access_units")
+                metrics.count("output_keyframes", int(output.is_keyframe is True))
+                if output.mode in {"copy", "adapt"}:
+                    metrics.count("copy_units" if output.mode == "copy" else "adapted_units")
+                metrics.maximum("output_access_unit_bytes", len(output.payload))
+                if session.diagnostic_output_pts is not None:
+                    delta = output.timestamp - session.diagnostic_output_pts
+                    if delta <= 0:
+                        metrics.count("output_nonincreasing_pts")
+                    else:
+                        metrics.observe("output_pts_step", delta / 90000)
+                session.diagnostic_output_pts = output.timestamp
+
     async def _send_video(self, session):
         try:
             while not session.retired:
                 self._current(session)
+                read_started = self._clock()
                 batch = await session.handle.read(timeout=0.25)
                 now = self._clock()
+                _measure(session, "observe", "source_read", max(0, now - read_started))
+                _measure(session, "maximum", "batch_packets", len(batch.packets))
                 if now - session.last_renewal >= 5:
                     if not await session.handle.renew():
                         raise HomeKitOperationError("authority_changed")
@@ -736,14 +909,21 @@ class HomeKitLiveManager:
                 if now - session.last_source > SOURCE_SECONDS:
                     raise HomeKitOperationError("source_timeout")
                 if session.capture_epoch != batch.capture_epoch:
+                    if session.capture_epoch is not None:
+                        _measure(session, "count", "epoch_changes")
+                    session.diagnostic_source_pts = session.diagnostic_output_pts = None
+                    session.diagnostic_source_receipt = session.diagnostic_keyframe_pts = None
                     self._reset_timestamp(session)
                     session.capture_epoch = batch.capture_epoch
                 for packet in batch.packets:
                     if packet.stream is not MediaStreamKind.VIDEO:
                         continue
+                    self._observe_source(session, packet)
                     session.last_source = max(session.last_source, packet.received_at)
                     async with session.adapter_lock:
                         self._current(session)
+                        feed_started = self._clock()
+                        _measure(session, "count", "adapter_feeds")
                         outputs = await session.adapter.feed(
                             packet.payload,
                             packet.rtp_timestamp,
@@ -751,10 +931,21 @@ class HomeKitLiveManager:
                                 packet, "capture_epoch", getattr(batch, "capture_epoch", 0)
                             ),
                         )
+                        _measure(
+                            session, "observe", "adapter_feed", max(0, self._clock() - feed_started)
+                        )
+                        self._observe_outputs(session, outputs)
                         if session.handle.capture_epoch != packet.capture_epoch:
                             break
                         for output in outputs:
+                            _measure(
+                                session,
+                                "observe",
+                                "source_age",
+                                max(0, self._clock() - packet.received_at),
+                            )
                             if self._clock() - packet.received_at > MAX_FRAME_AGE:
+                                _measure(session, "count", "stale_output_units")
                                 session.discarded_stale = True
                                 if output.mode == "copy":
                                     session.adapter.request_keyframe()
@@ -762,6 +953,7 @@ class HomeKitLiveManager:
                             if session.discarded_stale:
                                 session.discarded_stale = False
                                 if not output.is_keyframe:
+                                    _measure(session, "count", "dependency_skips")
                                     session.adapter.request_keyframe()
                                     continue
                             try:
@@ -774,11 +966,20 @@ class HomeKitLiveManager:
                                 if not sent and output.mode == "copy":
                                     session.adapter.force_adaptation()
                                     if output.is_keyframe:
+                                        feed_started = self._clock()
+                                        _measure(session, "count", "adapter_feeds")
                                         adapted = await session.adapter.feed(
                                             packet.payload,
                                             packet.rtp_timestamp,
                                             capture_epoch=packet.capture_epoch,
                                         )
+                                        _measure(
+                                            session,
+                                            "observe",
+                                            "adapter_feed",
+                                            max(0, self._clock() - feed_started),
+                                        )
+                                        self._observe_outputs(session, adapted)
                                         for unit in adapted:
                                             if not await self._access_unit(
                                                 session,
@@ -797,6 +998,7 @@ class HomeKitLiveManager:
             self._end(session, "media_failed", stage="video_send", error=exc)
 
     async def _access_unit(self, session, output, epoch, *, received_at=None):
+        send_started = self._clock()
         if len(output.payload) > MAX_ACCESS_UNIT_BYTES:
             raise HomeKitOperationError("media_saturated")
         config = session.config
@@ -811,6 +1013,7 @@ class HomeKitLiveManager:
         duration = sum(len(item.packet) + 10 for item in datagrams) * 8 / rate
         session.packetizer.sequence = sequence
         if started + duration > self._clock() + MAX_ACCESS_UNIT_SECONDS:
+            _measure(session, "count", "access_unit_budget_rejected")
             return False
         timestamp = self._timestamp(session, output.timestamp)
         datagrams = session.packetizer.packetize(
@@ -832,6 +1035,9 @@ class HomeKitLiveManager:
             session.last_packet_at = presentation
             session.packets += 1
             session.octets += item.payload_bytes
+            _measure(session, "count", "sent_packets")
+            _measure(session, "count", "sent_payload_bytes", item.payload_bytes)
+            _measure(session, "count", "sent_protected_bytes", len(protected))
             previous = session.retransmit.pop(item.sequence, None)
             if previous is not None:
                 session.retransmit_bytes -= len(previous[1])
@@ -843,6 +1049,18 @@ class HomeKitLiveManager:
             )
             session.retransmit_bytes += len(protected)
             self._prune_retransmit(session)
+        _measure(session, "count", "sent_access_units")
+        _measure(session, "observe", "access_unit_send", max(0, self._clock() - send_started))
+        if output.is_keyframe:
+            _measure(session, "count", "sent_keyframes")
+            if session.diagnostic_keyframe_pts is not None:
+                _measure(
+                    session,
+                    "observe",
+                    "sent_keyframe_interval",
+                    (output.timestamp - session.diagnostic_keyframe_pts) / 90000,
+                )
+            session.diagnostic_keyframe_pts = output.timestamp
         if not session.trace_first_frame:
             session.trace_first_frame = True
             with contextlib.suppress(Exception):
@@ -867,7 +1085,9 @@ class HomeKitLiveManager:
             if target > (deadline if deadline is not None else now + MAX_ACCESS_UNIT_SECONDS):
                 raise HomeKitOperationError("media_saturated")
             if target > now:
+                _measure(session, "observe", "pacer_wait", target - now)
                 await asyncio.sleep(target - now)
+            _measure(session, "observe", "pacer_late", max(0, self._clock() - target))
             await self._send(session, protected, epoch=epoch)
             session.next_packet_at = target + len(protected) * 8 / (
                 session.config.max_bit_rate * 1000
@@ -893,10 +1113,12 @@ class HomeKitLiveManager:
             while not session.retired:
                 protected = await loop.sock_recv(session.socket, 16 * 1024 + 65)
                 self._current(session)
+                _measure(session, "count", "feedback_datagrams")
                 if self._clock() - window >= 1:
                     window, received = self._clock(), 0
                 received += 1
                 if received > 128:
+                    _measure(session, "count", "feedback_rate_limited")
                     await asyncio.sleep(0.01)
                     continue
                 try:
@@ -904,20 +1126,28 @@ class HomeKitLiveManager:
                         session.secure.unprotect_rtcp(protected), session.prepared.ssrc
                     )
                 except (SrtpError, RtpError):
+                    _measure(session, "count", "feedback_rejected")
                     continue
                 now = self._clock()
                 session.last_feedback = now
+                _measure(session, "count", "receiver_reports", feedback.reports)
+                _measure(session, "count", "nack_requests", len(feedback.nack))
+                _measure(session, "count", "pli_requests", int(feedback.pli))
+                with contextlib.suppress(Exception):
+                    session.receiver_stats.observe(feedback.receiver_reports, now)
                 if feedback.bye:
                     self._end(session, "receiver_closed", stage="video_feedback")
                     return
                 if feedback.pli and now - session.last_pli >= 0.5:
+                    _measure(session, "count", "pli_applied")
                     session.last_pli = now
                     session.adapter.request_keyframe()
                 if now - session.last_nack_window >= 1:
                     session.last_nack_window, session.nack_count = now, 0
                 self._prune_retransmit(session)
-                for sequence in feedback.nack:
+                for index, sequence in enumerate(feedback.nack):
                     if session.nack_count >= 64:
+                        _measure(session, "count", "nack_rate_limited", len(feedback.nack) - index)
                         break
                     cached = session.retransmit.get(sequence)
                     if cached is not None:
@@ -928,6 +1158,11 @@ class HomeKitLiveManager:
                         session.packets += 1
                         session.octets += cached[2]
                         session.nack_count += 1
+                        _measure(session, "count", "retransmit_packets")
+                        _measure(session, "count", "retransmit_payload_bytes", cached[2])
+                        _measure(session, "count", "retransmit_protected_bytes", len(cached[1]))
+                    else:
+                        _measure(session, "count", "nack_cache_misses")
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -951,6 +1186,9 @@ class HomeKitLiveManager:
                         session.prepared.ssrc, timestamp, session.packets, session.octets
                     )
                     await self._send(session, session.secure.protect_rtcp(report))
+                    _measure(session, "count", "sender_reports")
+                    with contextlib.suppress(Exception):
+                        session.receiver_stats.sent(report, self._clock())
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -990,7 +1228,12 @@ class HomeKitLiveManager:
     async def _expire(self):
         try:
             while self._sessions:
+                expected = self._clock() + 0.25
                 await asyncio.sleep(0.25)
+                lag = max(0, self._clock() - expected)
+                for session in tuple(self._sessions.values()):
+                    if session.state == "active" and not session.retired:
+                        _measure(session, "observe", "loop_lag", lag)
                 await self.refresh()
         except asyncio.CancelledError:
             raise
@@ -1089,6 +1332,10 @@ class HomeKitLiveManager:
         session.state = "stopped"
         if self._sessions.get(session.identity) is session:
             del self._sessions[session.identity]
+            # Audio's final duration ledger is complete only after close joined
+            # its owned sender. Retained cleanup failures remain active instead.
+            with contextlib.suppress(Exception):
+                self._recent.append(self._diagnostics(session))
 
     async def retired(self, boot):
         sessions = [item for item in self._sessions.values() if item.boot == boot]
