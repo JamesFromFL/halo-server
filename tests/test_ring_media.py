@@ -1,6 +1,7 @@
 """Lifecycle tests for the headless Ring WebRTC receiver."""
 
 import asyncio
+import json
 import queue
 import threading
 from types import SimpleNamespace
@@ -73,6 +74,9 @@ class FakeDevice:
         self.on_generate = on_generate
         self.generated = False
         self.closed_sessions = []
+        self._webrtc_streams = {}
+        self.messages = []
+        self.activation_tasks = []
 
     def get_ice_servers(self):
         return []
@@ -87,11 +91,40 @@ class FakeDevice:
     ):
         self.generated = True
         assert keep_alive_timeout == 300
+        device = self
+
+        class Socket:
+            async def send(self, message):
+                device.messages.append(json.loads(message))
+
+            async def close(self):
+                pass
+
+        stream = RingWebRtcStream(None, 1)
+        stream.dialog_id = "synthetic-dialog"
+        stream.session_id = "synthetic-session"
+        stream.websocket = Socket()
+        stream._offered_event.set()
+        self._webrtc_streams[session_id] = stream
+
+        def notify(message):
+            if message.answer:
+                stream._sdp_answer_event.set()
+            on_rtc_message(message)
+            if message.answer:
+                self.activation_tasks.append(asyncio.create_task(stream._activate()))
+
         if self.on_generate is not None:
-            await self.on_generate(session_id, on_rtc_message)
+            await self.on_generate(session_id, notify)
 
     async def close_webrtc_stream(self, session_id):
         self.closed_sessions.append(session_id)
+        if stream := self._webrtc_streams.pop(session_id, None):
+            for task in self.activation_tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*self.activation_tasks, return_exceptions=True)
+            await stream.close()
 
     async def on_webrtc_candidate(self, *_args):
         pass

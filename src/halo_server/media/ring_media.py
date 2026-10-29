@@ -35,6 +35,7 @@ from halo_server.media.ring_speaker import (
     RingSpeakerControlError,
     activate_ring_camera_speaker,
 )
+from halo_server.media.ring_stream_options import RingStreamOptions, RingStreamOptionsError
 
 _log = logging.getLogger(__name__)
 
@@ -1465,6 +1466,12 @@ class RingStreamReceiver:
         mic_track = None
         ring_session_started = False
         terminal = asyncio.Event()
+        stream_options = RingStreamOptions(
+            self._device,
+            session_id,
+            current=lambda: not stop.is_set() and not terminal.is_set(),
+        )
+        stream_options_reported = False
         answer_applied = asyncio.Event()
         stream_errors: list[str] = []
         remote_description_error: Exception | None = None
@@ -1570,7 +1577,7 @@ class RingStreamReceiver:
                     del frame
 
         async def on_answer(sdp) -> None:
-            nonlocal remote_description_error
+            nonlocal remote_description_error, stream_options_reported
             try:
                 _log.info(
                     "Ring WebRTC answer camera_id=%s kind=%s session=%s codecs=%s",
@@ -1581,6 +1588,21 @@ class RingStreamReceiver:
                 )
                 async with asyncio.timeout(WEBRTC_REMOTE_DESCRIPTION_TIMEOUT):
                     await pc.setRemoteDescription(RTCSessionDescription(sdp=sdp, type="answer"))
+                try:
+                    sent = await stream_options.enable()
+                except RingStreamOptionsError as exc:
+                    if not stream_options_reported:
+                        stream_options_reported = True
+                        _log.info("Ring WebRTC activation options result=%s", exc.code)
+                    if exc.code == "retired" and (stop.is_set() or terminal.is_set()):
+                        return
+                    raise
+                if not stream_options_reported:
+                    stream_options_reported = True
+                    _log.info(
+                        "Ring WebRTC activation options result=%s",
+                        "sent" if sent else "already_sent",
+                    )
                 answer_applied.set()
                 _log.info(
                     "Ring WebRTC answer applied camera_id=%s session=%s "
@@ -1870,6 +1892,7 @@ class RingStreamReceiver:
             raise RingMediaProgressError("video_startup_timeout") from exc
         finally:
             terminal.set()
+            stream_options.fence()
             if pipeline is not None:
                 _diagnostic_notify(pipeline.fence)
             if decoded_lane is not None:

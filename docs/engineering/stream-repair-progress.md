@@ -11,7 +11,8 @@ separate from synthetic and installed-artifact checks.
 | 3 | Camera-state lock isolation | Complete: `4adb0c2`; 2,097 Python / 265 Node tests passed |
 | 4 | Video cadence and IDR timing | Complete: `d9b38ed`; 2,124 Python / 265 Node tests passed |
 | 4b | Captured-burst audio repair and receive/snapshot diagnostics | Complete: `6db2aeb`; 2,189 Python / 265 Node tests passed; installed and paired pilot captured |
-| 4c | Mains-camera snapshot cache-miss recovery | Implementation complete; frozen integrated verification pending |
+| 4c | Mains-camera snapshot cache-miss recovery | Complete: `64a889a`; 2,212 Python / 265 Node tests passed |
+| 4d | Ring post-activation stream-options compatibility | Implementation complete; controlled paired comparison pending |
 | 5 | Complete-frame delivery and loss recovery | Pending |
 | 6 | Quality, A/V timeline and reconfigure | Pending |
 | 7 | Installed and real-device qualification | Pending |
@@ -221,3 +222,14 @@ mixed-power and unknown models retain cached-only behavior for periodic requests
 The existing immutable hardware allowlist is shared without adding models. The
 focused snapshot, service/privacy, public HomeKit and power-policy suite passed
 178 tests. The physical fresh-image result remains to be qualified.
+
+Slice 4d is a controlled compatibility candidate for the remaining receive
+bursts. The pinned ring-client-api reasserts the original audio/video options
+after activation; the Python SDK sends them only with the initial live-view
+request. Halo now sends that same fixed command once after validated SDK
+activation for the exact current attempt, with bounded waiting, cancellation
+and retirement ownership. It changes no BUNDLE, SDP, endpoint, codec, microphone
+filter or backend. A fixed `sent` diagnostic proves completion of the local
+WebSocket send, not acknowledgement or application by Ring. Seventy-seven
+focused actual-SDK/source/speaker/lifecycle tests passed. Only the next paired
+capture can establish whether this candidate changes the incoming cadence.
