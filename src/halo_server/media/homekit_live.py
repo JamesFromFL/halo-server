@@ -34,6 +34,7 @@ from halo_server.media.rtp import (
 from halo_server.media.srtp import SecureVideo, SrtpError
 from halo_server.media.telemetry import StreamMetrics, safe_diagnostics
 from halo_server.media.video_budget import CodecRateMonitor, VideoBudgetError, VideoWirePolicy
+from halo_server.media.video_repair import RepairQueue, RepairRate
 
 PREPARE_SECONDS = 15.0
 SOURCE_SECONDS = 25.0
@@ -188,6 +189,10 @@ def _video_metrics():
             "nack_requests",
             "nack_cache_misses",
             "nack_rate_limited",
+            "repair_duplicate_requests",
+            "repair_queue_full",
+            "repair_deadline_rejected",
+            "repair_send_rate_limited",
             "pli_requests",
             "pli_applied",
             "sender_reports",
@@ -227,6 +232,10 @@ class _VideoDeadline(RuntimeError):
     """A datagram cannot be admitted within its original source deadline."""
 
 
+class _RepairRateLimited(RuntimeError):
+    """The independent rolling repair send budget is exhausted."""
+
+
 @dataclass(frozen=True)
 class PreparedVideo:
     port: int
@@ -263,6 +272,7 @@ class _Session:
     sender: asyncio.Task | None = None
     receiver: asyncio.Task | None = None
     reports: asyncio.Task | None = None
+    repair_worker: asyncio.Task | None = None
     cleanup: asyncio.Task | None = None
     failure: str | None = None
     adapter_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
@@ -286,6 +296,9 @@ class _Session:
     retransmit_bytes: int = 0
     last_nack_window: float = 0
     nack_count: int = 0
+    repair_queue: RepairQueue = field(default_factory=RepairQueue)
+    repair_requests: RepairRate = field(default_factory=RepairRate)
+    repair_sends: RepairRate = field(default_factory=RepairRate)
     last_pli: float = 0
     timeline: LiveTimeline | None = None
     timing_mode: str = "receiver_estimated"
@@ -437,6 +450,7 @@ class HomeKitLiveManager:
             "terminal": copy.deepcopy(session.terminal),
             "video": session.metrics.snapshot(),
             "receiver_report": session.receiver_stats.snapshot(now),
+            "repair_queue": session.repair_queue.snapshot(),
             "audio": safe_diagnostics(session.audio),
         }
 
@@ -807,7 +821,10 @@ class HomeKitLiveManager:
                 self._receive_feedback(session), name="homekit-video-rtcp"
             )
             session.reports = asyncio.create_task(self._reports(session), name="homekit-video-sr")
-            for task in (session.sender, session.receiver, session.reports):
+            session.repair_worker = asyncio.create_task(
+                self._repair_video(session), name="homekit-video-repair"
+            )
+            for task in (session.sender, session.receiver, session.reports, session.repair_worker):
                 task.add_done_callback(_observed)
         except BaseException as exc:
             self._trace_terminal(session, "start", "start_failed", exc)
@@ -847,9 +864,13 @@ class HomeKitLiveManager:
                 raise _SourceChanged
             if deadline is not None and self._clock() > deadline:
                 raise _VideoDeadline
+            if repair is not None and not session.repair_sends.permits(self._clock(), len(packet)):
+                raise _RepairRateLimited
             try:
                 if session.socket.send(packet) != len(packet):
                     raise HomeKitOperationError("media_failed")
+                if repair is not None:
+                    session.repair_sends.record(self._clock(), len(packet))
                 return
             except BlockingIOError:
                 if self._clock() >= retry_deadline:
@@ -867,6 +888,7 @@ class HomeKitLiveManager:
         # A codec/configuration reset does not change source media time.
         session.retransmit.clear()
         session.retransmit_bytes = 0
+        session.repair_queue.clear()
         self._need_idr(
             session,
             bounded=session.trace_first_frame,
@@ -886,6 +908,7 @@ class HomeKitLiveManager:
         session.recovery_revision += 1
         session.retransmit.clear()
         session.retransmit_bytes = 0
+        session.repair_queue.clear()
         if request and not session.idr_requested and session.adapter is not None:
             session.adapter.request_keyframe()
             session.idr_requested = True
@@ -1217,12 +1240,13 @@ class HomeKitLiveManager:
                         previous = session.retransmit.pop(item.sequence, None)
                         if previous is not None:
                             session.retransmit_bytes -= len(previous[1])
+                        sent_at = self._clock()
                         session.retransmit[item.sequence] = (
-                            self._clock(),
+                            sent_at,
                             protected,
                             item.payload_bytes,
                             epoch,
-                            deadline,
+                            sent_at + RETRANSMIT_SECONDS,
                         )
                         session.retransmit_bytes += len(protected)
                         self._prune_retransmit(session)
@@ -1350,33 +1374,72 @@ class HomeKitLiveManager:
                     session.last_nack_window, session.nack_count = now, 0
                 self._prune_retransmit(session)
                 for index, sequence in enumerate(feedback.nack):
-                    if session.nack_count >= 64:
+                    cached = session.retransmit.get(sequence)
+                    if cached is None or cached[3] != session.handle.capture_epoch:
+                        _measure(session, "count", "nack_cache_misses")
+                        continue
+                    if not session.repair_requests.permits(now, len(cached[1])):
                         _measure(session, "count", "nack_rate_limited", len(feedback.nack) - index)
                         break
-                    cached = session.retransmit.get(sequence)
-                    if cached is not None:
-                        try:
-                            await self._paced_send(
-                                session,
-                                cached[1],
-                                epoch=cached[3],
-                                deadline=cached[4],
-                                repair=(sequence, cached),
-                            )
-                        except (_SourceChanged, _VideoDeadline):
-                            continue
-                        session.packets += 1
-                        session.octets += cached[2]
+                    queued = session.repair_queue.enqueue(sequence, cached)
+                    if queued == "queued":
+                        session.repair_requests.record(now, len(cached[1]))
                         session.nack_count += 1
-                        _measure(session, "count", "retransmit_packets")
-                        _measure(session, "count", "retransmit_payload_bytes", cached[2])
-                        _measure(session, "count", "retransmit_protected_bytes", len(cached[1]))
-                    else:
-                        _measure(session, "count", "nack_cache_misses")
+                    elif queued == "duplicate":
+                        _measure(session, "count", "repair_duplicate_requests")
+                    elif queued == "full":
+                        _measure(session, "count", "repair_queue_full")
         except asyncio.CancelledError:
             raise
         except Exception as exc:
             self._end(session, "feedback_failed", stage="video_feedback", error=exc)
+
+    async def _repair_video(self, session):
+        item = None
+        try:
+            while not session.retired:
+                item = await session.repair_queue.take()
+                if item is None:
+                    return
+                sequence, cached = item
+                try:
+                    self._current(session)
+                    self._prune_retransmit(session)
+                    if session.retransmit.get(sequence) is not cached:
+                        continue
+                    async with asyncio.timeout(
+                        max(0, min(RETRANSMIT_SECONDS, cached[4] - self._clock()))
+                    ):
+                        await self._paced_send(
+                            session,
+                            cached[1],
+                            epoch=cached[3],
+                            deadline=cached[4],
+                            repair=(sequence, cached),
+                        )
+                    session.packets += 1
+                    session.octets += cached[2]
+                    _measure(session, "count", "retransmit_packets")
+                    _measure(session, "count", "retransmit_payload_bytes", cached[2])
+                    _measure(session, "count", "retransmit_protected_bytes", len(cached[1]))
+                except (_SourceChanged, _VideoDeadline, TimeoutError):
+                    _measure(session, "count", "repair_deadline_rejected")
+                except _RepairRateLimited:
+                    _measure(session, "count", "repair_send_rate_limited")
+                except HomeKitOperationError as exc:
+                    if exc.code != "media_saturated":
+                        raise
+                    _measure(session, "count", "repair_deadline_rejected")
+                finally:
+                    session.repair_queue.finish(item)
+                    item = cached = None
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            self._end(session, "feedback_failed", stage="video_feedback", error=exc)
+        finally:
+            # Clear even cancellation tracebacks after the actual worker joins.
+            item = None
 
     async def _reports(self, session):
         try:
@@ -1424,6 +1487,7 @@ class HomeKitLiveManager:
         task.add_done_callback(_observed)
 
     def _close_socket(self, session):
+        session.repair_queue.fence()
         if session.audio is not None:
             session.audio.fence()
         descriptor = session.socket.fileno()
@@ -1527,7 +1591,13 @@ class HomeKitLiveManager:
     async def _cleanup(self, session):
         tasks = tuple(
             task
-            for task in (session.start_task, session.sender, session.receiver, session.reports)
+            for task in (
+                session.start_task,
+                session.sender,
+                session.receiver,
+                session.reports,
+                session.repair_worker,
+            )
             if task is not None and task is not asyncio.current_task()
         )
         for task in tasks:
@@ -1552,6 +1622,7 @@ class HomeKitLiveManager:
         session.secure.close()
         session.retransmit.clear()
         session.retransmit_bytes = 0
+        session.repair_queue.fence()
         session.failure = None
         session.state = "stopped"
         if self._sessions.get(session.identity) is session:

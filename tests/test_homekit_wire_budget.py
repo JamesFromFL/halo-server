@@ -177,7 +177,7 @@ async def test_real_high_detail_idr_uses_actual_manager_srtp_and_independent_dec
 
 
 @pytest.mark.asyncio
-async def test_authenticated_repair_flood_keeps_existing_count_and_ciphertext_bounds():
+async def test_authenticated_duplicate_repair_flood_is_coalesced_and_ciphertext_bounded():
     adapter = DeferredAdapter(CONFIG)
     manager, controller, identity, result, receiver = await prepared(
         adapter_factory=lambda _: adapter
@@ -199,11 +199,16 @@ async def test_authenticated_repair_flood_keeps_existing_count_and_ciphertext_bo
             while session.metrics.snapshot()["counters"]["feedback_datagrams"] < 80:
                 await asyncio.sleep(0.001)
         counters = session.metrics.snapshot()["counters"]
-        assert session.nack_count == counters["retransmit_packets"] == 64
-        assert counters["nack_rate_limited"] == 16
+        async with asyncio.timeout(1):
+            while counters["retransmit_packets"] == 0:
+                await asyncio.sleep(0.001)
+                counters = session.metrics.snapshot()["counters"]
+        assert session.nack_count == counters["retransmit_packets"] == 1
+        assert counters["repair_duplicate_requests"] == 79
+        assert counters["nack_rate_limited"] == 0
         assert len(session.retransmit) <= module.MAX_RETRANSMIT_PACKETS
         assert session.retransmit_bytes <= module.MAX_RETRANSMIT_BYTES
-        for _ in range(64):
+        for _ in range(1):
             assert (
                 await asyncio.wait_for(asyncio.get_running_loop().sock_recv(receiver, 2048), 1)
                 == original
