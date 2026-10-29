@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from aiortc.rtp import RtpPacket
 
 from halo_server.homekit.models import HomeKitOperationError
+from halo_server.media.live_timeline import LiveTimeline
 from halo_server.media.rtp import ReceiverReportStats, RtpError, parse_feedback, sender_report
 from halo_server.media.srtp import SecureVideo, SrtpError
 from halo_server.media.talkback import Talkback, TalkPacket
@@ -344,17 +345,20 @@ class AudioTrack:
         boot,
         scope,
         failure,
-        presentation,
         touch_feedback,
         last_feedback,
         clock=time.monotonic,
+        presentation=None,
         adapter_factory=None,
         decoder_factory=None,
         diagnostic_failure=None,
     ):
         self.request = request
         self._check, self._epoch, self._failure = check, epoch, failure
-        self._clock, self._presentation = clock, presentation
+        self._clock = clock
+        # Older internal callers may still supply the constructor keyword;
+        # the shared source timeline now owns all presentation correlation.
+        self._timeline = None
         self._touch_feedback, self._last_seen = touch_feedback, last_feedback
         self._adapter_factory, self._decoder_factory = adapter_factory, decoder_factory
         self._diagnostic_failure = diagnostic_failure
@@ -388,7 +392,6 @@ class AudioTrack:
         self.handle = None
         self._sequence = secrets.randbelow(65536)
         self._base = secrets.randbits(32)
-        self._source_base = self._source_last = None
         self._last_timestamp = None
         self._last_duration = 0
         self._last_presentation = self._clock()
@@ -451,10 +454,11 @@ class AudioTrack:
         )
         self.failure = None
 
-    def start(self, handle, config, *, speaker_volume):
+    def start(self, handle, config, *, speaker_volume, timeline=None):
         from halo_server.media.homekit_audio_codec import AudioAdapter
 
         self.handle, self.config = handle, config
+        self._timeline = timeline or self._new_timeline()
         self._receiver_reports = ReceiverReportStats(clock_rate=config.sample_rate)
         self._timing = _AudioTiming(config, self._clock())
         self._adapter = (self._adapter_factory or AudioAdapter)(config)
@@ -476,6 +480,20 @@ class AudioTrack:
         ]
         for task in self._tasks:
             task.add_done_callback(_observed)
+
+    @property
+    def rtp_origin(self):
+        return self._base
+
+    def _new_timeline(self):
+        # Standalone local callers still use the same fixed correlation. The
+        # live manager supplies its shared two-track owner in production.
+        return LiveTimeline(
+            audio_rate=self.config.sample_rate,
+            video_origin=0,
+            audio_origin=self._base,
+            clock=self._clock,
+        )
 
     @property
     def cleanup_failed(self):
@@ -614,9 +632,6 @@ class AudioTrack:
         if self._capture_epoch is not None:
             self._trace("reset")
         self._capture_epoch = epoch
-        self._source_base = self._source_last = None
-        if self._last_timestamp is not None:
-            self._base = (self._last_timestamp + self._last_duration) & 0xFFFFFFFF
         self._next_packet_at = 0
         self._input_spans.clear()
         self._input_end = None
@@ -660,15 +675,9 @@ class AudioTrack:
         return received
 
     def _timestamp(self, timestamp):
-        if self._source_base is None:
-            self._source_base = timestamp
-        if self._source_last is not None and timestamp < self._source_last:
-            self._source_base = timestamp
-            self._base = ((self._last_timestamp or self._base) + self._last_duration) & 0xFFFFFFFF
-        self._source_last = timestamp
-        return (
-            self._base + (timestamp - self._source_base) * self.config.sample_rate // 48000
-        ) & 0xFFFFFFFF
+        return self._timeline.rtp_timestamp(
+            "audio", capture_epoch=self._capture_epoch, source_pts=timestamp
+        )
 
     async def _send_audio(self):
         # One supervisor retains both owners until they actually finish. In
@@ -848,6 +857,15 @@ class AudioTrack:
                     )
                 )
                 self._metric("maximum", "input_spans", len(self._input_spans))
+                if self._timeline is None:
+                    self._timeline = self._new_timeline()
+                self._timeline.observe_input(
+                    "audio",
+                    capture_epoch=packet.capture_epoch,
+                    source_pts=packet.rtp_timestamp,
+                    received_at=packet.received_at,
+                    source_clocks=tuple(getattr(self.handle, "source_clocks", ())),
+                )
                 ledger.record(input_index, "source_submitted")
                 self._submitted_any = True
                 feed_started = self._clock()
@@ -1082,11 +1100,14 @@ class AudioTrack:
             if catchup:
                 self._metric("count", "catchup_packets")
             self._output_result(item, "output_sent")
+            self._timeline.sent("audio", capture_epoch=item.epoch, source_pts=output.timestamp)
             self._last_timestamp = timestamp
             self._last_duration = output.duration * self.config.sample_rate // 48000
             began = self._clock()
             try:
-                self._last_presentation = self._presentation("audio", output.timestamp, received_at)
+                self._last_presentation = self._timeline.presentation(
+                    "audio", capture_epoch=item.epoch, source_pts=output.timestamp
+                )
             finally:
                 self._measure("presentation", began)
             self._packets += 1
@@ -1174,15 +1195,19 @@ class AudioTrack:
                     and self._capture_epoch == self._current_epoch()
                     and self._may("live_audio")
                 ):
-                    timestamp = (
-                        self._last_timestamp
-                        + int(
-                            max(0, self._clock() - self._last_presentation)
-                            * self.config.sample_rate
-                        )
-                    ) & 0xFFFFFFFF
+                    if self._timeline.capture_epoch != self._capture_epoch:
+                        continue
+                    pair = self._timeline.report(
+                        "audio", capture_epoch=self._capture_epoch, instant=self._timeline.instant()
+                    )
+                    if pair is None:
+                        continue
                     report = sender_report(
-                        self.prepared.ssrc, timestamp, self._packets, self._octets
+                        self.prepared.ssrc,
+                        pair.rtp_timestamp,
+                        self._packets,
+                        self._octets,
+                        now=pair.wall_time,
                     )
                     sent = await self._send(
                         self.secure.protect_rtcp(report),

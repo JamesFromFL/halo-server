@@ -11,6 +11,7 @@ from test_homekit_live import (
     CONFIG,
     encoded_picture,
     native_crypto,
+    observe_video_clock,
     prepared,
     reconstruct,
     wire_idr,
@@ -88,6 +89,7 @@ async def controlled(monkeypatch, *, bitrate=300):
     session.capture_epoch = controller.handle.capture_epoch
     session.last_source = session.last_renewal = clock()
     session.socket = sink
+    observe_video_clock(manager, session)
     original_asyncio = module.asyncio
     monkeypatch.setattr(module, "asyncio", AsyncioProxy(clock))
     try:
@@ -463,7 +465,7 @@ async def test_parameter_reset_cannot_restart_an_existing_recovery_budget(monkey
         began = session.recovery_since
         session.recovery_attempts = 2
         clock.now += 2
-        manager._reset_timestamp(session)
+        manager._reset_video_recovery(session)
         assert session.recovery_since == began and session.recovery_attempts == 2
 
 

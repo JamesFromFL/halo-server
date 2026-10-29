@@ -6,7 +6,7 @@ import struct
 
 import pylibsrtp
 import pytest
-from test_homekit_audio_live_edge import drain, setup, source
+from test_homekit_audio_live_edge import drain, observe_audio_clock, setup, source
 
 from halo_server.media import homekit_audio
 from halo_server.media.homekit_audio import (
@@ -53,6 +53,7 @@ def unit(index, size=60):
 
 
 async def queue(track, count, *, size=60, receipt=100):
+    observe_audio_clock(track, source(0, receipt))
     for offset in range(0, count, 16):
         await track._audio_outputs(
             tuple(unit(index, size) for index in range(offset, min(count, offset + 16))),

@@ -233,6 +233,23 @@ def wire_idr(size):
     return headers + b"\0\0\1\x65" + b"\xab" * size
 
 
+def observe_video_clock(manager, session, timestamp=0, received_at=None):
+    from halo_server.media.live_timeline import LiveTimeline
+
+    if session.timeline is None:
+        session.timeline = LiveTimeline(
+            audio_rate=None, video_origin=session.output_base, clock=manager._clock
+        )
+    session.capture_epoch = session.handle.capture_epoch
+    session.timeline.observe_input(
+        "video",
+        capture_epoch=session.capture_epoch,
+        source_pts=timestamp,
+        received_at=manager._clock() if received_at is None else received_at,
+        source_clocks=tuple(getattr(session.handle, "source_clocks", ())),
+    )
+
+
 class Handle:
     def __init__(self):
         self.buffer = EncodedMediaBuffer()
@@ -471,6 +488,7 @@ async def test_packet_pacing_respects_actual_selected_bitrate_instead_of_clamped
     manager, controller, identity, _, receiver = await prepared()
     session = manager._sessions[identity]
     session.config, session.handle = CONFIG, controller.handle
+    observe_video_clock(manager, session)
     output = SimpleNamespace(payload=wire_idr(10_000), timestamp=0, mode="copy", is_keyframe=True)
     try:
         began = time.monotonic()
@@ -491,6 +509,7 @@ async def test_capture_retry_during_idr_pacing_stops_remaining_old_attempt_datag
     manager, controller, identity, _, receiver = await prepared()
     session = manager._sessions[identity]
     session.config, session.handle = CONFIG, controller.handle
+    observe_video_clock(manager, session)
     output = SimpleNamespace(payload=wire_idr(10_000), timestamp=0, mode="copy", is_keyframe=True)
     sending = asyncio.create_task(
         manager._access_unit(session, output, controller.handle.capture_epoch)

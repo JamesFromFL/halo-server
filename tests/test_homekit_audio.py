@@ -32,6 +32,7 @@ from halo_server.media import homekit_audio as audio_module
 from halo_server.media.buffer import BufferRead
 from halo_server.media.homekit_audio import AudioEndpointRequest
 from halo_server.media.homekit_live import HomeKitLiveManager
+from halo_server.media.live_timeline import LiveTimeline
 from halo_server.media.opus import AudioConfiguration, AudioOutput, parse_opus
 from halo_server.media.ring_media import install_source_clock_observer
 from halo_server.media.srtp import SecureVideo, SrtpError
@@ -521,6 +522,20 @@ async def test_common_sender_report_anchor_aligns_audio_video_without_resetting_
             capture_epoch=1,
         ),
     )
+    session.timeline = LiveTimeline(
+        audio_rate=AUDIO.sample_rate,
+        video_origin=session.output_base,
+        audio_origin=session.audio.rtp_origin,
+        clock=manager._clock,
+    )
+    for kind, pts, receipt in (("video", 135000, now + 0.5), ("audio", 48000, now + 0.53)):
+        session.timeline.observe_input(
+            kind,
+            capture_epoch=1,
+            source_pts=pts,
+            received_at=receipt,
+            source_clocks=controller.handle.source_clocks,
+        )
     try:
         # The same source instant is video+0.5s, audio+0s; receive times differ.
         v = manager._presentation_time(session, "video", 135000, now + 0.5)
@@ -528,6 +543,12 @@ async def test_common_sender_report_anchor_aligns_audio_video_without_resetting_
         assert abs(v - a) < 1e-6 and session.timing_mode == "source_sender_report"
         base = session.output_base
         controller.handle.buffer.clear()
+        session.timeline.observe_input(
+            "audio",
+            capture_epoch=controller.handle.capture_epoch,
+            source_pts=48000,
+            received_at=now,
+        )
         assert manager._presentation_time(session, "audio", 48000, now) == now
         assert session.timing_mode == "receiver_estimated" and session.output_base == base
     finally:
@@ -775,6 +796,20 @@ async def test_actual_source_sender_reports_align_native_impulse_and_picture_pre
     assert picture.to_ndarray(format="rgb24")[120, 160, 2] > 240
     try:
         received_at = time.monotonic() - 0.5
+        session.timeline = LiveTimeline(
+            audio_rate=AUDIO.sample_rate,
+            video_origin=session.output_base,
+            audio_origin=session.audio.rtp_origin,
+            clock=manager._clock,
+        )
+        for kind, pts in (("video", 45000), ("audio", 24000)):
+            session.timeline.observe_input(
+                kind,
+                capture_epoch=1,
+                source_pts=pts,
+                received_at=received_at,
+                source_clocks=controller.handle.source_clocks,
+            )
         picture_at = manager._presentation_time(session, "video", 45000, received_at)
         impulse_at = manager._presentation_time(session, "audio", 24000, received_at) + peak_seconds
         assert 0 < impulse_at - picture_at < 0.02
@@ -908,6 +943,7 @@ async def test_grouped_audio_uses_earliest_receipt_and_reuses_fresh_batch_after_
             )
         )
 
+    manager._clock = lambda: now[0]
     try:
         await manager.start(
             controller.boot, controller.scope, identity, CONFIG, audio_config=selected

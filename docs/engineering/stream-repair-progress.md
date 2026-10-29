@@ -15,7 +15,8 @@ separate from synthetic and installed-artifact checks.
 | 4d | Ring post-activation stream-options compatibility | Complete: `9c51a33`; paired pilot did not eliminate incoming periodic gaps |
 | 5 | Complete-frame delivery and loss recovery | Partial original scope: `4e0af7b`; 2,256 Python / 265 Node passed; packaged, not deployed; remaining recovery work below |
 | 6a | Original video receipt and worker ownership | Complete: `a59435f`; 2,294 Python / 265 Node passed; 1 host IPv6 skip |
-| 6p | HomeKit parameter-set packetization | Implemented; 173 focused checks passed / 1 host IPv6 skip; full gate pending |
+| 6p | HomeKit parameter-set packetization | Complete: `e7e89c2`; 2,348 Python / 265 Node passed; 1 host IPv6 skip |
+| 6t | Stable shared audio/video clock | Implemented; 371 affected tests passed / 1 host IPv6 skip; full gate pending |
 | 6b onward | Quality, A/V timeline and reconfigure | Receiver-first audit now governs sequencing; no new implementation from this audit |
 | 7 | Installed and real-device qualification | Pending |
 
@@ -353,3 +354,21 @@ normal MTUs, sequence wrap, IDR recovery and intervening metadata. Existing test
 reconstructors now parse STAP-A explicitly rather than treating it as a codec
 NAL. The actual public HAP delegate/IPC/UDP/decode test also passes. These checks
 establish the wire correction, not physical Home continuity or quality parity.
+
+## Stable clock implementation, R6t
+
+One view-owned bounded timeline now maps original audio/video samples into
+presentation and RTP time. It freezes either a coherent pair of initial source
+reports or an explicitly estimated receipt reference. Late/incoherent reports
+are measured without moving an established mapping. Same-source reconfiguration
+preserves elapsed media time; a real source epoch deliberately replaces source
+anchors while retaining view transport identity. Audio batches retain each
+output's sample spacing, including native codec lookahead. Sender reports use
+one correlated wall/monotonic instant with signed extrapolation. A new source
+epoch cannot emit a track's sender report before that track sends new media.
+
+Deterministic and composed native tests recover a known A/V phase through actual
+SRTP and independent decode, preserve a two-second reconfigure gap, and deny
+old-epoch output. The packet correction remains in place. This slice changes no
+bitrate, pacing, freshness, codec, filtering or resource limits. Sender-report
+correctness alone is not a diagnosis of receiver arrival jitter.

@@ -153,8 +153,8 @@ async def test_real_send_loop_outcomes_unchanged_with_safe_or_failing_trace(
                 capture_epoch=1,
                 packets=(
                     packet(2_000_000_000),
-                    packet(2_000_000_960),
-                    packet(2_000_001_920, received=90),
+                    packet(2_000_002_880),
+                    packet(2_000_005_760, received=90),
                 ),
             )
 
@@ -184,10 +184,10 @@ async def test_real_send_loop_outcomes_unchanged_with_safe_or_failing_trace(
         assert track._timing.values["stale_input"] == 1
         assert track._timing.values["feed_calls"] == 2
         assert track._timing.values["output_packets"] == 6
-        assert track._timing.values["output_pts_mismatch"] == 1
-        assert track._timing.values["input_gap_max"] == 1920
+        assert track._timing.values["output_pts_mismatch"] == 0
+        assert track._timing.values["input_gap_max"] == 0
         assert track._timing.values["mode_adapt"] == 6
-        assert track._timing.values["presentation_age_ms_max"] >= 80
+        assert 0 <= track._timing.values["presentation_age_ms_max"] < 20
     finally:
         await track.close()
     assert track._retired and track._timing.finished

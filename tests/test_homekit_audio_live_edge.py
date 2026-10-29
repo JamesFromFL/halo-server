@@ -36,6 +36,20 @@ def source(index, received, *, epoch=1):
     )
 
 
+def observe_audio_clock(track, packet):
+    # Direct output-queue fixtures supply the original input observation that
+    # the real producer records before invoking the native converter.
+    track._capture_epoch = packet.capture_epoch
+    if track._timeline is None:
+        track._timeline = track._new_timeline()
+    track._timeline.observe_input(
+        "audio",
+        capture_epoch=packet.capture_epoch,
+        source_pts=packet.rtp_timestamp,
+        received_at=packet.received_at,
+    )
+
+
 def setup(monkeypatch, *, cold=0.122):
     now, epoch, allowed = [100.0], [1], [True]
     track = make_track(monkeypatch, now)

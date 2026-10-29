@@ -17,6 +17,7 @@ from test_homekit_live import (
     DeferredAdapter,
     encoded_picture,
     native_crypto,
+    observe_video_clock,
     prepared,
     reconstruct,
     wire_idr,
@@ -149,6 +150,7 @@ async def test_partial_au_counts_packets_but_not_a_complete_frame(monkeypatch):
     manager, controller, identity, result, receiver = await prepared()
     session = manager._sessions[identity]
     session.config, session.handle = CONFIG, controller.handle
+    observe_video_clock(manager, session)
     output = SimpleNamespace(payload=wire_idr(3000), timestamp=0, mode="copy", is_keyframe=True)
     calls = 0
     protected = []
@@ -187,6 +189,7 @@ async def test_diagnostic_failure_cannot_change_packet_bytes_or_cleanup(monkeypa
     manager, controller, identity, result, receiver = await prepared()
     session = manager._sessions[identity]
     session.config, session.handle = CONFIG, controller.handle
+    observe_video_clock(manager, session)
 
     class Broken:
         def __getattr__(self, _name):

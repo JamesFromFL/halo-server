@@ -20,6 +20,7 @@ from halo_server.homekit.models import HomeKitOperationError, MediaScope
 from halo_server.media.buffer import MediaStreamKind
 from halo_server.media.h264 import H264Error, parse_sps, pps_sequence_id
 from halo_server.media.homekit_audio import AudioEndpointRequest, AudioTrack, PreparedAudio
+from halo_server.media.live_timeline import LiveTimeline
 from halo_server.media.manager import settle_owned
 from halo_server.media.rtp import (
     MAX_ACCESS_UNIT_BYTES,
@@ -85,6 +86,7 @@ _TRACE_ERRORS = frozenset(
         "HomeKitOperationError",
         "H264Error",
         "VideoTransformError",
+        "TimelineError",
         "RtpError",
         "SrtpError",
         "AudioTransformError",
@@ -247,8 +249,6 @@ class _Session:
     last_source: float = 0
     last_feedback: float = 0
     last_renewal: float = 0
-    source_base: int | None = None
-    source_last: int | None = None
     output_base: int = field(default_factory=lambda: secrets.randbits(32))
     last_timestamp: int | None = None
     last_packet_at: float = 0
@@ -266,7 +266,7 @@ class _Session:
     last_nack_window: float = 0
     nack_count: int = 0
     last_pli: float = 0
-    clock_anchor: tuple | None = None
+    timeline: LiveTimeline | None = None
     timing_mode: str = "receiver_estimated"
     trace_first_frame: bool = False
     trace_terminal: bool = False
@@ -405,6 +405,7 @@ class HomeKitLiveManager:
             "timing_mode": _trace_label(
                 session.timing_mode, {"receiver_estimated", "source_sender_report"}
             ),
+            "timeline": session.timeline.snapshot() if session.timeline is not None else None,
             "terminal": copy.deepcopy(session.terminal),
             "video": session.metrics.snapshot(),
             "receiver_report": session.receiver_stats.snapshot(now),
@@ -660,9 +661,6 @@ class HomeKitLiveManager:
                     diagnostic_failure=lambda stage, code, error: self._trace_terminal(
                         session, stage, code, error
                     ),
-                    presentation=lambda kind, timestamp, received_at: self._presentation_time(
-                        session, kind, timestamp, received_at
-                    ),
                     touch_feedback=lambda received_at: setattr(
                         session, "last_feedback", received_at
                     ),
@@ -758,9 +756,18 @@ class HomeKitLiveManager:
             self._current(session)
             factory = self._adapter_factory or AccessUnitAdapter
             session.adapter = factory(session.config)
+            session.timeline = LiveTimeline(
+                audio_rate=session.audio_config.sample_rate if session.audio_config else None,
+                video_origin=session.output_base,
+                audio_origin=session.audio.rtp_origin if session.audio is not None else None,
+                clock=self._clock,
+            )
             if session.audio is not None:
                 session.audio.start(
-                    session.handle, session.audio_config, speaker_volume=session.speaker_volume
+                    session.handle,
+                    session.audio_config,
+                    speaker_volume=session.speaker_volume,
+                    timeline=session.timeline,
                 )
             session.last_source = session.last_feedback = session.last_renewal = self._clock()
             session.active_started_at = session.last_source
@@ -795,7 +802,7 @@ class HomeKitLiveManager:
                 self._current(session)
                 session.config = config
                 _measure(session, "count", "reconfigurations")
-                self._reset_timestamp(session)
+                self._reset_video_recovery(session)
         except BaseException:
             await self._settle_retirement(session)
             raise
@@ -824,22 +831,12 @@ class HomeKitLiveManager:
                 await asyncio.sleep(0.002)
 
     def _timestamp(self, session, timestamp):
-        if session.source_base is None:
-            session.source_base = timestamp
-        elif session.source_last is not None and timestamp < session.source_last:
-            session.source_base = timestamp
-            session.output_base = (
-                (session.last_timestamp or session.output_base) + 3000
-            ) & 0xFFFFFFFF
-        result = (session.output_base + timestamp - session.source_base) & 0xFFFFFFFF
-        session.source_last = timestamp
-        return result
+        return session.timeline.rtp_timestamp(
+            "video", capture_epoch=session.capture_epoch, source_pts=timestamp
+        )
 
-    def _reset_timestamp(self, session):
-        session.source_base = session.source_last = None
-        if session.last_timestamp is not None:
-            step = 90000 // session.config.fps
-            session.output_base = (session.last_timestamp + step) & 0xFFFFFFFF
+    def _reset_video_recovery(self, session):
+        # A codec/configuration reset does not change source media time.
         session.retransmit.clear()
         session.retransmit_bytes = 0
         self._need_idr(
@@ -919,41 +916,13 @@ class HomeKitLiveManager:
         return False
 
     def _presentation_time(self, session, kind, timestamp, received_at):
-        """Use one source SR anchor for both tracks, with an honest fallback.
-
-        The observer's RTP domain is the same extended domain as the encoded
-        hook. An incoming SR never changes the output RTP sequence or origin.
-        """
-        epoch = session.handle.capture_epoch
-        now = self._clock()
-        observations = tuple(getattr(session.handle, "source_clocks", ()))
-        valid = [
-            item
-            for item in observations
-            if (
-                item.capture_epoch == epoch
-                and item.kind in {"audio", "video"}
-                and type(item.sender_ntp) is int
-                and 0 < item.sender_ntp < 2**64
-                and 0 <= now - item.received_at <= 60
-            )
-        ]
-        observation = next((item for item in valid if item.kind == kind), None)
-        if observation is not None:
-            rate = 48000 if kind == "audio" else 90000
-            delta = (timestamp - observation.rtp_timestamp) / rate
-            if abs(delta) <= 60:
-                if session.clock_anchor is None or session.clock_anchor[0] != epoch:
-                    first = min(valid, key=lambda item: item.received_at)
-                    session.clock_anchor = epoch, first.sender_ntp, first.received_at
-                _, anchor_ntp, anchor_time = session.clock_anchor
-                ntp_delta = (observation.sender_ntp - anchor_ntp) / 2**32
-                presentation = anchor_time + ntp_delta + delta
-                if abs(presentation - received_at) <= 5:
-                    session.timing_mode = "source_sender_report"
-                    return presentation
-        session.timing_mode = "receiver_estimated"
-        return received_at
+        # Receipt remains an admission/freshness fact. Presentation follows the
+        # original source sample clock once observed, not output completion.
+        result = session.timeline.presentation(
+            kind, capture_epoch=session.handle.capture_epoch, source_pts=timestamp
+        )
+        session.timing_mode = session.timeline.mode
+        return result
 
     def _observe_source(self, session, packet):
         with contextlib.suppress(Exception):
@@ -1042,7 +1011,7 @@ class HomeKitLiveManager:
                         _measure(session, "count", "epoch_changes")
                     session.diagnostic_source_pts = session.diagnostic_output_pts = None
                     session.diagnostic_source_receipt = session.diagnostic_keyframe_pts = None
-                    self._reset_timestamp(session)
+                    self._reset_video_recovery(session)
                     session.capture_epoch = batch.capture_epoch
                 elif batch.resynchronized:
                     self._need_idr(session)
@@ -1056,6 +1025,13 @@ class HomeKitLiveManager:
                         self._current(session)
                         if session.handle.capture_epoch != packet.capture_epoch:
                             break
+                        session.timeline.observe_input(
+                            "video",
+                            capture_epoch=packet.capture_epoch,
+                            source_pts=packet.rtp_timestamp,
+                            received_at=packet.received_at,
+                            source_clocks=tuple(getattr(session.handle, "source_clocks", ())),
+                        )
                         generation = self._configuration_generation(session)
                         feed_started = self._clock()
                         _measure(session, "count", "adapter_feeds")
@@ -1187,6 +1163,7 @@ class HomeKitLiveManager:
                     await self._paced_send(
                         session, protected, epoch=epoch, deadline=deadline, reserved=True
                     )
+                    session.timeline.sent("video", capture_epoch=epoch, source_pts=output.timestamp)
                     session.last_timestamp = item.timestamp
                     session.last_packet_at = presentation
                     session.packets += 1
@@ -1369,12 +1346,20 @@ class HomeKitLiveManager:
                 if session.last_timestamp is not None:
                     if session.capture_epoch != session.handle.capture_epoch:
                         continue
-                    timestamp = (
-                        session.last_timestamp
-                        + int(max(0, self._clock() - session.last_packet_at) * 90000)
-                    ) & 0xFFFFFFFF
+                    if session.timeline.capture_epoch != session.capture_epoch:
+                        continue
+                    instant = session.timeline.instant()
+                    pair = session.timeline.report(
+                        "video", capture_epoch=session.capture_epoch, instant=instant
+                    )
+                    if pair is None:
+                        continue
                     report = sender_report(
-                        session.prepared.ssrc, timestamp, session.packets, session.octets
+                        session.prepared.ssrc,
+                        pair.rtp_timestamp,
+                        session.packets,
+                        session.octets,
+                        now=pair.wall_time,
                     )
                     await self._send(session, session.secure.protect_rtcp(report))
                     _measure(session, "count", "sender_reports")
