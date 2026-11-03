@@ -26,6 +26,13 @@ Halo's transport and storage guarantees while incorporating upstream native
 pairing crypto and input validation; see the [dependency qualification](../homekit-adapter/vendor/README.md).
 The S12/S14 dependency versions below describe their original implementation.
 
+The 2026-11-02 media pilot is installed with pairing preserved and HKSV off. It
+contains the comparative receiver/lifecycle fixes while deliberately retaining
+HAP 2.2.3-halo.2 for the first playback experiment. Its exact hybrid source,
+target-runtime qualification and deployment identity are recorded in the
+[comparative repair notes](engineering/comparative-repairs-2026-11-02.md).
+Smooth physical Apple playback is not yet established for this pilot.
+
 ## Implemented foundation
 
 - S01: transactional SDK inventory refresh preserves surviving wrappers, retires

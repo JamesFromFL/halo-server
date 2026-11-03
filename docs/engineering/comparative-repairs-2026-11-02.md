@@ -177,7 +177,7 @@ control remains damaged rather than being relabeled successful.
 
 ## Pilot scope and remaining investigations
 
-The media pilot will restore the complete pre-upgrade HAP adapter from immutable
+The media pilot restores the complete pre-upgrade HAP adapter from immutable
 commit `689d6b706832f0176138bc2029714b75bacba5e8` in an isolated source archive.
 Its per-file source manifest and hash become part of the release identity. The
 main source retains the separately qualified HAP 2.3 upgrade. This keeps unrelated
@@ -192,3 +192,73 @@ The new receiver comparison found a concrete local defect without establishing
 that a different Ring negotiation/transport would remove incoming gaps. Serial
 physical Ring/Apple or reference-peer comparison remains necessary if those gaps
 persist. Software completion is distinct from acceptance of smooth Apple playback.
+
+## Exact pilot qualification and host runtime compatibility
+
+The media revision is `a064c2bd201afa0044fcb4c5f32d14172b85e818`. Restoring
+the two approved HAP paths yields a 406-file source manifest with SHA-256
+`a30e89577386f4a6dab4f01ab66d768e8d2b7bec1a354ba5737092ae77884a85`.
+All media files match the main revision. The first exact hybrid run on Python
+3.14.9 passed **2,680 Python tests, one existing IPv6 skip, and 265 adapter tests**,
+plus lint, formatting and the offline lock check. The composed/admin checks that
+initially lacked a built adapter passed in this full run. The initial sandbox
+attempt rejected mapped filesystem ownership; the successful host-access rerun
+kept the production verifier unchanged.
+
+Two complete package builds were identical. Installed checks independently
+decoded 32 continuous pictures, exercised 19 readers joining after original
+headers expired, and delivered all 32 marker-complete pictures without waiting
+for another timestamp. Native audio/video, packet-size, lifecycle, nonpublication
+and six public HAP probes passed, with all child processes joined. The exact pilot's
+eight-case, three-receiver replay matched the main candidate's complete output
+hashes and retired all peers and sockets.
+
+Remote staging then correctly rejected that package's host fingerprints before
+activation. The desktop uses Python 3.14.9; the server and its active release use
+3.14.8. Only the interpreter and libpython fingerprints differ; all other declared
+external libraries match. The cached 3.14.8 package matches both server hashes.
+The resolution is an isolated build and qualification against that exact runtime,
+not editing the manifest, weakening verification, or upgrading either machine.
+This exposes an existing packaging limitation: releases bind the exact host
+Python build. Broader runtime portability requires its own packaging design and
+qualification rather than a media-path workaround.
+
+The exact Python 3.14.8 rerun also passed **2,680 Python tests, one existing IPv6
+skip, and 265 adapter tests**. The cached runtime's detached signature verified
+against the installed Arch keyring. A read-only canonical runtime view used
+permitted current-user ownership for copied, hash-verified host files; production
+verification remained unchanged. All eight comparison cases were rerun under the
+final wrapper, with all 24 results matching the earlier candidate. Source and
+runtime inventories were verified before and after execution.
+
+Two target-compatible packages were identical. Every application file, provenance
+field and ABI qualification matched the first package; only the two Python host
+fingerprints differed. The full installed native/daemon/Node/HAP qualification
+passed again, including the 32-picture/19-late-reader/32-marker checks and joined
+cleanup. The final comparison and runtime signature/inventory evidence are bound
+into the qualification receipt.
+
+The target package passed actual-server staging and was activated at selection
+revision **16**, with the prior R7f release retained as the previous selection:
+
+- Release: `c6d204c6e606f9ff0aadf1a08eb7a4c4f3d700c40c91d4894a2d5df05fd62236`.
+- Manifest SHA-256: `3ef65c2f35130735a0191e8c526fea0b47313aa65c52661b55d057cf48ed4bf8`.
+- Archive SHA-256: `656ab0a7805e1024623d4694b1fbbf435953068887bf4695f84dbc4ead046b67`.
+- Qualification receipt SHA-256: `f61224aca3baf73b37971dcb02c218daf5d90b580a03489a658092a33ce7a91c`.
+
+Post-activation checks passed: service running, pairing identity/client count and
+publication preserved, pairing-file bytes/configuration/recording preferences
+unchanged, HKSV and owner warm off, no active/retiring media or cleanup resources,
+and no automatic restart. Both host Python installations remain unchanged. The
+initial rejected package remains unselected. No real camera stream or Apple
+viewer was opened during this implementation; physical playback acceptance is
+still required. All implementation commits are local; no push was performed.
+
+The physical source-ingress experiment is also separate from the synthetic
+comparison. Existing status can observe active captures but cannot initiate a
+bounded diagnostic capture or select a reference peer. A future serial A/B needs
+an owner-admin capture lease, the actual peer's offer/answer/ICE methods under
+Halo's current Ring authentication owner, and joined stream/peer retirement
+between phases. Compare matching receive boundaries; reference RTP callbacks do
+not by themselves establish UDP-level arrival behavior. No real Ring A/B was
+performed during this implementation.
