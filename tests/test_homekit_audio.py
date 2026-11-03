@@ -333,8 +333,12 @@ async def test_native_audio_udp_decrypts_decodes_tone_with_actual_classic_hap_cl
             while True:
                 protected = await asyncio.get_running_loop().sock_recv(audio, 4096)
                 if 192 <= protected[1] <= 223:
-                    report = RtcpPacket.parse(peer.unprotect_rtcp(protected))[0]
+                    report, description = RtcpPacket.parse(peer.unprotect_rtcp(protected))
                     assert report.sender_info.packet_count == 8
+                    assert description.chunks[0].ssrc == result.audio.ssrc
+                    assert description.chunks[0].items == [
+                        (1, manager._sessions[identity].timeline.cname)
+                    ]
                     break
     finally:
         if feeder is not None:

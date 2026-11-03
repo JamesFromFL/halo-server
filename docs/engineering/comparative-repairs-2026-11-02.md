@@ -48,3 +48,19 @@ The test runtime uses explicit pytest-asyncio loading because an unrelated
 installed pytest entry point is unavailable. Local socket permissions are needed
 for actual loopback transports and thread wakeups. No full-suite or physical
 acceptance claim is made by this focused gate.
+
+## Slice 2: regular RTP control identity
+
+Audio and video now send regular compound RTCP SR+SDES reports with one random,
+view-scoped CNAME. It contains no account, device or network identity, is omitted
+from diagnostics, and survives reconfiguration/source recovery within the view.
+Existing RTP timestamps, sender counters and feedback accounting are unchanged.
+The generic serializer retains its bare-SR utility form for callers that do not
+supply CNAME; both production live report owners explicitly supply it.
+
+Tests inspect the actual serialized compound boundaries, SDES padding and name
+bounds, SRTCP authentication round trips, and both real audio/video report loops
+over UDP. The combined report/timeline/live/audio/reconfiguration gate passed
+**142 tests with one existing IPv6 skip**; lint/format checks passed. This closes
+a generic RTP conformance gap and does not establish a stutter diagnosis—Scrypted
+also emits bare reports in its reviewed native sender.

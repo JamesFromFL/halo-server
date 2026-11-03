@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import secrets
 import time
 from dataclasses import dataclass, field
 
@@ -119,6 +120,9 @@ class LiveTimeline:
         self._mono, self._wall = (before + after) // 2, wall
         self._sample_span = after - before
         self._token = object()
+        # Shared by this view's audio/video SRs, stable through reconfigure and
+        # source recovery. Never derived from a device/account or put in logs.
+        self.cname = secrets.token_hex(16).encode("ascii")
         self._tracks = {"video": _Track(90000, 90000, video_origin)}
         if audio_rate is not None:
             self._tracks["audio"] = _Track(48000, audio_rate, audio_origin)

@@ -19,7 +19,9 @@ from aiortc.rtp import (
     RtcpPsfbPacket,
     RtcpRrPacket,
     RtcpRtpfbPacket,
+    RtcpSdesPacket,
     RtcpSenderInfo,
+    RtcpSourceInfo,
     RtcpSrPacket,
 )
 
@@ -143,12 +145,21 @@ class H264Packetizer:
 
 
 def sender_report(
-    ssrc: int, timestamp: int, packets: int, octets: int, *, now: float | None = None
+    ssrc: int,
+    timestamp: int,
+    packets: int,
+    octets: int,
+    *,
+    now: float | None = None,
+    cname: bytes | None = None,
 ):
+    """Serialize SR, with SDES/CNAME for regular compound reports when supplied."""
+    if cname is not None and (not isinstance(cname, bytes) or not 1 <= len(cname) <= 255):
+        raise RtpError("Invalid RTCP canonical name")
     wall = time.time() if now is None else now
     seconds = int(wall) + 2_208_988_800
     fraction = int((wall % 1) * (1 << 32))
-    return bytes(
+    report = bytes(
         RtcpSrPacket(
             ssrc=ssrc,
             sender_info=RtcpSenderInfo(
@@ -159,6 +170,9 @@ def sender_report(
             ),
         )
     )
+    if cname is not None:
+        report += bytes(RtcpSdesPacket(chunks=[RtcpSourceInfo(ssrc=ssrc, items=[(1, cname)])]))
+    return report
 
 
 @dataclass(frozen=True)

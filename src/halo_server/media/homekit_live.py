@@ -1515,6 +1515,7 @@ class HomeKitLiveManager:
                         session.packets,
                         session.octets,
                         now=pair.wall_time,
+                        cname=session.timeline.cname,
                     )
                     await self._send(session, session.secure.protect_rtcp(report))
                     _measure(session, "count", "sender_reports")

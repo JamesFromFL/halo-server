@@ -1212,6 +1212,7 @@ class AudioTrack:
                         self._packets,
                         self._octets,
                         now=pair.wall_time,
+                        cname=self._timeline.cname,
                     )
                     sent = await self._send(
                         self.secure.protect_rtcp(report),

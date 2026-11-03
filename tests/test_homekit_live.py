@@ -397,8 +397,10 @@ async def test_real_udp_srtp_reconstructs_and_decodes_picture_and_timer_sender_r
         assert rgb[0] > 220 and rgb[1] < 30 and rgb[2] < 30
         async with asyncio.timeout(3):
             report = await asyncio.get_running_loop().sock_recv(receiver, 2048)
-        parsed = RtcpPacket.parse(crypto.unprotect_rtcp(report))[0]
+        parsed, description = RtcpPacket.parse(crypto.unprotect_rtcp(report))
         assert parsed.ssrc == result.ssrc and parsed.sender_info.packet_count == len(clear_packets)
+        assert description.chunks[0].ssrc == result.ssrc
+        assert description.chunks[0].items == [(1, manager._sessions[identity].timeline.cname)]
         assert controller.opens == 1
     finally:
         await manager.stop(controller.boot, controller.scope, identity)
