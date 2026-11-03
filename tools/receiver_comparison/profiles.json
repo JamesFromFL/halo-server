@@ -1,0 +1,22 @@
+{
+  "schema": 1,
+  "homebridge": {
+    "repository": "https://github.com/dgreif/ring",
+    "commit": "3bcc624acc35b6f97c391089a12bff582bb6ed4a",
+    "ring_version": "14.3.0",
+    "werift_version": "0.22.4",
+    "lock_sha256": "e98b43aabfc2aa03b0d68133e566fe848399582ce22c055f1deede53ac09a15e",
+    "peer_sha256": "18a3446b8a8ce67f97900ee2269013669cb018954f6c62f664ed60c38b2a3a86"
+  },
+  "scrypted": {
+    "repository": "https://github.com/koush/scrypted",
+    "commit": "3488836bf8b1b13efbcfd1dfe7b6367af602f8a4",
+    "werift_repository": "https://github.com/koush/werift-webrtc",
+    "werift_commit": "c66a9bde88bb042d21f571f96e2c4d5b06628cac",
+    "ring_fork_commit_not_executed": "516e96a24ec279168c246795e623b6bfdf58ec45",
+    "lock_sha256": "54b0d410c7075b500c287667d63e1fdf64f2c0e3ba5f1aa4bea3474a82dd6b41",
+    "peer_sha256": "693a20707187586b6a31fff99d9cca950da1187bff16c37979c465e5ad889a7a",
+    "codecs_sha256": "90ac0e6ca3e90be9f352a109fefdd56985ef20651038c1619e4a637de756e15a",
+    "receiver_sha256": "be9250c3cd5df72ba19a57b376cdc906dd71ad918a003bcfb1fbbcca2f292fb3"
+  }
+}

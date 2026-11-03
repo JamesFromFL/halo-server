@@ -104,3 +104,31 @@ new patch, reproducibility hashes, toolchain, dependency delta and qualification
 limits are recorded in `homekit-adapter/vendor/hap-nodejs-2.3.0-halo.1.provenance.json`.
 Physical pairing/controller acceptance and power-cut durability remain untested.
 This dependency maintenance is not evidence of correcting incoming media gaps.
+
+## Slice 5: repeatable receiver comparison
+
+`tools/receiver_comparison` now executes Halo's pinned real receive/encoded-queue
+path, released Homebridge Ring's actual Werift peer, and hash-verified Scrypted
+custom-peer declarations with its pinned Werift fork. Eight identical generated
+H.264 traces cover regular/bursty delivery, loss, reordering, a 282-packet IDR,
+delayed next timestamp, wrap and early close. The source independently decodes;
+complete AU hashes, handler timing, callback scheduling and joined cleanup are
+reported. Changed/missing references fail closed. No Ring credentials or saved
+camera media are used. The harness tests passed as part of a **113-test** codec,
+native-audio and comparison gate, including all advertised audio packet durations.
+
+Frozen pre-assembly-change baseline: normal Halo delivery released 11 of 12 AUs,
+with the last held for another timestamp; the references made all 12 available.
+Delaying the next frame moved Halo's first complete AU to about 214 ms while
+reference availability remained about 3–4 ms. One missing initial fragment held
+all subsequent Halo AUs within the bounded trace. The reference packet paths
+forwarded the remaining packets; complete dependent pictures after a lost IDR
+are not necessarily decodable. The 128-packet negative control also demonstrated
+truncation of the large IDR; Halo's existing 512-packet limit is retained.
+
+This is post-SRTP **video receive-path** evidence, not live Ring negotiation,
+audio, RTSP, output adaptation or HomeKit acceptance. It identifies a separate
+local assembly defect; it does not explain away previously measured gaps before
+assembly. Reference/profile hashes and the measurement limitations are in the
+runner README and JSON reports. Baseline evidence is retained outside the repo
+in the task's `outputs/halo-receiver-comparison-2026-11-02-baseline.json`.
