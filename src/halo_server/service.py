@@ -1521,7 +1521,9 @@ class HaloService:
         device = self._find_media_device(camera_id)
         if device is None:
             return None
-        session = self._media_session_factory(client, device)
+        session = self._media_session_factory(
+            client, device, legacy_audio_enabled=self.configuration.compatibility_enabled
+        )
         self._media_sessions[camera_id] = session
         return session
 

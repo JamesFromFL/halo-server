@@ -64,3 +64,19 @@ over UDP. The combined report/timeline/live/audio/reconfiguration gate passed
 **142 tests with one existing IPv6 skip**; lint/format checks passed. This closes
 a generic RTP conformance gap and does not establish a stutter diagnosis—Scrypted
 also emits bare reports in its reviewed native sender.
+
+## Slice 3: allocate audio work for the configured consumers
+
+Native HomeKit and Ring-only modes no longer allocate the legacy PCM decoder,
+legacy audio owner or normalized-Opus encoder. Original Opus, source-clock
+observations, native live/recording audio and the intercom microphone remain
+connected. Compatibility and dual modes retain the existing legacy lane. This
+choice follows the immutable server mode and applies to both initial capture and
+retry; it does not dynamically change a running capture's consumer policy.
+
+The focused gate passed **150 tests**, including all four modes, retries, the
+actual Ring receiver's encoded adapter, independently decoded original Opus,
+recording demand, and intercom PCM. Ruff and whitespace checks passed. An
+additional composed/admin check initially encountered three missing-adapter-build
+failures; these must be rerun after the HAP adapter is built. Avoid claiming an
+observed CPU or physical-playback improvement from this allocation change alone.

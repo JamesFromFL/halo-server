@@ -137,7 +137,8 @@ class FakeListener:
 
 
 class FakeMediaSession:
-    def __init__(self, _client, device):
+    def __init__(self, _client, device, *, legacy_audio_enabled=True):
+        self.legacy_audio_enabled = legacy_audio_enabled
         self.camera_id = str(device.id)
         self.acquired = []
         self.released = []
@@ -538,8 +539,8 @@ async def test_account_invalidation_releases_in_flight_event_acquire(tmp_path):
     created_sessions = []
 
     class BlockingMediaSession(FakeMediaSession):
-        def __init__(self, client, device):
-            super().__init__(client, device)
+        def __init__(self, client, device, *, legacy_audio_enabled=True):
+            super().__init__(client, device, legacy_audio_enabled=legacy_audio_enabled)
             created_sessions.append(self)
 
         def acquire(self, purpose, *, lease_id):
@@ -1874,8 +1875,8 @@ async def test_retiring_capture_blocks_replacement_after_stop_timeout(tmp_path):
 @pytest.mark.asyncio
 async def test_inventory_hardware_replacement_retires_capture_even_when_api_id_matches(tmp_path):
     class SourceAwareSession(FakeMediaSession):
-        def __init__(self, client, device):
-            super().__init__(client, device)
+        def __init__(self, client, device, *, legacy_audio_enabled=True):
+            super().__init__(client, device, legacy_audio_enabled=legacy_audio_enabled)
             self.source = client, device
 
         def owns_source(self, client, device):

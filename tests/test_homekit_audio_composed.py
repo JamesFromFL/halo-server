@@ -30,8 +30,8 @@ from halo_server.media.opus import OriginalOpusBuffer
 
 
 class OriginalAudioCapture(Capture):
-    def __init__(self, client, camera):
-        super().__init__(client, camera)
+    def __init__(self, client, camera, *, legacy_audio_enabled=True):
+        super().__init__(client, camera, legacy_audio_enabled=legacy_audio_enabled)
         self.original_audio_buffer = OriginalOpusBuffer()
 
 

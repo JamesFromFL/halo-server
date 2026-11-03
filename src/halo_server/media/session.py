@@ -97,6 +97,7 @@ class CameraMediaSession:
         receiver_supervisor=supervise_receiver,
         on_raw_audio: Callable[[bytes, int, int], None] | None = None,
         audio_encoder_factory=NormalizedOpusEncoder,
+        legacy_audio_enabled: bool = True,
         clock: Callable[[], float] = time.monotonic,
         retry_initial: float = RETRY_INITIAL_SECONDS,
         retry_max: float = RETRY_MAX_SECONDS,
@@ -105,6 +106,8 @@ class CameraMediaSession:
         _validate_retry_delay(retry_max, "maximum retry delay")
         if retry_initial > retry_max:
             raise ValueError("initial retry delay cannot exceed maximum retry delay")
+        if type(legacy_audio_enabled) is not bool:
+            raise ValueError("legacy audio enabled must be a boolean")
         self._client = client
         self._device = device
         self._camera_id = str(device.id)
@@ -121,6 +124,9 @@ class CameraMediaSession:
         self._receiver_supervisor = receiver_supervisor
         self._on_raw_audio = on_raw_audio
         self._audio_encoder_factory = audio_encoder_factory
+        # The service mode is fixed for this capture's lifetime. Native live
+        # and recording consumers read original Opus directly.
+        self._legacy_audio_enabled = legacy_audio_enabled
         self._lock = threading.RLock()
         self._condition = threading.Condition(self._lock)
         self._stop: threading.Event | None = None
@@ -377,6 +383,7 @@ class CameraMediaSession:
             "ring_stream_info": stream_info,
             "codec_negotiation": codec_negotiation,
             "legacy_audio": {
+                "enabled": self._legacy_audio_enabled,
                 "failure": self._legacy_failure,
                 "cleanup_pending": len(self._retiring_audio),
                 "owner": owner.diagnostics() if owner is not None else None,
@@ -734,9 +741,10 @@ class CameraMediaSession:
         self._first_video_at = None
         self._first_audio_at = None
         self._clear_media_locked()
-        self._audio_owner = LegacyAudioOwner(
-            self._audio_encoder_factory, retired=self._audio_retired
-        )
+        if self._legacy_audio_enabled:
+            self._audio_owner = LegacyAudioOwner(
+                self._audio_encoder_factory, retired=self._audio_retired
+            )
         self._legacy_failure = None
         self._microphone_source.clear()
         stop = threading.Event()
@@ -767,8 +775,7 @@ class CameraMediaSession:
                 action.generation, snapshot, lag, duration
             ),
             "decode_video": False,
-            "decode_audio": True,
-            "on_decoded_audio": lambda frame: self._decoded_audio(action.generation, frame),
+            "decode_audio": self._legacy_audio_enabled,
             "on_encoded_incompatible": lambda kind, mime_type: self._incompatible(
                 action.generation,
                 kind,
@@ -776,17 +783,21 @@ class CameraMediaSession:
             ),
             "microphone_source": self._microphone_source,
         }
+        raw_audio_callback = None
+        if self._legacy_audio_enabled:
+            receiver_kwargs["on_decoded_audio"] = lambda frame: self._decoded_audio(
+                action.generation, frame
+            )
+
+            def raw_audio_callback(payload, channels, rate):
+                self._raw_audio(action.generation, payload, channels, rate)
+
         coroutine = None
         try:
             coroutine = self._receiver_supervisor(
                 self._device,
                 None,
-                lambda payload, channels, rate: self._raw_audio(
-                    action.generation,
-                    payload,
-                    channels,
-                    rate,
-                ),
+                raw_audio_callback,
                 stop,
                 receiver_kwargs=receiver_kwargs,
             )
@@ -890,9 +901,10 @@ class CameraMediaSession:
             self._started_at = self._clock()
             self._first_video_at = None
             self._first_audio_at = None
-            self._audio_owner = LegacyAudioOwner(
-                self._audio_encoder_factory, retired=self._audio_retired
-            )
+            if self._legacy_audio_enabled:
+                self._audio_owner = LegacyAudioOwner(
+                    self._audio_encoder_factory, retired=self._audio_retired
+                )
             self._legacy_failure = None
             self._microphone_source.clear()
 

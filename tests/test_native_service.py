@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
+from test_media_session import SPS_PPS_IDR
 
 from halo_server.account_scope import AccountScope
 from halo_server.api.plugin import PluginIntercomOpenError
@@ -89,7 +90,8 @@ class Sessions:
 
 
 class Capture:
-    def __init__(self, client, camera):
+    def __init__(self, client, camera, *, legacy_audio_enabled=True):
+        self.legacy_audio_enabled = legacy_audio_enabled
         self.client, self.camera = client, camera
         self.buffer = EncodedMediaBuffer()
         self.acquired = []
@@ -237,7 +239,7 @@ async def test_native_and_legacy_share_capture_and_revoke_delivery(tmp_path):
     assert len(service._media_sessions) == 1
     assert capture.acquired.count(LeasePurpose.HOMEKIT_LIVE) == 2
     assert capture.acquired.count(LeasePurpose.SCRYPTED_LIVE) == 1
-    capture.buffer.append_video(b"\x00\x00\x01\x67a\x00\x00\x01\x68b\x00\x00\x01\x65c", 0)
+    capture.buffer.append_video(SPS_PPS_IDR, 0)
     capture.buffer.append_audio(b"audio fixture", 0)
     packets = (await first.read(timeout=0)).packets
     assert packets and all(packet.stream is MediaStreamKind.VIDEO for packet in packets)
