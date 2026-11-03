@@ -1,16 +1,25 @@
 # Halo's bounded HAP transport and durable storage dependency
 
-`hap-nodejs-2.2.3-halo.2.tgz` is a private, immutable build of official
-[`@homebridge/hap-nodejs` 2.2.3](https://github.com/homebridge/HAP-NodeJS/releases/tag/v2.2.3),
-based on commit `25e8bea26a64309a47184dec478479483fbdd50c`. It is installed by
+`hap-nodejs-2.3.0-halo.1.tgz` is a private, immutable build of official
+[`@homebridge/hap-nodejs` 2.3.0](https://github.com/homebridge/HAP-NodeJS/releases/tag/v2.3.0),
+based on commit `bd7a01b889cf1c74cbfcc4a4e5efdfa53fc3532b`. It is installed by
 the adapter's ordinary `npm ci` through a local file dependency and lock integrity.
 It is not an official upstream release and is not published to npm.
 
 The adjacent patch, provenance manifest and original Apache-2.0 license describe
-the complete divergence. Pairing formats, the existing storage layout, mDNS, keys, crypto
-primitives, nonce order and encrypted framing remain unchanged. The exact
-encryption block and full `hapCrypto.ts` source are checked against the official
-commit; the transport tests independently reproduce the expected ciphertext.
+the complete divergence. This rebases the existing Halo transport and durable
+storage extension onto upstream 2.3.0, including its ESM loading, HAP/HDS input
+validation and encrypted TCP frame fixes. The older 2.2.3-halo.2 artifacts remain
+available for rollback review; rollback of a deployed release still requires
+compatible paired-state and release ownership checks.
+
+Upstream 2.3.0 replaces tweetnacl pairing crypto with native Node X25519/Ed25519.
+The stored secret remains the existing 32-byte seed plus 32-byte public key.
+The fork leaves the complete upstream 2.3.0 `hapCrypto.ts` and HDS encryption
+block unchanged. Qualification covers RFC vectors, tweetnacl compatibility in
+upstream tests, loading and signing with an old pairing-store fixture, invalid
+keys/signatures, split encrypted TCP headers, and independent HDS ciphertext.
+This is not a claim that crypto implementation is unchanged from 2.2.3.
 
 ## Added transport guarantees
 
@@ -92,7 +101,8 @@ is durable, failure clearing/syncing the marker still fails closed, although the
 confirmed target itself is already safe. A marker does not identify a target;
 owner recovery must not guess that an arbitrary camera reset can clear it.
 
-Target serialization, pairing keys/format and crypto are unchanged. The backend
+The local extension preserves target serialization and pairing key format and
+does not alter upstream 2.3.0 crypto. The backend
 retains upstream's generic read semantics; Halo's strict pinned-file/JSON/key
 preflight remains mandatory. The qualified environment is Linux/Node26.12.1
 with supported local filesystem fsync semantics. Initial private-directory
@@ -121,12 +131,28 @@ uses the official dependency lock with install scripts disabled, compiles, and
 normalizes tar/gzip ownership and timestamps. It does not patch the installed
 runtime. Two clean builds produced identical bytes; their hash is in provenance.
 
-The supported-host suite passed 926 tests in 26 suites, including 18 new durability tests. One original rename-failure cached-read assertion was strengthened as documented above.
-Three unmodified `eventedhttp.spec.ts` tests explicitly dial `::1` and fail with
-`EADDRNOTAVAIL` here; that host limitation is retained in evidence. `--test` runs
-the complete upstream suite without silently filtering those cases.
+The supported-host upstream run passed 1,030 tests in 33 suites, including the
+retained 18 durability tests and new upstream input/crypto tests. The complete
+upstream run retains the seven `eventedhttp.spec.ts` cases that cannot connect to
+this host's unavailable `::1`; `--test` does not silently filter them. All 13
+HTTP transport tests additionally passed using a temporary IPv4-only test copy;
+its single IPv6 local-address assertion was omitted and remains unqualified.
+The published patch does not change those IPv6 tests.
 
-When updating, review only the transport divergence, increment the local suffix,
+The upstream HDS test socket now implements pause/resume, write completion and
+physical close, and its close tests flush asynchronous fake timers. These are
+fixture updates for the bounded writer, preserving all 15 upstream HDS assertions.
+One original storage rename-failure assertion requires the retained fatal latch.
+Modified dependency sources lint clean and production/test TypeScript checks pass.
+
+Halo's adapter passes 268 tests with its network guard recording zero attempts,
+including three additional installed-artifact regressions for legacy key use,
+OPACK binary/back-reference semantics and split encrypted control frames.
+Two clean builds match byte-for-byte, and all 283 installed files match the
+archive after a fresh `npm ci --ignore-scripts`; lock SHA512 is verified.
+No physical Home hub, paired controller or live Ring acceptance was performed.
+
+When updating, review the transport and storage divergence, increment the local suffix,
 regenerate provenance and the adapter lock, rerun upstream and Halo tests, and
 retain pairing/crypto compatibility checks. Follow official upstream releases
 and remove the divergence once equivalent supported APIs are qualified. Do not

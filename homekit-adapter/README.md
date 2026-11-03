@@ -20,7 +20,7 @@ remains a separate device qualification gate.
 ## Pinned toolchain
 
 - Node **26.12.1**; npm **12.2.1**.
-- `@homebridge/hap-nodejs` **2.2.3-halo.2** (Apache-2.0), immutable vendored tarball and lock integrity. [Patch, license and provenance](vendor/) accompany the dependency; `tools/build_hap_dependency.py` rebuilds the exact official source pin plus patch.
+- `@homebridge/hap-nodejs` **2.3.0-halo.1** (Apache-2.0), immutable vendored tarball and lock integrity. [Patch, license and provenance](vendor/) accompany the dependency; `tools/build_hap_dependency.py` rebuilds the exact official source pin plus patch.
 - TypeScript **6.0.3** and `@types/node` **26.2.0**.
 
 `package-lock.json` fixes transitive versions and integrity. `.npmrc` disables lifecycle scripts, automatic audit/network extras and floating direct saves. A normal daemon launch never runs npm or resolves dependencies. The current package is private development groundwork, not a complete release installer or a bundled Node binary.
@@ -59,11 +59,11 @@ Tests exercise canonical Python fixtures, split/coalesced frames, exact frame li
 ## Explicit later gates
 
 - The existing HAP reader can treat invalid JSON as missing and follows file symlinks. Halo validates pinned private paths, exact records and exclusive inherited ownership before HAP reads. The approved durability correction adds fsync, a durable intent and a fatal process boundary; an incomplete intent remains refused for explicit owner recovery.
-- The approved maintained extension supplies bounded public HDS output and durable storage while preserving crypto and pairing formats. IPC credits remain separate from HDS bounds. Real Ring/Home hub acceptance remains a hardware qualification gate; no private socket monkeypatch is included.
+- The approved maintained extension supplies bounded public HDS output and durable storage while preserving pairing formats and upstream 2.3.0 crypto. The upstream crypto implementation changed to native Node X25519/Ed25519 and is qualified against legacy pairing fixtures; see vendor provenance. IPC credits remain separate from HDS bounds. Real Ring/Home hub acceptance remains a hardware qualification gate; no private socket monkeypatch is included.
 - Public API imports and synthetic controller objects do not prove live SRTP, valid clips, audio-off privacy, Apple notification timing, actual source resolution, HEVC/HKSV3, real pairing, unattended install or platform support. Keep those acceptance gates separate.
 - `npm audit` must be reviewed as evidence about this exact locked graph/date; do not silently upgrade HAP or hide advisories to obtain a clean result.
 
-Primary dependency sources: [HAP-NodeJS2.2.3 npm package](https://www.npmjs.com/package/@homebridge/hap-nodejs/v/2.2.3), [released source comparison pin](https://github.com/homebridge/HAP-NodeJS/tree/25e8bea26a64309a47184dec478479483fbdd50c). The npm tarball integrity and lockfile, not an assumption about Scrypted's missing local fork, identify the installed dependency.
+Primary dependency sources: [HAP-NodeJS 2.3.0 npm package](https://www.npmjs.com/package/@homebridge/hap-nodejs/v/2.3.0), [released source comparison pin](https://github.com/homebridge/HAP-NodeJS/tree/bd7a01b889cf1c74cbfcc4a4e5efdfa53fc3532b). The npm tarball integrity and lockfile, not an assumption about Scrypted's missing local fork, identify the installed dependency.
 
 ## S07 storage and event contract
 

@@ -18,8 +18,8 @@ import tempfile
 from pathlib import Path
 
 UPSTREAM = "https://github.com/homebridge/HAP-NodeJS.git"
-COMMIT = "25e8bea26a64309a47184dec478479483fbdd50c"
-VERSION = "2.2.3-halo.2"
+COMMIT = "bd7a01b889cf1c74cbfcc4a4e5efdfa53fc3532b"
+VERSION = "2.3.0-halo.1"
 ROOT = Path(__file__).resolve().parents[1]
 VENDOR = ROOT / "homekit-adapter" / "vendor"
 PATCH = VENDOR / f"hap-nodejs-{VERSION}.patch"
@@ -63,7 +63,9 @@ def main():
         "--fetch", action="store_true", help="Allow fetching official source into temporary storage"
     )
     parser.add_argument(
-        "--test", action="store_true", help="Run the complete upstream Jest suite before packaging"
+        "--test",
+        action="store_true",
+        help="Run the complete upstream Vitest suite before packaging",
     )
     parser.add_argument("--output", type=Path, default=VENDOR / f"hap-nodejs-{VERSION}.tgz")
     args = parser.parse_args()
@@ -102,7 +104,7 @@ def main():
         run(["npm", "ci", "--ignore-scripts", "--no-audit", "--no-fund"], cwd=build)
         run(["npm", "run", "build"], cwd=build)
         if args.test:
-            run(["npm", "test", "--", "--runInBand"], cwd=build)
+            run(["npm", "test"], cwd=build)
         candidate = work / "candidate.tgz"
         package(build, candidate)
         if (

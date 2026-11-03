@@ -80,3 +80,27 @@ recording demand, and intercom PCM. Ruff and whitespace checks passed. An
 additional composed/admin check initially encountered three missing-adapter-build
 failures; these must be rerun after the HAP adapter is built. Avoid claiming an
 observed CPU or physical-playback improvement from this allocation change alone.
+
+## Slice 4: HAP 2.3.0 with retained Halo guarantees
+
+The vendored dependency is now `2.3.0-halo.1`, rebased on official HAP 2.3.0
+commit `bd7a01b889cf1c74cbfcc4a4e5efdfa53fc3532b`. It retains Halo's bounded
+writer/admission, physical-close ownership, HKSV acknowledgement fences and
+durable pairing-storage/fatal-intent APIs. Upstream inbound validation, encrypted
+control-frame fixes and ESM support remain intact. Native Node pairing crypto is
+an upstream change; an installed-artifact regression signs with a legacy stored
+seed/public-key fixture without rewriting it.
+
+Two clean builds are byte-identical, all 283 installed files match the archive,
+and lock integrity is verified. Both isolated and current-repository adapter
+validation passed **268 tests**, with zero guarded network attempts, plus build
+and typecheck. Upstream qualification passed **1,036 tests with seven failures**
+from this host's unavailable IPv6 loopback; the supported-host subset passed
+1,030 tests and a temporary IPv4 HTTP variant passed 13. The original IPv6 tests
+remain in the published patch and the builder does not silently skip them.
+
+Old vendored artifacts remain for provenance and rollback review. The complete
+new patch, reproducibility hashes, toolchain, dependency delta and qualification
+limits are recorded in `homekit-adapter/vendor/hap-nodejs-2.3.0-halo.1.provenance.json`.
+Physical pairing/controller acceptance and power-cut durability remain untested.
+This dependency maintenance is not evidence of correcting incoming media gaps.
