@@ -90,7 +90,7 @@ class FakeDevice:
         keep_alive_timeout,
     ):
         self.generated = True
-        assert keep_alive_timeout == 300
+        assert keep_alive_timeout is None
         device = self
 
         class Socket:
@@ -100,7 +100,7 @@ class FakeDevice:
             async def close(self):
                 pass
 
-        stream = RingWebRtcStream(None, 1)
+        stream = RingWebRtcStream(None, 1, keep_alive_timeout=keep_alive_timeout)
         stream.dialog_id = "synthetic-dialog"
         stream.session_id = "synthetic-session"
         stream.websocket = Socket()
@@ -763,6 +763,69 @@ def install_media_fakes(monkeypatch):
     monkeypatch.setattr(aiortc, "RTCPeerConnection", lambda _configuration: peer)
     monkeypatch.setattr(ring_media, "MicrophoneTrack", FakeMicrophoneTrack)
     return peer
+
+
+@pytest.mark.asyncio
+async def test_receiver_keeps_sdk_pings_until_last_bounded_consumer_retires(monkeypatch):
+    """Exercise the real SDK pinger past both 5 min and the first lease's 10 min."""
+    from ring_doorbell import webrtcstream
+
+    from halo_server.media.leases import LeasePurpose, MediaLeaseCoordinator
+
+    peer = install_media_fakes(monkeypatch)
+    stop = threading.Event()
+    now = [100.0]
+    leases = MediaLeaseCoordinator(clock=lambda: now[0])
+    first, _ = leases.acquire(LeasePurpose.HOMEKIT_LIVE, lease_id="first")
+    active = [first.id]
+    ping_times = []
+    tasks = []
+
+    async def generated(session_id, _notify):
+        stream = device._webrtc_streams[session_id]
+        stream._last_keep_alive = now[0]
+        original_send = stream.websocket.send
+
+        async def send(message):
+            if json.loads(message)["method"] == "ping":
+                ping_times.append(now[0] - 100.0)
+            await original_send(message)
+
+        stream.websocket.send = send
+
+        async def advance(seconds):
+            now[0] += seconds
+            if now[0] == 350.0:
+                second, _ = leases.acquire(LeasePurpose.HOMEKIT_LIVE, lease_id="second")
+                active.append(second.id)
+            active[:] = [identifier for identifier in active if leases.renew(identifier)[0]]
+            if not active:
+                stop.set()
+                # The actual receiver cleanup must cancel this SDK-owned task.
+                await asyncio.Event().wait()
+            await asyncio.sleep(0)
+
+        with monkeypatch.context() as patch:
+            patch.setattr(webrtcstream, "time", SimpleNamespace(time=lambda: now[0]))
+            patch.setattr(webrtcstream, "asyncio", SimpleNamespace(sleep=advance))
+            stream.ping_task = asyncio.create_task(stream.pinger())
+            tasks.append(stream.ping_task)
+            while not stop.is_set():
+                # An unexpectedly expired pinger must fail rather than hang.
+                assert not stream.ping_task.done()
+                await asyncio.sleep(0)
+
+    device = FakeDevice(on_generate=generated)
+    receiver = ring_media.RingStreamReceiver(device, None)
+    await asyncio.wait_for(receiver.receive(stop), 2)
+
+    assert ping_times == list(range(5, 850, 5))
+    assert now[0] - 100.0 == 850
+    assert not leases.snapshot().leases
+    assert tasks[0].cancelled()
+    assert device._webrtc_streams == {}
+    assert len(device.closed_sessions) == 1
+    assert peer.closed
 
 
 @pytest.mark.asyncio

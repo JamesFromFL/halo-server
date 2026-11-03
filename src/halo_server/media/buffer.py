@@ -8,8 +8,10 @@ import threading
 import time
 from collections import deque
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
+
+from halo_server.media import h264
 
 _ANNEX_B_START_CODE = re.compile(b"\x00\x00\x01")
 
@@ -81,8 +83,15 @@ class EncodedMediaBuffer:
         self._next_sequence = 1
         self._capture_epoch = 1
         self._last_received_at: float | None = None
-        self._latest_sps_sequence: int | None = None
-        self._latest_pps_sequence: int | None = None
+        # Only the current configuration survives media-window eviction. Its
+        # two bounded NALs count against the same byte budget as packet history.
+        self._sps: bytes | None = None
+        self._pps: bytes | None = None
+        self._sps_id: int | None = None
+        self._pps_id: int | None = None
+        self._pps_sps_id: int | None = None
+        self._parameter_bytes = 0
+        self._video_start_sequence: int | None = None
         self._decodable_boundaries: deque[int] = deque()
 
     @property
@@ -133,7 +142,7 @@ class EncodedMediaBuffer:
             boundary = self._first_retained_boundary_locked()
             if boundary is None:
                 return BufferSnapshot((), 0, 0.0, None, self._capture_epoch)
-            packets = tuple(packet for packet in self._packets if packet.sequence >= boundary)
+            packets = self._initial_packets_locked(boundary)
             payload_bytes = sum(len(packet.payload) for packet in packets)
             duration = (
                 max(0.0, packets[-1].received_at - packets[0].received_at)
@@ -168,38 +177,45 @@ class EncodedMediaBuffer:
             raise ValueError("timeout must be finite and non-negative")
         with self._condition:
 
+            def contiguous() -> bool:
+                return (
+                    after_sequence is not None
+                    and self._video_start_sequence is not None
+                    and after_sequence >= self._video_start_sequence
+                    and bool(self._packets)
+                    and self._packets[0].sequence <= after_sequence + 1
+                )
+
             def available() -> bool:
-                boundary = self._first_retained_boundary_locked()
-                if boundary is None:
+                if not self._packets:
                     return False
-                if after_sequence is None:
-                    return True
-                return boundary > after_sequence + 1 or self._packets[-1].sequence > after_sequence
+                if contiguous():
+                    return self._packets[-1].sequence > after_sequence
+                boundary = self._first_retained_boundary_locked()
+                return boundary is not None and (
+                    after_sequence is None or boundary > after_sequence
+                )
 
             if not self._condition.wait_for(available, timeout=timeout):
                 return BufferRead((), False, self._capture_epoch)
+            if contiguous():
+                return BufferRead(
+                    tuple(packet for packet in self._packets if packet.sequence > after_sequence),
+                    False,
+                    self._capture_epoch,
+                )
             boundary = self._first_retained_boundary_locked()
-            if boundary is None:
-                return BufferRead((), False, self._capture_epoch)
-            resynchronized = after_sequence is not None and boundary > after_sequence + 1
-            first_sequence = (
-                boundary if after_sequence is None or resynchronized else after_sequence + 1
-            )
             return BufferRead(
-                tuple(packet for packet in self._packets if packet.sequence >= first_sequence),
-                resynchronized,
+                self._initial_packets_locked(boundary),
+                after_sequence is not None,
                 self._capture_epoch,
             )
 
     def clear(self) -> None:
         with self._condition:
             self._capture_epoch += 1
-            self._packets.clear()
-            self._payload_bytes = 0
+            self._retire_video_locked(parameters=True)
             self._last_received_at = None
-            self._latest_sps_sequence = None
-            self._latest_pps_sequence = None
-            self._decodable_boundaries.clear()
             self._condition.notify_all()
 
     def _append(
@@ -230,6 +246,16 @@ class EncodedMediaBuffer:
                 raise MediaBufferError("receipt time must be finite and non-negative")
             if self._last_received_at is not None and normalized_time < self._last_received_at:
                 raise MediaBufferError("encoded media receipt time moved backwards")
+            decodable_idr = False
+            if stream is MediaStreamKind.VIDEO:
+                try:
+                    decodable_idr = self._update_parameters_locked(payload)
+                except h264.H264Error as exc:
+                    # A rejected update must not leave stale parameters usable
+                    # by a later IDR that reuses the same parameter IDs.
+                    self._retire_video_locked(parameters=True)
+                    self._condition.notify_all()
+                    raise MediaBufferError(str(exc)) from exc
             sequence = self._next_sequence
             self._next_sequence += 1
             packet = EncodedPacket(
@@ -245,27 +271,12 @@ class EncodedMediaBuffer:
             self._payload_bytes += len(packet.payload)
             self._last_received_at = normalized_time
 
-            if stream is MediaStreamKind.VIDEO:
-                if 7 in nal_types:
-                    self._latest_sps_sequence = sequence
-                if 8 in nal_types:
-                    self._latest_pps_sequence = sequence
-                if (
-                    5 in nal_types
-                    and self._latest_sps_sequence is not None
-                    and self._latest_pps_sequence is not None
-                ):
-                    self._decodable_boundaries.append(
-                        min(
-                            self._latest_sps_sequence,
-                            self._latest_pps_sequence,
-                            sequence,
-                        )
-                    )
+            if decodable_idr:
+                self._decodable_boundaries.append(sequence)
+                if self._video_start_sequence is None:
+                    self._video_start_sequence = sequence
 
             self._prune_locked(normalized_time)
-            if self._first_retained_boundary_locked() is not None:
-                self._drop_before_first_boundary_locked()
             self._condition.notify_all()
             return packet
 
@@ -273,7 +284,7 @@ class EncodedMediaBuffer:
         cutoff = newest_time - self._max_duration
         while self._packets and (
             self._packets[0].received_at < cutoff
-            or self._payload_bytes > self._max_bytes
+            or self._payload_bytes + self._parameter_bytes > self._max_bytes
             or len(self._packets) > self._max_packets
         ):
             removed = self._packets.popleft()
@@ -281,16 +292,79 @@ class EncodedMediaBuffer:
         first_sequence = self._packets[0].sequence if self._packets else self._next_sequence
         while self._decodable_boundaries and self._decodable_boundaries[0] < first_sequence:
             self._decodable_boundaries.popleft()
-        if self._latest_sps_sequence is not None and self._latest_sps_sequence < first_sequence:
-            self._latest_sps_sequence = None
-        if self._latest_pps_sequence is not None and self._latest_pps_sequence < first_sequence:
-            self._latest_pps_sequence = None
 
-    def _drop_before_first_boundary_locked(self) -> None:
-        boundary = self._first_retained_boundary_locked()
-        while boundary is not None and self._packets[0].sequence < boundary:
-            removed = self._packets.popleft()
-            self._payload_bytes -= len(removed.payload)
+    def _retire_video_locked(self, *, parameters: bool = False) -> None:
+        self._packets.clear()
+        self._payload_bytes = 0
+        self._decodable_boundaries.clear()
+        self._video_start_sequence = None
+        if parameters:
+            self._sps = self._pps = None
+            self._sps_id = self._pps_id = self._pps_sps_id = None
+            self._parameter_bytes = 0
+
+    def _update_parameters_locked(self, payload: bytes) -> bool:
+        nals = h264.split_annexb(payload)
+        changed = False
+        slices: list[tuple[int, int]] = []
+        for nal in nals:
+            kind = nal[0] & 31
+            if kind in {7, 8} and slices:
+                raise h264.H264Error("H.264 parameters follow picture slices")
+            if kind == 7:
+                source = h264.parse_sps(nal)
+                if nal != self._sps:
+                    # Reusing an SPS ID with different content requires a fresh
+                    # PPS, even if the old PPS happened to name that same ID.
+                    if self._sps_id == source.sequence_id or (
+                        self._pps_sps_id != source.sequence_id
+                    ):
+                        self._pps = None
+                        self._pps_id = self._pps_sps_id = None
+                    self._sps, self._sps_id = nal, source.sequence_id
+                    changed = True
+            elif kind == 8:
+                picture_id, sequence_id = h264.pps_ids(nal)
+                if nal != self._pps:
+                    self._pps, self._pps_id, self._pps_sps_id = nal, picture_id, sequence_id
+                    changed = True
+            elif kind in {1, 5}:
+                slices.append((kind, h264.slice_pps_id(nal)))
+        self._parameter_bytes = sum(
+            len(nal) + 4 for nal in (self._sps, self._pps) if nal is not None
+        )
+        if self._parameter_bytes > self._max_bytes:
+            raise h264.H264Error("H.264 parameters exceed the buffer byte limit")
+        matching = (
+            self._sps is not None
+            and self._pps is not None
+            and self._pps_sps_id == self._sps_id
+            and all(picture_id == self._pps_id for _, picture_id in slices)
+        )
+        if changed or (slices and not matching):
+            self._retire_video_locked()
+        # Mixed IDR/non-IDR slices cannot establish one random-access picture.
+        decodable_idr = bool(slices) and matching and all(kind == 5 for kind, _ in slices)
+        if decodable_idr and not {7, 8}.issubset(nal[0] & 31 for nal in nals):
+            prefixed_size = self._parameter_bytes + sum(
+                len(nal) + 4 for nal in nals if nal[0] & 31 not in {7, 8}
+            )
+            if prefixed_size > min(self._max_bytes, h264.MAX_ACCESS_UNIT_BYTES):
+                raise h264.H264Error("Prefixed H.264 access unit exceeds byte limit")
+        return decodable_idr
+
+    def _initial_packets_locked(self, boundary: int) -> tuple[EncodedPacket, ...]:
+        packets = tuple(packet for packet in self._packets if packet.sequence >= boundary)
+        first = packets[0]
+        if not {7, 8}.issubset(first.h264_nal_types):
+            # Preserve the IDR's sequence, source timestamp, receipt time and
+            # epoch: only its missing decoder configuration is synthesized.
+            nals = h264.split_annexb(first.payload)
+            payload = h264.annexb(
+                (self._sps, self._pps, *(nal for nal in nals if nal[0] & 31 not in {7, 8}))
+            )
+            first = replace(first, payload=payload, h264_nal_types=first.h264_nal_types | {7, 8})
+        return (first, *packets[1:])
 
     def _first_retained_boundary_locked(self) -> int | None:
         if not self._packets or not self._decodable_boundaries:

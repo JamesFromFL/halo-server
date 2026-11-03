@@ -9,7 +9,7 @@ import math
 import struct
 import threading
 from collections import OrderedDict
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 
 from halo_server.media.cadence import IDR_INTERVAL, SourceCadence
@@ -376,6 +376,14 @@ class AccessUnitAdapter:
         async with self._operation:
             if self._closed:
                 raise VideoTransformError("Video output is retired")
+            # Report cadence does not change picture dependencies or provenance.
+            # Keep MTU changes on the reset path: cached packets may exceed it.
+            if (
+                replace(self.configuration, rtcp_interval=configuration.rtcp_interval)
+                == configuration
+            ):
+                self.configuration = configuration
+                return
             if self.configuration != configuration:
                 await self._reset(clear_parameters=False)
                 self._current()

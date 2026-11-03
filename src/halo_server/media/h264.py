@@ -294,12 +294,33 @@ def parse_sps(nal: bytes) -> SpsInfo:
     )
 
 
-def pps_sequence_id(nal: bytes) -> int:
+def pps_ids(nal: bytes) -> tuple[int, int]:
+    """Read bounded PPS/SPS IDs and the required PPS flags."""
     if not isinstance(nal, bytes) or not 2 <= len(nal) <= MAX_SPS_BYTES or nal[0] & 0x9F != 8:
-        raise H264Error("Invalid H.264 PPS")
+        raise H264Error("Invalid H.264 PPS or picture parameters exceed limit")
     bits = _Bits(_rbsp(nal[1:]))
-    bits.ue(255)
-    return bits.ue(31)
+    picture_id, sequence_id = bits.ue(255), bits.ue(31)
+    bits.read(2)
+    return picture_id, sequence_id
+
+
+def pps_sequence_id(nal: bytes) -> int:
+    return pps_ids(nal)[1]
+
+
+def slice_pps_id(nal: bytes) -> int:
+    """Read the referenced PPS ID from a bounded non-partitioned slice."""
+    if (
+        not isinstance(nal, bytes)
+        or not 2 <= len(nal) <= MAX_ACCESS_UNIT_BYTES
+        or nal[0] & 0x80
+        or nal[0] & 31 not in {1, 5}
+    ):
+        raise H264Error("Invalid H.264 picture slice")
+    bits = _Bits(_rbsp(nal[1:]))
+    bits.ue(2**24)
+    bits.ue(9)
+    return bits.ue(255)
 
 
 def compatible(source: SpsInfo, selected: VideoConfiguration) -> bool:

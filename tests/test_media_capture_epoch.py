@@ -8,7 +8,9 @@ from test_homekit_controller import POLICY, Backend
 from halo_server.homekit.controller import HomeKitController
 from halo_server.media.buffer import EncodedMediaBuffer
 
-KEYFRAME = b"\x00\x00\x01\x67sps\x00\x00\x01\x68pps\x00\x00\x01\x65idr"
+KEYFRAME = bytes.fromhex(
+    "000000016742c00bda0507e840000003004000000300a3c50aa80000000168ce0fc800000001658884"
+)
 
 
 def test_packet_read_snapshot_and_live_epoch_increment_without_resetting_sequence():

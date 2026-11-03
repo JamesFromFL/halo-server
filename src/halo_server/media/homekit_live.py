@@ -848,11 +848,15 @@ class HomeKitLiveManager:
         try:
             async with session.adapter_lock:
                 self._current(session)
+                reset_video = replace(session.config, rtcp_interval=config.rtcp_interval) != config
                 await session.adapter.reconfigure(config)
                 self._current(session)
                 session.config = config
                 _measure(session, "count", "reconfigurations")
-                self._reset_video_recovery(session)
+                # The report loop reads the interval before its next sleep.
+                # An RTCP-only change must preserve the current decodable GOP.
+                if reset_video:
+                    self._reset_video_recovery(session)
         except BaseException:
             await self._settle_retirement(session)
             raise

@@ -10,8 +10,8 @@ from halo_server.media import session as media_session
 from halo_server.media.leases import LeasePurpose, MediaLeaseCoordinator
 from halo_server.media.session import CameraMediaSession, MediaSessionState
 
-SPS_PPS_IDR = (
-    b"\x00\x00\x00\x01\x67\x64\x00\x32\x00\x00\x00\x01\x68\xee\x3c\x80\x00\x00\x00\x01\x65\x88\x84"
+SPS_PPS_IDR = bytes.fromhex(
+    "000000016742c00bda0507e840000003004000000300a3c50aa80000000168ce0fc800000001658884"
 )
 
 

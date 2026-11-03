@@ -26,9 +26,10 @@ from halo_server.media.session import CameraMediaSession
 
 # Minimal Annex-B metadata fixtures. Worker/composed tests independently verify
 # native bitstream decode; these fixtures isolate capture history and ownership.
-SPS, PPS = b"\x67\x64\0\x32", b"\x68\xee\x3c\x80"
-KEY = b"\0\0\1" + SPS + b"\0\0\1" + PPS + b"\0\0\1\x65idr"
-PFRAME = b"\0\0\1\x41frame"
+SPS = bytes.fromhex("6742c00bda0507e840000003004000000300a3c50aa8")
+PPS = bytes.fromhex("68ce0fc8")
+KEY = b"\0\0\1" + SPS + b"\0\0\1" + PPS + b"\0\0\1\x65\x88\x84"
+PFRAME = b"\0\0\1\x41\x9a"
 OPUS = b"\xf8\xff\xfe"
 POLICY = CameraPolicy(synchronized=True, recording=True, recording_audio=True)
 
@@ -227,7 +228,7 @@ class Source:
             self.audio.append_audio(
                 OPUS, audio_index * 960, received_at=self.configuration[4] + audio_index / 50
             )
-        self.now[0] += 0.08
+        self.now[0] = self.configuration[4] + (index * 5 + 4) / 50
 
 
 async def setup(count=1):
@@ -455,8 +456,8 @@ def test_session_frozen_headers_outlive_rolling_packet_ages_but_not_capture_retr
         assert session._encoded_video(generation, KEY, 0)
         for second in range(1, 14):
             clock.value = second
-            assert session._encoded_video(generation, b"\0\0\1\x65idr", second * 90000)
-        assert not session.buffer.ready
+            assert session._encoded_video(generation, b"\0\0\1\x65\x88\x84", second * 90000)
+        assert session.buffer.ready
         metadata = session.video_configuration_snapshot()
         assert metadata[:4] == (session.buffer.capture_epoch, 1, SPS, PPS)
         assert session.recording_video_buffer.read(after_sequence=None, timeout=0).packets
@@ -777,8 +778,8 @@ def test_expired_recording_claim_cannot_extend_headers_once_useful_video_evidenc
     try:
         assert session._encoded_video(generation, KEY, 0)
         clock.value = 13
-        assert session._encoded_video(generation, b"\0\0\1\x65idr", 13 * 90000)
-        assert not session.buffer.ready and session.is_lease_active(recording.id)
+        assert session._encoded_video(generation, b"\0\0\1\x65\x88\x84", 13 * 90000)
+        assert session.buffer.ready and session.is_lease_active(recording.id)
         clock.value = 31
         assert session.is_lease_active(live.id) and not session.is_lease_active(recording.id)
         assert not session._encoded_video(generation, PFRAME, 31 * 90000)

@@ -16,7 +16,9 @@ from halo_server.homekit.models import (
 )
 from halo_server.media.buffer import EncodedMediaBuffer, MediaStreamKind
 
-KEYFRAME = b"\x00\x00\x01\x67sps\x00\x00\x01\x68pps\x00\x00\x01\x65idr"
+KEYFRAME = bytes.fromhex(
+    "000000016742c00bda0507e840000003004000000300a3c50aa80000000168ce0fc800000001658884"
+)
 JPEG = b"\xff\xd8image\xff\xd9"
 POLICY = CameraPolicy(
     synchronized=True, streaming=True, live_audio=True, snapshots=True, talkback=True, controls=True

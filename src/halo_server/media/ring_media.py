@@ -1838,7 +1838,11 @@ class RingStreamReceiver:
                             pc.localDescription.sdp,
                             session_id,
                             on_rtc_message,
-                            keep_alive_timeout=300,
+                            # This attempt is already bounded by Halo's leases,
+                            # progress deadlines and joined stop/close ownership.
+                            # The SDK's separate watchdog is not renewed by those
+                            # leases and otherwise silently stops pings at 5 min.
+                            keep_alive_timeout=None,
                         )
                 except TimeoutError as exc:
                     raise RingMediaNegotiationError("Ring WebRTC signaling timed out") from exc
