@@ -104,6 +104,12 @@ class EncodedMediaBuffer:
         with self._condition:
             return self._first_retained_boundary_locked() is not None
 
+    @property
+    def video_continuity(self) -> bool:
+        """A retained IDR established this configuration for continuing readers."""
+        with self._condition:
+            return self._video_start_sequence is not None
+
     def append_video(
         self,
         payload: bytes,
@@ -292,6 +298,10 @@ class EncodedMediaBuffer:
         first_sequence = self._packets[0].sequence if self._packets else self._next_sequence
         while self._decodable_boundaries and self._decodable_boundaries[0] < first_sequence:
             self._decodable_boundaries.popleft()
+        if not self._packets:
+            # An access unit that cannot fit never establishes a usable start,
+            # and losing the entire retained window breaks reader continuity.
+            self._video_start_sequence = None
 
     def _retire_video_locked(self, *, parameters: bool = False) -> None:
         self._packets.clear()

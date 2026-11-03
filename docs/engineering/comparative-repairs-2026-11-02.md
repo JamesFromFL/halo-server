@@ -132,3 +132,63 @@ local assembly defect; it does not explain away previously measured gaps before
 assembly. Reference/profile hashes and the measurement limitations are in the
 runner README and JSON reports. Baseline evidence is retained outside the repo
 in the task's `outputs/halo-receiver-comparison-2026-11-02-baseline.json`.
+
+## Slice 6: prompt complete-picture delivery and bounded recovery
+
+The H.264-only assembler replaces the generic video jitter buffer at the existing
+pinned aiortc boundary. It releases contiguous validated pictures at the RTP
+marker, retains timestamp-transition fallback, and preserves aiortc codec lookup,
+RTX, NACK, statistics and timestamp mapping. Other video codecs retain the generic
+512-packet buffer; audio and negotiation are unchanged. The pending H.264 data
+is limited to 512 packets and 1 MiB. Known holes have 100 ms repair grace; total
+AU assembly has a separate one-second bound. Both expire before late repair is
+admitted. Healthy ordered assembly can take longer than the reorder grace.
+
+Loss requests an IDR, suppresses dependent pictures, and retries recovery with a
+one-second cooldown while packets arrive. It adds no fixed playout reservoir.
+Finite assembly/loss/timeout observations reach session status without payloads
+or source identifiers. Details, supported packetization and recovery limits are
+in [the assembler notes](h264-receiver-assembly.md).
+
+Independent review caught two pre-release edges: completion could bypass expiry,
+and a healthy large IDR could incorrectly hit the reorder timeout. A first repair
+arriving ten seconds late is now rejected, while an actual 282-packet IDR paced
+over 500 ms is delivered with its exact source hash. The receiver backreference
+was removed to avoid adding a cycle that retains buffered media. The final
+receiver/harness/diagnostic gate passed **135 tests**, with independent focused
+review and Ruff/format checks passing.
+
+A separate integration review found that session progress still used *new-reader*
+readiness. An existing reader can continue after the last retained IDR expires.
+The session now uses established decoder continuity for useful-video progress,
+while cold/configuration/epoch/capacity failures remain gated. A 34-second
+long-GOP regression independently decodes every picture through the real receiver
+watchdog; reverting the change reproduces `video_stalled`. Its broader gate
+passed **135 tests**. The recording-only lease test now explicitly retires live
+continuity before checking recording authority; **35 recording/progress tests**
+pass. The SDK activation fixture also now expects the owned, unbounded-by-SDK
+watchdog option; its **13 tests** pass.
+
+The comparative oracle was corrected to account for aiortc normalizing timestamps
+to the first released frame after loss. Identity requires source-byte hashes and
+independent timestamp-delta validation; duplicate fixture hashes are accepted
+only after a unique frame anchors the mapping. The damaged 128-slot negative
+control remains damaged rather than being relabeled successful.
+
+## Pilot scope and remaining investigations
+
+The media pilot will restore the complete pre-upgrade HAP adapter from immutable
+commit `689d6b706832f0176138bc2029714b75bacba5e8` in an isolated source archive.
+Its per-file source manifest and hash become part of the release identity. The
+main source retains the separately qualified HAP 2.3 upgrade. This keeps unrelated
+dependency changes out of the first physical media experiment. No pairing reset,
+HKSV enablement, automatic backend replacement or noise processing is included.
+
+Do not yet change late-SR clock mapping, the copy/conversion bitrate policy,
+recording-buffer demand transitions or multicamera worker admission. The clock
+limitation and rate-window counterexamples remain documented; speculative
+correction could add latency, timestamp jumps, extra conversion or frame loss.
+The new receiver comparison found a concrete local defect without establishing
+that a different Ring negotiation/transport would remove incoming gaps. Serial
+physical Ring/Apple or reference-peer comparison remains necessary if those gaps
+persist. Software completion is distinct from acceptance of smooth Apple playback.

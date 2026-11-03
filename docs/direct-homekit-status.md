@@ -21,6 +21,11 @@ Real Apple/Ring qualification remains S15; the per-slice descriptions below reta
 their historical validation boundaries. See [managed releases](managed-releases.md),
 [activation](managed-release-activation.md), and [acceptance](homekit-acceptance.md).
 
+The current source dependency is HAP 2.3.0-halo.1 as of 2026-11-02. It retains
+Halo's transport and storage guarantees while incorporating upstream native
+pairing crypto and input validation; see the [dependency qualification](../homekit-adapter/vendor/README.md).
+The S12/S14 dependency versions below describe their original implementation.
+
 ## Implemented foundation
 
 - S01: transactional SDK inventory refresh preserves surviving wrappers, retires
@@ -521,7 +526,7 @@ hold it and must close before an upgrade. Legacy migration checks an authenticat
 owner socket and actual pidfd exit without killing unmanaged processes; already
 orphaned pre-guard children cannot be inferred from a parent's exit.
 
-The approved narrow dependency is now HAP2.2.3-halo.2. HAPFileStorage and existing
+The original S14 dependency was HAP2.2.3-halo.2. HAPFileStorage and existing
 cryptography/discovery remain. Private exclusive writes fsync file and directory;
 a durable generic write-intent marker precedes target mutation. I/O failure
 latches fatal state, synchronously fences session/camera admission and terminates

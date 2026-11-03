@@ -237,7 +237,7 @@ async def test_receiver_integrates_actual_sdk_reassertion_before_ready_and_joins
         async def generate_async_webrtc_stream(
             self, _sdp, session_id, on_message, *, keep_alive_timeout
         ):
-            assert keep_alive_timeout == 300
+            assert keep_alive_timeout is None
             stream = RingWebRtcStream(None, 1, on_message_callback=on_message)
             stream.dialog_id = "synthetic-dialog"
             stream.session_id = "synthetic-ring-session"

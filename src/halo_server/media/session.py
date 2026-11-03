@@ -163,6 +163,7 @@ class CameraMediaSession:
         self._receiver_pipeline = None
         self._ring_stream_info = None
         self._codec_negotiation = None
+        self._video_assembly = None
         self._metrics = StreamMetrics(
             counters=(
                 "audio_ingress_frames",
@@ -313,9 +314,11 @@ class CameraMediaSession:
         pipeline = None
         stream_info = None
         codec_negotiation = None
+        video_assembly = None
         if isinstance(snapshot, dict):
             stream_info = _safe_stream_info(snapshot.get("stream_info"))
             codec_negotiation = sanitize_codec_diagnostics(snapshot.get("codec_negotiation"))
+            video_assembly = _safe_video_assembly(snapshot.get("video_assembly"))
             with suppress(BaseException):
                 pipeline = _safe_pipeline(snapshot.get("pipeline"))
             safe = {}
@@ -345,6 +348,7 @@ class CameraMediaSession:
             self._receiver_pipeline = pipeline
             self._ring_stream_info = stream_info
             self._codec_negotiation = codec_negotiation
+            self._video_assembly = video_assembly
             self._receiver_statistics_at = self._diagnostic_time()
         if safe is None or all(row is None for row in safe.values()):
             self._metric("count", "receiver_stats_missing")
@@ -372,6 +376,11 @@ class CameraMediaSession:
             codec_negotiation = (
                 copy.deepcopy(self._codec_negotiation) if age is not None and age <= 3 else None
             )
+            video_assembly = (
+                dict(self._video_assembly)
+                if self._video_assembly is not None and age is not None and age <= 3
+                else None
+            )
             if stream_info is not None and stream_info["age_ms"] is not None:
                 stream_info["age_ms"] = min(2**53 - 1, stream_info["age_ms"] + round(age * 1000))
         return {
@@ -382,6 +391,7 @@ class CameraMediaSession:
             "receiver_pipeline": pipeline,
             "ring_stream_info": stream_info,
             "codec_negotiation": codec_negotiation,
+            "video_assembly": video_assembly,
             "legacy_audio": {
                 "enabled": self._legacy_audio_enabled,
                 "failure": self._legacy_failure,
@@ -444,6 +454,7 @@ class CameraMediaSession:
             self._receiver_pipeline = None
             self._ring_stream_info = None
             self._codec_negotiation = None
+            self._video_assembly = None
 
     def _source_clock(self, generation, observation):
         with self._measured_state_lock("source_clock_write_wait"):
@@ -994,7 +1005,9 @@ class CameraMediaSession:
                 and lease.expires_at > now
                 for lease in self._leases.snapshot().leases
             )
-            useful = (self._buffer.ready or recording_ready) and bool(
+            # A current reader can decode P-frames after the retained IDR ages
+            # out. New-reader readiness must not stop that source's watchdog.
+            useful = (self._buffer.video_continuity or recording_ready) and bool(
                 packet.h264_nal_types & {1, 5}
             )
             if not useful:
@@ -1406,6 +1419,28 @@ def _safe_selected_coverage(value):
     ):
         return None
     return {key: value.get(key) for key in ("state", *counts, *booleans)}
+
+
+def _safe_video_assembly(value):
+    """Finite counters only: no source identity, RTP numbers, or media bytes."""
+    if not isinstance(value, dict) or type(value.get("waiting_for_idr")) is not bool:
+        return None
+    result = {"waiting_for_idr": value["waiting_for_idr"]}
+    for name, maximum in (
+        ("completed_aus", 2**53 - 1),
+        ("discarded_aus", 2**53 - 1),
+        ("loss_events", 2**53 - 1),
+        ("recovery_requests", 2**53 - 1),
+        ("reorder_timeouts", 2**53 - 1),
+        ("assembly_timeouts", 2**53 - 1),
+        ("buffered_packets", 512),
+        ("buffered_bytes", 1024 * 1024),
+    ):
+        item = value.get(name)
+        if type(item) is not int or not 0 <= item <= maximum:
+            return None
+        result[name] = item
+    return result
 
 
 def _safe_pipeline(value):

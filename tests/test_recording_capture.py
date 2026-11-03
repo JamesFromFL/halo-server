@@ -780,6 +780,13 @@ def test_expired_recording_claim_cannot_extend_headers_once_useful_video_evidenc
         clock.value = 13
         assert session._encoded_video(generation, b"\0\0\1\x65\x88\x84", 13 * 90000)
         assert session.buffer.ready and session.is_lease_active(recording.id)
+        # Retire live-reader continuity so this exercises only the recording
+        # claim. Aging out a retained IDR no longer invalidates a current reader.
+        session.buffer.clear()
+        assert not session.buffer.video_continuity
+        clock.value = 14
+        assert session._encoded_video(generation, PFRAME, 14 * 90000)
+        assert not session.buffer.video_continuity
         clock.value = 31
         assert session.is_lease_active(live.id) and not session.is_lease_active(recording.id)
         assert not session._encoded_video(generation, PFRAME, 31 * 90000)

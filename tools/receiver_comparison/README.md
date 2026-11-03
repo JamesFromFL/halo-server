@@ -102,15 +102,24 @@ source/trace hashes. Both traces and emitted AUs are bounded.
 
 Arrival times are actual handler-entry times; the intended schedule is not
 assumed to have been met. Halo AU hashes are checked against the generated
-source. For packet references, an independent reassembler tracks all expected
+source by unique content hash. Each callback retains its raw aiortc mapped
+timestamp; the oracle independently checks it against the clock origin inferred
+from the first identifiable released AU. After initial loss, that origin can be
+a later IDR rather than source AU 0. If the first callback is damaged, a later
+valid callback can establish the origin, but the damaged callback never counts
+as complete. Reports include the source origin AU and per-callback content and
+timestamp validation. Repeated identical source payloads are resolved only after
+a unique payload anchors the clock, and must still match the expected AU hash.
+For packet references, an independent reassembler tracks all expected
 sequence numbers, handles FU-A, and checks the resulting AU hash before reporting
 complete-AU availability. Reassembly uses the known synthetic trace as an oracle;
 it is instrumentation, not Scrypted/Homebridge buffering behavior. A complete
 dependent AU after lost IDR data does not imply it can be decoded independently.
 
 `forwarded_units` has an explicit unit: AU for Halo, RTP packet for the references.
-Compare complete-AU availability separately. The final Halo AU may remain queued
-because there is intentionally no extra flushing packet. Missing AUs are reported
+Compare complete-AU availability separately. There is intentionally no extra
+flushing packet: the legacy baseline retains its final AU, while the marker-aware
+candidate can deliver it at the marker. Missing AUs are reported
 as not complete; they are not relabeled as production-policy rejections.
 
 The common UDP sink receives a four-byte diagnostic token per delivery callback,

@@ -203,6 +203,55 @@ def make_trace(case, frames):
     }
 
 
+def match_halo_access_units(result, trace):
+    """Anchor source identity in content, then independently check aiortc's clock.
+
+    TimestampMapper starts at the first *released* AU, which can follow loss.
+    If that callback is damaged (the stock-buffer negative control), a later
+    unique hash can still infer its clock origin without validating the damage.
+    """
+    by_hash = {}
+    for au in trace["aus"]:
+        by_hash.setdefault(au["annexb_sha256"], []).append(au)
+    unique = {sha: aus[0] for sha, aus in by_hash.items() if len(aus) == 1}
+    forwarded = result["forwarded"]
+    anchor = next((row for row in forwarded if row["sha256"] in unique), None)
+    origin = (
+        (unique[anchor["sha256"]]["timestamp"] - anchor["mapped_timestamp"]) & 0xFFFFFFFF
+        if anchor is not None
+        else None
+    )
+    origin_au = next((au for au in trace["aus"] if au["timestamp"] == origin), None)
+    clock_anchored = (
+        origin_au is not None and bool(forwarded) and forwarded[0]["mapped_timestamp"] == 0
+    )
+    by_timestamp = (
+        {(au["timestamp"] - origin) & 0xFFFFFFFF: au for au in trace["aus"]}
+        if clock_anchored
+        else {}
+    )
+    result["timestamp_origin_au"] = origin_au["index"] if clock_anchored else None
+    result["timestamp_origin_source_rtp"] = origin if clock_anchored else None
+    result["timestamp_origin_evidence_delivery"] = anchor["delivery_id"] if anchor else None
+    result["assembled"] = []
+    for row in forwarded:
+        source = unique.get(row["sha256"])
+        expected = by_timestamp.get(row["mapped_timestamp"])
+        row["au"] = (source or expected or {"index": -1})["index"]
+        row["payload_valid"] = source is not None or (
+            expected is not None and expected["annexb_sha256"] == row["sha256"]
+        )
+        row["timestamp_valid"] = expected is not None and (source is None or source == expected)
+        if row["payload_valid"] and row["timestamp_valid"]:
+            result["assembled"].append(row)
+    result["timestamp_mapping_valid"] = (
+        all(row["timestamp_valid"] for row in forwarded) if clock_anchored else None
+    )
+    for boundary in ("egress", "sink"):
+        for row in result[boundary]:
+            row["au"] = forwarded[row["delivery_id"]]["au"]
+
+
 def summarize(result, trace):
     arrivals = {row["id"]: row["ms"] for row in result["arrivals"]}
     forwards = result["forwarded"]
@@ -261,6 +310,9 @@ async def halo_child(request):
             ),
         },
     }
+    assembly_source = REPO / "src/halo_server/media/video_jitter.py"
+    if assembly_source.is_file():
+        result["code"]["halo_video_jitter"] = digest(assembly_source.read_bytes())
     if aiortc.__version__ != "1.15.0":
         raise ValueError("only pinned aiortc 1.15.0 is supported")
     sink = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -269,30 +321,26 @@ async def halo_child(request):
     sender = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sender.setblocking(False)
     start, output_hash = time.monotonic(), hashlib.sha256()
-    first_timestamp = trace["aus"][0]["timestamp"]
 
     def ms():
         return (time.monotonic() - start) * 1000 if request.get("instrument", True) else 0
 
     def encoded(data, timestamp):
-        index = next(
-            (
-                a["index"]
-                for a in trace["aus"]
-                if ((a["timestamp"] - first_timestamp) & 0xFFFFFFFF) == timestamp
-            ),
-            -1,
+        delivery_id = len(result["forwarded"])
+        result["forwarded"].append(
+            {
+                "delivery_id": delivery_id,
+                "mapped_timestamp": timestamp,
+                "ms": ms(),
+                "bytes": len(data),
+                "sha256": digest(data),
+            }
         )
-        valid = index >= 0 and digest(data) == trace["aus"][index]["annexb_sha256"]
-        row = {"au": index, "ms": ms(), "bytes": len(data), "sha256": digest(data)}
-        result["forwarded"].append(row)
-        if valid:
-            result["assembled"].append(row)
         output_hash.update(data)
         # Diagnostic sink carries compact metadata, never household media. An AU can
         # exceed a UDP datagram, so this does not pretend to be HomeKit packetization.
-        sender.sendto(struct.pack("!i", index), sink.getsockname())
-        result["egress"].append({"au": index, "ms": ms()})
+        sender.sendto(struct.pack("!i", delivery_id), sink.getsockname())
+        result["egress"].append({"delivery_id": delivery_id, "ms": ms()})
 
     install_encoded_frame_adapter(receiver, "video", encoded, forward_to_decoder=False)
     receiver._RTCRtpReceiver__decoder_thread = True  # enable queue boundary without decoder thread
@@ -314,7 +362,7 @@ async def halo_child(request):
     async def read_sink():
         while reader_running:
             data = await asyncio.get_running_loop().sock_recv(sink, 65535)
-            result["sink"].append({"au": struct.unpack("!i", data)[0], "ms": ms()})
+            result["sink"].append({"delivery_id": struct.unpack("!i", data)[0], "ms": ms()})
 
     reader = asyncio.create_task(read_sink())
     try:
@@ -335,7 +383,10 @@ async def halo_child(request):
         await peer.close()
         sink.close()
         sender.close()
+    match_halo_access_units(result, trace)
     result["output_digest"] = output_hash.hexdigest()
+    assembly_snapshot = getattr(receiver._RTCRtpReceiver__jitter_buffer, "snapshot", None)
+    result["video_assembly"] = assembly_snapshot() if callable(assembly_snapshot) else None
     result["cleanup"] = {
         "peer_closed": peer.connectionState == "closed",
         "sockets_closed": True,
@@ -435,9 +486,7 @@ def main():
             try:
                 result = run_child(command, request, args.timeout)
             except (OSError, RuntimeError) as exc:
-                report["cases"][case]["receivers"][kind] = {
-                    "status": "failed", "reason": str(exc)
-                }
+                report["cases"][case]["receivers"][kind] = {"status": "failed", "reason": str(exc)}
                 args.output.parent.mkdir(parents=True, exist_ok=True)
                 args.output.write_text(json.dumps(report, indent=2) + "\n")
                 return 2

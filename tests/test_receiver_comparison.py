@@ -95,3 +95,48 @@ async def test_early_close_preserves_only_complete_access_units(frames):
     assert len(result["assembled"]) == len(result["forwarded"])
     assert result["cleanup"]["peer_closed"]
     assert result["cleanup"]["sockets_closed"]
+
+
+@pytest.mark.asyncio
+async def test_loss_recovery_hash_identity_anchors_clock_at_first_released_au(frames):
+    trace = comparison.make_trace("loss", frames)
+    result = await comparison.halo_child({"trace": trace})
+    assert [row["au"] for row in result["assembled"]] == list(range(6, 12))
+    assert comparison.summarize(result, trace)["complete_aus"] == 6
+    assert result["timestamp_origin_au"] == 6
+    assert result["timestamp_origin_source_rtp"] == trace["aus"][6]["timestamp"]
+    assert result["timestamp_mapping_valid"] is True
+    assert [row["mapped_timestamp"] for row in result["forwarded"]] == list(range(0, 18000, 3000))
+    assert [row["au"] for row in result["sink"]] == list(range(6, 12))
+
+
+def test_valid_content_does_not_hide_incorrect_timestamp_mapping(frames):
+    trace = comparison.make_trace("regular", frames)
+    result = {
+        "forwarded": [
+            {"delivery_id": n, "sha256": trace["aus"][n]["annexb_sha256"], "mapped_timestamp": t}
+            for n, t in enumerate((0, 3001, 6000))
+        ],
+        "egress": [],
+        "sink": [],
+    }
+    comparison.match_halo_access_units(result, trace)
+    assert result["timestamp_origin_au"] == 0
+    assert result["timestamp_mapping_valid"] is False
+    assert [row["au"] for row in result["assembled"]] == [0, 2]
+    assert result["forwarded"][1]["payload_valid"] is True
+    assert result["forwarded"][1]["timestamp_valid"] is False
+
+
+@pytest.mark.asyncio
+async def test_damaged_initial_stock_buffer_au_remains_negative_control():
+    trace = comparison.make_trace("large_idr", comparison.source_frames(True))
+    result = await comparison.halo_child({"trace": trace, "stock_buffer": True})
+    assert len(result["forwarded"]) == 11
+    assert [row["au"] for row in result["assembled"]] == [1, 2, 3, 4, 5, 7, 8, 9, 10]
+    assert result["timestamp_origin_au"] == 0
+    assert result["timestamp_origin_evidence_delivery"] == 1
+    assert result["timestamp_mapping_valid"] is True
+    assert result["forwarded"][0]["au"] == 0
+    assert result["forwarded"][0]["payload_valid"] is False
+    assert result["forwarded"][6]["payload_valid"] is False

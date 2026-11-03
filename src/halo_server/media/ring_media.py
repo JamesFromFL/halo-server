@@ -157,6 +157,12 @@ async def observe_receiver_statistics(
         except BaseException:
             pass
         if not stop.is_set() and not terminal.is_set():
+            assembler = getattr(video_receiver, "_RTCRtpReceiver__jitter_buffer", None)
+            assembly_snapshot = getattr(assembler, "snapshot", None)
+            if callable(assembly_snapshot):
+                if snapshot is None:
+                    snapshot = {"audio": None, "video": None}
+                snapshot["video_assembly"] = _diagnostic_notify(assembly_snapshot)
             if codecs is not None:
                 if snapshot is None:
                     snapshot = {"audio": None, "video": None}
@@ -555,16 +561,11 @@ def patch_aiortc_h264() -> bool:
     Three patches are applied at module import time so they take effect before
     any RTCPeerConnection or H264Decoder is created.
 
-    Patch 1 — JitterBuffer capacity (128 → 512)
-        The stickup_cam_mini_v3 sends each IDR keyframe as 159 RTP packets:
-        1 SPS + 1 PPS + 157 FU-A fragments at 1172 bytes each (~184 KB total).
-        aiortc's video JitterBuffer has capacity=128.  When packet #128 arrives
-        (still part of the IDR), delta >= capacity triggers smart_remove(1),
-        which removes packets until the timestamp changes — but SPS, PPS, and
-        all 157 IDR fragments share the same RTP timestamp, so smart_remove
-        wipes the ENTIRE keyframe.  The decoder never receives SPS+PPS+IDR and
-        every subsequent P-frame fails with AVERROR_INVALIDDATA.  Capacity 512
-        (power-of-2 requirement) comfortably fits the largest Ring IDR.
+    Patch 1 — bounded H.264 video assembly
+        Preserve the 512-packet bound needed for large fragmented IDRs, release
+        contiguous validated AUs at their marker (or timestamp transition), and
+        bound unresolved loss before requesting IDR recovery. Other video codecs
+        retain aiortc's generic assembly; the RTP handler and audio are unchanged.
 
     Patch 2 — SDP offer H264 codec variants
         Two additions to the CODECS["video"] list:
@@ -595,27 +596,23 @@ def patch_aiortc_h264() -> bool:
         from aiortc.codecs import CODECS
         from aiortc.codecs import h264 as aiortc_h264
         from aiortc.codecs.h264 import H264Decoder
-        from aiortc.jitterbuffer import JitterBuffer
         from aiortc.rtcrtpparameters import RTCRtcpFeedback, RTCRtpCodecParameters
         from aiortc.rtcrtpreceiver import RTCRtpReceiver
 
-        # --- Patch 1: increase video JitterBuffer capacity 128 → 512 ---
+        from halo_server.media.video_jitter import VideoJitterBuffer
+
+        # --- Patch 1: H.264 marker-aware bounded video assembly ---
         if not getattr(RTCRtpReceiver, "_halo_jitter_buffer_patch_applied", False):
             _orig_receiver_init = RTCRtpReceiver.__init__
 
             def _patched_receiver_init(self, kind: str, transport) -> None:
                 _orig_receiver_init(self, kind, transport)
                 if kind == "video":
-                    # Replace the 128-slot buffer created by __init__ with a 512-slot
-                    # one.  Name mangling: __jitter_buffer → _RTCRtpReceiver__jitter_buffer.
-                    self._RTCRtpReceiver__jitter_buffer = JitterBuffer(
-                        capacity=512,
-                        is_video=True,
-                    )
+                    self._RTCRtpReceiver__jitter_buffer = VideoJitterBuffer(self)
 
             RTCRtpReceiver.__init__ = _patched_receiver_init
             RTCRtpReceiver._halo_jitter_buffer_patch_applied = True
-            _log.debug("Patched RTCRtpReceiver video JitterBuffer capacity: 128 → 512")
+            _log.debug("Patched RTCRtpReceiver with bounded H.264 video assembly")
 
         # --- Patch 2: add H264 codec variants to the SDP offer ---
         existing_h264 = {
