@@ -138,6 +138,9 @@ async def test_only_one_pending_notification_and_fence_wakes_decoder_thread():
     thread.start()
     try:
         await asyncio.wait_for(entered.wait(), 1)
+        # Scheduling the coroutine may precede publishing its future. Wait for
+        # the second put to block before inspecting the producer's first result.
+        await until(lambda: lane.snapshot()["counters"]["notification_waits"] > 0)
         assert not second_returned.is_set()
         assert len(futures) == 1 and lane.snapshot()["queued_frames"] == 1
         lane.fence()
