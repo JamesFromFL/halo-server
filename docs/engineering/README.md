@@ -17,3 +17,8 @@ Implementation progress and verification are tracked in `stream-repair-progress.
 
 [Bounded stream diagnostics](bounded-stream-diagnostics.md) describes the opt-in
 packet/media recorder and offline audio replay added for the next controlled test.
+
+[Post-capture research and proposed repairs](postcapture-research-2026-11-07.md)
+records the November 7 full-session analysis, decoder-preserving native experiment,
+audio-retention model, receive-boundary measurement plan, and implementation gates.
+It is research evidence, not a deployed fix or Apple playback acceptance.
