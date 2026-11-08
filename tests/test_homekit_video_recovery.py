@@ -101,12 +101,13 @@ async def controlled(monkeypatch, *, bitrate=300):
         await manager.close()
 
 
-def output(payload=None, timestamp=0, *, keyframe=True):
+def output(payload=None, timestamp=0, *, keyframe=True, configuration_generation=1):
     return NS(
         payload=encoded_picture() if payload is None else payload,
         timestamp=timestamp,
         is_keyframe=keyframe,
         mode="adapt",
+        configuration_generation=configuration_generation,
     )
 
 

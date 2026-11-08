@@ -75,8 +75,15 @@ async def test_same_epoch_reconfigure_keeps_elapsed_source_time_and_srtp_indices
         )
         observe_video_clock(manager, session, 180000, clock())
         assert await manager._access_unit(
-            session, output(timestamp=180000), session.capture_epoch, received_at=clock()
+            session,
+            output(
+                timestamp=180000,
+                configuration_generation=session.adapter.configuration_generation,
+            ),
+            session.capture_epoch,
+            received_at=clock(),
         )
+        assert session.pending_reconfiguration is None
         second = [RtpPacket.parse(peer.unprotect(data)) for _, data in sink.sent[before:]]
         assert (second[0].timestamp - first[0].timestamp) & 0xFFFFFFFF == 180000
         assert (second[0].sequence_number - first[-1].sequence_number) & 65535 == 1
