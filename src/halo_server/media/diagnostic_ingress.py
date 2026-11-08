@@ -133,8 +133,14 @@ def install_audio_jitter_trace(receiver, trace, *, clock=time.monotonic):
     """Wrap the exact add call, retaining all original results and exceptions."""
     if trace is None:
         return False
+    from halo_server.media.opus_release import CompleteOpusBuffer
+
     buffer = getattr(receiver, "_RTCRtpReceiver__jitter_buffer", None)
-    if type(buffer) is not JitterBuffer or buffer.capacity != 16 or "add" in buffer.__dict__:
+    if (
+        type(buffer) not in {JitterBuffer, CompleteOpusBuffer}
+        or buffer.capacity != 16
+        or "add" in buffer.__dict__
+    ):
         return False
     original = buffer.add
     first = last_frame = None

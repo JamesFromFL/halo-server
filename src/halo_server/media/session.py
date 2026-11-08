@@ -495,7 +495,7 @@ class CameraMediaSession:
                 observation, capture_epoch=self._buffer.capture_epoch
             )
 
-    def _encoded_audio(self, generation, payload, timestamp):
+    def _encoded_audio(self, generation, payload, timestamp, **frame_metadata):
         entered = self._ingress_entry(generation, "audio", timestamp)
         started = self._diagnostic_time()
         if entered is not None and started is not None:
@@ -509,7 +509,9 @@ class CameraMediaSession:
                 self._original_audio_buffer.clear(capture_epoch=epoch)
                 self._source_clocks.clear()
             try:
-                packet = self._original_audio_buffer.append_audio(payload, timestamp)
+                packet = self._original_audio_buffer.append_audio(
+                    payload, timestamp, **frame_metadata
+                )
             except OpusError:
                 # Original audio cannot compromise the legacy normalized lane
                 # or turn a functioning video session into a false failure.
@@ -794,8 +796,8 @@ class CameraMediaSession:
                 payload,
                 timestamp,
             ),
-            "on_encoded_audio": lambda payload, timestamp: self._encoded_audio(
-                action.generation, payload, timestamp
+            "on_encoded_audio": lambda payload, timestamp, **metadata: self._encoded_audio(
+                action.generation, payload, timestamp, **metadata
             ),
             "on_keyframe_requester": lambda callback: self._attach_keyframes(
                 action.generation, callback
@@ -811,6 +813,7 @@ class CameraMediaSession:
             ),
             "decode_video": False,
             "decode_audio": self._legacy_audio_enabled,
+            "complete_audio": True,
             "on_encoded_incompatible": lambda kind, mime_type: self._incompatible(
                 action.generation,
                 kind,

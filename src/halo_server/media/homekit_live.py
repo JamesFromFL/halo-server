@@ -838,6 +838,8 @@ class HomeKitLiveManager:
         from halo_server.media.transcode import AccessUnitAdapter
 
         try:
+            self._current(session)
+            authorized_at = self._clock()
             session.handle = await self.controller.open_live(
                 session.boot, session.scope, session_id=session.identity
             )
@@ -872,6 +874,7 @@ class HomeKitLiveManager:
                     timeline=session.timeline,
                     diagnostic_trace=session.diagnostic_trace,
                     diagnostic_stream_id=session.diagnostic_stream_id,
+                    authorized_at=authorized_at,
                 )
             session.last_source = session.last_feedback = session.last_renewal = self._clock()
             session.active_started_at = session.last_source

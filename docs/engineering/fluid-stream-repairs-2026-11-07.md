@@ -43,7 +43,7 @@ Validation completed locally:
 - The original 144-frame moving-scene fixture now emits **144/144** through the
   production adapter/worker subprocess, versus **71/144** before this repair.
   Maximum PTS step is 41.667 ms rather than 1333.333 ms. All three source-P-frame
-  transitions preserve the worker. Command times were 0.85–1.17 ms on this desktop;
+  transitions preserve the worker. Command times were 0.83–1.22 ms on this desktop;
   these are not server or end-to-end latency measurements.
 - The actual fixture's maximum generation-local codec window is 76.4% of selected.
   The previously documented static 720p/132-kbps overshoot remains a separate
@@ -53,8 +53,14 @@ Validation completed locally:
 
 The reproducible local qualification is retained under
 `/home/james/Documents/Codex/2026-10-25/he/work/halo-server-fluid-stream-2026-11-07/`.
-Its JSON includes source/probe hashes and loaded native library versions. It uses
+Its JSON includes source/probe hashes and loaded native library versions. A
+[compact qualification receipt](fluid-video-qualification-2026-11-07.json) is
+retained in Git and was refreshed against the final source on November 8. It uses
 synthetic imagery; camera payload stays outside Git.
+For the 61 complete one-second windows spanning configuration changes, the
+maximum payload-to-budget ratio was 85.9%, using a per-frame allocation of each
+selected rate at this fixture's fixed 24 FPS. This explicit accounting model is
+not a claim about Apple's internal bitrate algorithm.
 
 ## Slice 2: receive-boundary observer — implemented and locally qualified
 
@@ -74,14 +80,71 @@ before final statistics/cleanup. Actual AF_PACKET reception and kernel timestamp
 still require a controlled host qualification. No capture service or persistent
 privilege was installed.
 
-## Remaining audio and physical qualification
+## Slice 3: complete audio release — implemented and locally qualified
 
-Audio release is being qualified through the actual output pacer. Its existing
-startup discard and catch-up rules must not consume the intentional source
-retention; any new path must preserve original receipt/PTS and A/V alignment,
-bounded storage, permission epochs and raw audio. The arrival-only timing model
-does not qualify production integration by itself.
+The [audio repair](audio-retention-repair.md) preserves the receiver's existing
+first-release boundary, then makes up to four complete original Opus packets
+available per callback. The existing HomeKit pacer owns delivery. A fresh,
+authorized startup marker prevents the ordinary live-edge discard and catch-up
+rules from consuming that already-incurred source retention. Shared/prewarmed
+sources without a valid marker keep the conservative live-edge behavior.
 
-Actual privileged host capture and a subsequent controlled Apple session remain
-physical test gates. The observer will separate packet delivery before callbacks
-from application dispatch delay without replacing the active UDP reader.
+No filtering, fabricated sound, independent timer, or additional reservoir was
+added. Source PTS, original packet receipts, privacy/epoch fences and existing
+storage limits remain enforced. Codec changes and sequence resets reestablish
+prefetch; discontinuities reanchor pacing. Only CameraMediaSession opts in, so
+other Ring receiver callers keep their existing callback contract.
+
+The final 9.9-second captured payload excerpt was replayed at its original
+callback intervals through the actual receiver, native audio conversion,
+HomeKit pacer, loopback SRTP, and independent Opus decoder:
+
+- Maximum send gap fell from 215.53 ms to 22.44 ms; gaps above 100 ms fell from
+  five to zero. First output was 268.80 ms before and 260.61 ms after.
+- All 166 original payloads were preserved. The candidate produced 497 decoded
+  20 ms packets with zero decoder errors. Its four additional source inputs are
+  the baseline receiver's retained stop tail, not synthesized sound.
+- Retained output peaked at 17 packets / 3441 bytes, within unchanged limits of
+  32 packets / 40 KiB. No initial discard, stale disposal, adapter restart,
+  overflow, or budget rejection occurred in either captured replay.
+- A separate native test with recurring 200 ms arrival holes retained all 182
+  expected output packets. Focused receiver/source/audio regressions passed.
+
+Original receipt preservation intentionally removes assembly delay from the
+estimated audio phase. Tests exercise actual audio transport against a shared
+video timeline and common sender-report instant; the video side is a model,
+not a real encoder/sender. Physical HomeKit A/V synchronization remains unproved.
+
+## Final integrated validation — November 8
+
+The final Python suite passed **2909 tests**, with one IPv6 loopback test skipped
+because the host lacks that address. All **268 HomeKit adapter tests** passed
+after rebuilding with pinned Node 26.12.1. Ruff lint/format and whitespace checks
+passed. The suite reported 76 existing upstream deprecation warnings.
+
+Broad validation caught and repaired a synthetic video fixture missing the new
+configuration metadata and an audio queue refactor that rebuilt the original
+decoder tuple. The queue now forwards the exact original item; additional drained
+frames receive their own items. The original identity assertion remains intact,
+with additional exact-once forwarding coverage. The video clock regression also
+verifies completion of the requested configuration transition.
+
+The initial desktop runtime was newer than Halo's pinned Node version; the final
+run used the existing qualified pinned runtime. Filesystem/user sandbox UID
+remapping also made root-owned `/tmp` appear owned by `nobody`, correctly failing
+release ownership checks. Those tests and the final complete suite passed with
+real host ownership outside that sandbox. No release-security rules were relaxed.
+
+## Physical qualification still required
+
+The local video and audio qualifications support these repairs; they do not prove
+that all full-session stutters are resolved. No server deployment or new camera
+session occurred during this implementation pass. The VPN may explain Apple's
+quality choices but has not been isolated as a cause.
+
+Next, qualify the bounded observer on the server and run a controlled Apple
+session through startup, changing quality, sustained playback and shutdown.
+Check real A/V synchronization and previews, and use the observer to separate
+packet delivery before callbacks from application dispatch delay. A matched
+VPN-on/off comparison can then isolate viewing-path effects without forcing a
+quality level or changing multiple variables together.

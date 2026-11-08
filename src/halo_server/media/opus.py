@@ -8,6 +8,8 @@ import time
 from collections import deque
 from dataclasses import dataclass
 
+from halo_server.media.buffer import EncodedPacket
+
 MAX_OPUS_PACKET = 65535
 MAX_OPUS_FRAME = 1275
 MAX_OPUS_FRAMES = 48
@@ -204,6 +206,12 @@ def repacketize(packets) -> bytes:
     return header + b"".join(frames)
 
 
+@dataclass(frozen=True)
+class OriginalOpusPacket(EncodedPacket):
+    startup_at: float | None = None
+    startup_samples: int = 0
+
+
 class OriginalOpusBuffer:
     """Original Ring packets only, with no video-boundary dependency or normalization."""
 
@@ -230,15 +238,19 @@ class OriginalOpusBuffer:
             self._condition.notify_all()
 
     def _expire(self, now):
-        while self._packets and (
-            len(self._packets) > 512
-            or self._bytes > 1024 * 1024
-            or now - self._packets[0].received_at > 2
-        ):
+        # RTP reordering can put an older receipt behind a newer one. Expire
+        # every old packet, not just a prefix assumed to be arrival ordered.
+        retained = deque(packet for packet in self._packets if now - packet.received_at <= 2)
+        if len(retained) != len(self._packets):
+            self._packets = retained
+            self._bytes = sum(len(packet.payload) for packet in retained)
+        while self._packets and (len(self._packets) > 512 or self._bytes > 1024 * 1024):
             self._bytes -= len(self._packets.popleft().payload)
 
-    def append_audio(self, payload, rtp_timestamp, *, received_at=None):
-        from halo_server.media.buffer import EncodedPacket, MediaStreamKind
+    def append_audio(
+        self, payload, rtp_timestamp, *, received_at=None, startup_at=None, startup_samples=0
+    ):
+        from halo_server.media.buffer import MediaStreamKind
 
         parse_opus(payload)
         if type(rtp_timestamp) is not int or rtp_timestamp < 0:
@@ -251,21 +263,37 @@ class OriginalOpusBuffer:
             or now < 0
         ):
             raise OpusError("Invalid audio receipt time")
+        if (
+            type(startup_samples) is not int
+            or not 0 <= startup_samples <= 4 * MAX_OPUS_SAMPLES
+            or (
+                startup_at is not None
+                and (
+                    type(startup_at) not in {int, float}
+                    or not math.isfinite(startup_at)
+                    or startup_at < now
+                )
+            )
+            or (startup_at is None and startup_samples)
+        ):
+            raise OpusError("Invalid audio startup retention")
         with self._condition:
-            if self._packets and now < self._packets[-1].received_at:
-                raise OpusError("Audio receipt time moved backwards")
+            # Sequence order can differ from original arrival order after
+            # bounded RTP reordering. Never refresh an older packet's receipt.
             self._sequence += 1
-            packet = EncodedPacket(
+            packet = OriginalOpusPacket(
                 self._sequence,
                 MediaStreamKind.AUDIO,
                 payload,
                 rtp_timestamp,
                 float(now),
                 capture_epoch=self._epoch,
+                startup_at=startup_at,
+                startup_samples=startup_samples,
             )
             self._packets.append(packet)
             self._bytes += len(payload)
-            self._expire(now)
+            self._expire(self._clock())
             self._condition.notify_all()
             return packet
 
@@ -288,14 +316,21 @@ class OriginalOpusBuffer:
             self._expire(self._clock())
             if not self._packets:
                 return BufferRead((), False, self._epoch)
-            resync = after_sequence is not None and self._packets[0].sequence > after_sequence + 1
+            selected = tuple(
+                packet
+                for packet in self._packets
+                if after_sequence is None or packet.sequence > after_sequence
+            )
+            resync = after_sequence is not None and (
+                (selected and selected[0].sequence > after_sequence + 1)
+                or any(
+                    b.sequence != a.sequence + 1
+                    for a, b in zip(selected, selected[1:], strict=False)
+                )
+            )
             return BufferRead(
-                tuple(
-                    packet
-                    for packet in self._packets
-                    if after_sequence is None or resync or packet.sequence > after_sequence
-                ),
-                resync,
+                selected,
+                bool(resync),
                 self._epoch,
             )
 
@@ -305,5 +340,10 @@ class OriginalOpusBuffer:
         with self._condition:
             self._expire(self._clock())
             packets = tuple(self._packets)
-            duration = packets[-1].received_at - packets[0].received_at if len(packets) > 1 else 0.0
+            duration = (
+                max(packet.received_at for packet in packets)
+                - min(packet.received_at for packet in packets)
+                if len(packets) > 1
+                else 0.0
+            )
             return BufferSnapshot(packets, self._bytes, duration, None, self._epoch)

@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import math
 import secrets
 import socket
 import struct
@@ -411,6 +412,10 @@ class AudioTrack:
         self._input_end = None
         self._live_edge_pending = True
         self._submitted_any = False
+        self._view_started_at = self._clock()
+        self._retained_start = False
+        self._retained_anchor = None
+        self._retained_expected_pts = None
         self._outputs = deque()
         self._output_bytes = 0
         self._output_ready = asyncio.Event()
@@ -469,10 +474,19 @@ class AudioTrack:
         timeline=None,
         diagnostic_trace=None,
         diagnostic_stream_id=0,
+        authorized_at=None,
     ):
         from halo_server.media.homekit_audio_codec import AudioAdapter
 
         self.handle, self.config = handle, config
+        now = self._clock()
+        if authorized_at is not None and (
+            type(authorized_at) not in {int, float}
+            or not math.isfinite(authorized_at)
+            or not 0 <= authorized_at <= now
+        ):
+            raise HomeKitOperationError("invalid_configuration")
+        self._view_started_at = now if authorized_at is None else authorized_at
         self._diagnostic_trace = diagnostic_trace
         self._diagnostic_stream_id = diagnostic_stream_id
         if diagnostic_trace is not None:
@@ -672,9 +686,15 @@ class AudioTrack:
         self._input_spans.clear()
         self._input_end = None
         self._live_edge_pending = True
+        self._retained_start = False
+        self._retained_anchor = None
+        self._retained_expected_pts = None
 
     def _expired_prefix(self):
-        return bool(self._input_spans and self._clock() - self._input_spans[0][2] > MAX_AUDIO_AGE)
+        return bool(
+            self._input_spans
+            and self._clock() - min(span[2] for span in self._input_spans) > MAX_AUDIO_AGE
+        )
 
     async def _discard_expired_prefix(self):
         if self._expired_prefix():
@@ -706,7 +726,7 @@ class AudioTrack:
         received = (
             min(receipts)
             if receipts
-            else (self._input_spans[0][2] if self._input_spans else fallback)
+            else (min(span[2] for span in self._input_spans) if self._input_spans else fallback)
         )
         return received
 
@@ -769,6 +789,9 @@ class AudioTrack:
             self._audio_allowed_after = float("inf")
             self._delivery_generation += 1
             self._discard_outputs("output_send_fenced")
+            self._retained_start = False
+            self._retained_anchor = None
+            self._retained_expected_pts = None
             self._metric("count", "permission_pauses")
 
     async def _ready_audio(self):
@@ -839,7 +862,28 @@ class AudioTrack:
                 self._live_edge_pending = True
             if packets and self._clock() - packets[0].received_at > MAX_AUDIO_AGE:
                 self._live_edge_pending = True
+            retained_start = False
             if self._live_edge_pending and packets:
+                first = packets[0]
+                startup_at = getattr(first, "startup_at", None)
+                startup_samples = getattr(first, "startup_samples", 0)
+                retained_start = bool(
+                    type(startup_at) in {int, float}
+                    and math.isfinite(startup_at)
+                    and max(self._view_started_at, self._audio_allowed_after) <= first.received_at
+                    and 0 <= self._clock() - startup_at <= CATCHUP_AGE
+                    and type(startup_samples) is int
+                    and 0 < startup_samples <= 4 * 5760
+                    and 0 <= startup_at - first.received_at <= startup_samples / 48000 + CATCHUP_AGE
+                    and first.capture_epoch == self._current_epoch()
+                    and not getattr(batch, "resynchronized", False)
+                )
+                if retained_start:
+                    self._retained_start = True
+            if self._live_edge_pending and packets and not retained_start:
+                self._retained_start = False
+                self._retained_anchor = None
+                self._retained_expected_pts = None
                 self._trace("count", "live_edge_skipped", len(packets) - 1)
                 category = (
                     "source_recovery_skipped" if self._submitted_any else "source_initial_skipped"
@@ -1112,9 +1156,23 @@ class AudioTrack:
             queued_samples = sum(
                 queued.output.duration for queued in self._outputs if queued.outcome is None
             )
-            catchup = queued_samples > CATCHUP_QUEUE_SAMPLES or now - received_at >= CATCHUP_AGE
+            nominal_at = now
+            if self._retained_start:
+                if self._retained_anchor is None or output.timestamp != self._retained_expected_pts:
+                    self._retained_anchor = output.timestamp, now
+                self._retained_expected_pts = output.timestamp + output.duration
+                origin_pts, origin_at = self._retained_anchor
+                nominal_at = origin_at + (output.timestamp - origin_pts) / 48000
+                # The initial source prefetch is intentional and already
+                # incurred. Do not consume it merely because packets are old
+                # or queued; recover only lateness against this same clock.
+                catchup = now - nominal_at > CATCHUP_AGE
+            else:
+                catchup = queued_samples > CATCHUP_QUEUE_SAMPLES or now - received_at >= CATCHUP_AGE
             interval = output.duration / 48000 / (2 if catchup else 1)
-            target = max(now, self._next_packet_at, now + self._pacer.delay(wire_size, now))
+            target = max(
+                now, nominal_at, self._next_packet_at, now + self._pacer.delay(wire_size, now)
+            )
             if target > received_at + MAX_AUDIO_AGE:
                 # Do not block fresh successors on a head whose bounded packet
                 # or wire allowance cannot admit it before its own deadline.

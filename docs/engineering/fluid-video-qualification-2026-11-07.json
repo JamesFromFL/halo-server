@@ -1,0 +1,110 @@
+{
+  "kind": "synthetic-production-video-qualification",
+  "base_commit": "4ebdc73a623781e7f6eb8464e48bf8f7ea989beb",
+  "source_files": {
+    "transcode.py": "ea5bad924afd57b069a02b068e6b5ef90e7a143fbf6063fb1de9afd57c35a6ad",
+    "transcode_worker.py": "a0b02af1e4cbfc21369f84173c2b5589ee9e6725d4c2a624408d366b84f101b1",
+    "cadence.py": "bcdd21ef458bbcc13f76480ec40cc80ac01400226f4320204060ef9940e4c518",
+    "h264.py": "e9a7f54b7a9bbafd248af0b9167880e04dfd3533069fc5f08272369fd5229959"
+  },
+  "python": "3.14.9",
+  "pyav": "17.1.0",
+  "library_versions": {
+    "libavutil": [
+      60,
+      26,
+      101
+    ],
+    "libavcodec": [
+      62,
+      28,
+      101
+    ],
+    "libavformat": [
+      62,
+      12,
+      101
+    ],
+    "libavdevice": [
+      62,
+      3,
+      101
+    ],
+    "libavfilter": [
+      11,
+      14,
+      101
+    ],
+    "libswscale": [
+      9,
+      5,
+      101
+    ],
+    "libswresample": [
+      6,
+      3,
+      101
+    ]
+  },
+  "probe_sha256": "142b8fd539067b7db39bc8cc80f5e9799723e46e8eab8b8ad0d77e6d6d2abb81",
+  "fixture_helper_sha256": "c1216ead6aceb57385241d9dfe31a47f1da538b7d5aaae6d5a30a7d6fc0ee4a9",
+  "source_sha256": "28356ed43b7da0d3fad2225430b2e3a26f69e6d7c964bc60fad55acba11866f9",
+  "source_frames": 144,
+  "source_idr_indexes": [
+    0,
+    48,
+    96
+  ],
+  "result": {
+    "outputs": 144,
+    "decoded_frames": 144,
+    "max_output_pts_gap_ms": 41.666666666666664,
+    "independently_decodable_idrs": 6,
+    "output_sha256": "7ae5f79c5ad0790b5bce28591dbbd2bdecfc6c159bec75ede16f10a4a1736afc",
+    "max_generation_local_one_second_selected_ratio": 0.764,
+    "peak_generation_local_window": {
+      "ratio": 0.764,
+      "bits": 100848,
+      "input_index": 65,
+      "pts": 243750,
+      "generation": 2
+    },
+    "empty_input_indexes": [],
+    "changes": [
+      {
+        "input_index": 17,
+        "decoder_worker_closed": false,
+        "previous_pid_present": true,
+        "duration_ms": 1.220938
+      },
+      {
+        "input_index": 75,
+        "decoder_worker_closed": false,
+        "previous_pid_present": true,
+        "duration_ms": 0.860535
+      },
+      {
+        "input_index": 123,
+        "decoder_worker_closed": false,
+        "previous_pid_present": true,
+        "duration_ms": 0.828885
+      }
+    ]
+  },
+  "cross_generation_accounting": {
+    "assumption": "This synthetic fixture is exactly 24 FPS. Assign each actual source frame one twenty-fourth of a second of its selected rate; retain all 24 frames across generations. This is an explicit transition accounting model, not a claim about Apple's internal bitrate algorithm.",
+    "mixed_complete_windows": 61,
+    "maximum": {
+      "input_index": 75,
+      "bits": 119392,
+      "frame_interval_weighted_budget": 138958.33333333334,
+      "ratio": 0.8591928035982008
+    }
+  },
+  "limits": [
+    "Synthetic media; no camera, Apple renderer or network capture.",
+    "Desktop command times do not establish server or end-to-end latency.",
+    "The previously documented static 720p / 132 kbps native rate-envelope counterexample remains a separate limitation."
+  ],
+  "full_result_sha256": "8b2f22632761e8d80969c861d7ea8e0c4377eac17f5466021cbde5dc667c758a"
+}

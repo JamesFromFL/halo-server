@@ -77,7 +77,7 @@ def _encoded_source_callback(
         else None
     )
 
-    def deliver(payload, timestamp):
+    def deliver(payload, timestamp, **frame_metadata):
         cleanup = None
         try:
             try:
@@ -88,7 +88,7 @@ def _encoded_source_callback(
                 cleanup = _diagnostic_notify(on_ingress, kind, timestamp, entered)
             if observe is not None:
                 observe(timestamp)
-            return callback(payload, timestamp)
+            return callback(payload, timestamp, **frame_metadata)
         finally:
             if callable(cleanup):
                 _diagnostic_notify(cleanup)
@@ -437,6 +437,7 @@ class _EncodedFrameQueue(queue.Queue):
         decoder_queue=None,
         on_codec=None,
         diagnostic_trace=None,
+        opus_release=None,
     ) -> None:
         super().__init__()
         self._kind = kind
@@ -446,6 +447,7 @@ class _EncodedFrameQueue(queue.Queue):
         self._decoder_queue = decoder_queue
         self._on_codec = on_codec
         self._diagnostic_trace = diagnostic_trace
+        self._opus_release = opus_release
         self._reported_mime_types: set[str] = set()
 
     def put(self, item, block: bool = True, timeout: float | None = None) -> None:
@@ -459,11 +461,25 @@ class _EncodedFrameQueue(queue.Queue):
             return
 
         codec, frame = item
+        self._put_frame(item, block, timeout)
+        if self._opus_release is not None:
+            for extra in self._opus_release.drain(codec):
+                self._put_frame((codec, extra), block, timeout)
+
+    def _put_frame(self, item, block, timeout):
+        codec, frame = item
         _diagnostic_notify(self._on_codec, self._kind, codec)
         mime_type = str(getattr(codec, "mimeType", "")).lower()
         if mime_type == _ENCODED_MIME_TYPES[self._kind]:
             trace_frame(self._diagnostic_trace, self._kind, frame)
-            self._callback(bytes(frame.data), int(frame.timestamp))
+            metadata = {}
+            if self._opus_release is not None and hasattr(frame, "received_at"):
+                metadata["received_at"] = frame.received_at
+                if hasattr(frame, "startup_at"):
+                    metadata.update(
+                        startup_at=frame.startup_at, startup_samples=frame.startup_samples
+                    )
+            self._callback(bytes(frame.data), int(frame.timestamp), **metadata)
             if not self._forward_to_decoder:
                 return
         elif mime_type not in self._reported_mime_types:
@@ -497,6 +513,7 @@ def install_encoded_frame_adapter(
     decoder_queue=None,
     on_codec=None,
     diagnostic_trace=None,
+    opus_release=None,
 ) -> queue.Queue:
     """Install Halo's validated aiortc 1.15 encoded-frame queue on one receiver."""
     import aiortc
@@ -532,6 +549,7 @@ def install_encoded_frame_adapter(
         decoder_queue=decoder_queue,
         on_codec=on_codec,
         diagnostic_trace=diagnostic_trace,
+        opus_release=opus_release,
     )
     setattr(receiver, _DECODER_QUEUE_ATTRIBUTE, adapter)
     return adapter
@@ -1465,6 +1483,7 @@ class RingStreamReceiver:
         video_stall_timeout: float = VIDEO_STALL_TIMEOUT,
         on_terminating: Callable[[BaseException | None], None] | None = None,
         diagnostic_trace=None,
+        complete_audio: bool = False,
     ) -> None:
         self._device = device
         self._on_video = on_video
@@ -1487,6 +1506,10 @@ class RingStreamReceiver:
         self._video_stall_timeout = video_stall_timeout
         self._on_terminating = on_terminating
         self._diagnostic_trace = diagnostic_trace
+        # Explicit internal opt-in: legacy users keep the two-positional-arg
+        # callback contract. Opted-in callbacks also receive original receipts
+        # and the bounded startup marker as keyword metadata.
+        self._complete_audio = complete_audio
 
     async def receive(self, stop: threading.Event) -> None:
         import numpy as np
@@ -1718,6 +1741,11 @@ class RingStreamReceiver:
                 video_transceiver = pc.addTransceiver("video", direction="recvonly")
                 mic_track = MicrophoneTrack(self._microphone_source)
                 audio_transceiver = pc.addTransceiver(mic_track, direction="sendrecv")
+                opus_release = None
+                if self._complete_audio and self._on_encoded_audio is not None:
+                    from halo_server.media.opus_release import install_complete_opus_buffer
+
+                    opus_release = install_complete_opus_buffer(audio_transceiver.receiver)
                 if self._on_decoded_audio is not None:
                     from halo_server.media.decoded_audio import DecodedAudioLane
 
@@ -1784,6 +1812,7 @@ class RingStreamReceiver:
                         ),
                         forward_to_decoder=self._decode_audio,
                         on_incompatible=on_encoded_incompatible,
+                        **({"opus_release": opus_release} if opus_release is not None else {}),
                         **(
                             {"diagnostic_trace": diagnostic_trace}
                             if diagnostic_trace is not None
