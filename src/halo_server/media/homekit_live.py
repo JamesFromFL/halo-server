@@ -243,6 +243,20 @@ def _diagnostic(session, stage, *, payload=None, **fields):
                 trace.media(stage, "video", payload, **fields)
 
 
+def _configuration_fields(config):
+    return {
+        "width": config.width,
+        "height": config.height,
+        "fps": config.fps,
+        "bit_rate": config.max_bit_rate,
+        "profile_code": {"baseline": 66, "main": 77, "high": 100}[config.profile],
+        "level_code": int(config.level.replace(".", "")),
+        "payload_type": config.payload_type,
+        "mtu": config.mtu,
+        "rtcp_interval_us": round(config.rtcp_interval * 1_000_000),
+    }
+
+
 class _SourceChanged(RuntimeError):
     """An inner capture attempt retired while encoded output was being prepared."""
 
@@ -337,6 +351,8 @@ class _Session:
     terminal_at: float | None = None
     diagnostic_trace: object | None = None
     diagnostic_stream_id: int = 0
+    reconfiguration_revision: int = 0
+    pending_reconfiguration: tuple[int, int] | None = None
 
 
 def _uuid(value):
@@ -886,18 +902,73 @@ class HomeKitLiveManager:
             raise HomeKitOperationError("not_ready")
         if config.payload_type != session.config.payload_type:
             raise HomeKitOperationError("invalid_request")
+        session.reconfiguration_revision += 1
+        revision = session.reconfiguration_revision
+        _diagnostic(
+            session,
+            "reconfigure_request",
+            request_revision=revision,
+            **_configuration_fields(config),
+        )
         try:
             async with session.adapter_lock:
                 self._current(session)
-                reset_video = replace(session.config, rtcp_interval=config.rtcp_interval) != config
+                old_fields, new_fields = (
+                    _configuration_fields(session.config),
+                    _configuration_fields(config),
+                )
+                changed_fields = sum(
+                    1 << index
+                    for index, name in enumerate(old_fields)
+                    if old_fields[name] != new_fields[name]
+                )
+                decoder_before = getattr(session.adapter, "decoder_generation", None)
+                reset_video = (
+                    replace(session.config, rtcp_interval=config.rtcp_interval, mtu=config.mtu)
+                    != config
+                )
+                mtu_changed = session.config.mtu != config.mtu
                 await session.adapter.reconfigure(config)
                 self._current(session)
-                session.config = config
-                _measure(session, "count", "reconfigurations")
-                # The report loop reads the interval before its next sleep.
-                # An RTCP-only change must preserve the current decodable GOP.
-                if reset_video:
-                    self._reset_video_recovery(session)
+                # Repair sends own this lock too: finish an already admitted
+                # repair before installing a smaller MTU and clearing its cache.
+                async with session.send_lock:
+                    self._current(session)
+                    session.config = config
+                    _measure(session, "count", "reconfigurations")
+                    if reset_video:
+                        self._reset_video_recovery(session)
+                    elif mtu_changed:
+                        session.retransmit.clear()
+                        session.retransmit_bytes = 0
+                        session.repair_queue.clear()
+                    generation = self._configuration_generation(session)
+                    if reset_video:
+                        previous = session.pending_reconfiguration
+                        if previous is not None:
+                            _diagnostic(
+                                session,
+                                "reconfigure_superseded",
+                                request_revision=previous[0],
+                                config_epoch=previous[1],
+                            )
+                        session.pending_reconfiguration = revision, generation
+                    decoder_after = getattr(session.adapter, "decoder_generation", None)
+                    _diagnostic(
+                        session,
+                        "reconfigure_applied",
+                        request_revision=revision,
+                        config_epoch=generation,
+                        decoder_epoch=decoder_after,
+                        decoder_preserved=(
+                            decoder_before is not None
+                            and decoder_before > 0
+                            and decoder_before == decoder_after
+                            and getattr(session.adapter, "mode", None) == "adapt"
+                        ),
+                        changed_fields=changed_fields,
+                        **new_fields,
+                    )
         except BaseException:
             await self._settle_retirement(session)
             raise
@@ -1072,6 +1143,8 @@ class HomeKitLiveManager:
                 received_us=round(packet.received_at * 1_000_000),
                 capture_epoch=packet.capture_epoch,
                 size=len(packet.payload),
+                keyframe=5 in packet.h264_nal_types,
+                nal_mask=sum(1 << kind for kind in packet.h264_nal_types),
             )
         with contextlib.suppress(Exception):
             metrics = session.metrics
@@ -1104,6 +1177,9 @@ class HomeKitLiveManager:
                         capture_epoch=output.capture_epoch,
                         keyframe=output.is_keyframe is True,
                         adapted=output.mode == "adapt",
+                        config_epoch=output.configuration_generation,
+                        decoder_epoch=getattr(session.adapter, "decoder_generation", None),
+                        bit_rate=session.config.max_bit_rate,
                         received_us=round(output.received_at * 1_000_000),
                     )
                 metrics.count("output_access_units")
@@ -1444,6 +1520,17 @@ class HomeKitLiveManager:
         _measure(session, "count", "sent_access_units")
         _measure(session, "observe", "access_unit_send", max(0, self._clock() - send_started))
         if idr:
+            pending = session.pending_reconfiguration
+            if pending is not None and pending[1] == output.configuration_generation:
+                _diagnostic(
+                    session,
+                    "reconfigure_first_idr",
+                    request_revision=pending[0],
+                    config_epoch=pending[1],
+                    pts=output.timestamp,
+                    decoder_epoch=getattr(session.adapter, "decoder_generation", None),
+                )
+                session.pending_reconfiguration = None
             _measure(session, "count", "sent_keyframes")
             if session.diagnostic_keyframe_pts is not None:
                 _measure(

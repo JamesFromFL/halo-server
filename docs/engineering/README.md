@@ -22,3 +22,6 @@ packet/media recorder and offline audio replay added for the next controlled tes
 records the November 7 full-session analysis, decoder-preserving native experiment,
 audio-retention model, receive-boundary measurement plan, and implementation gates.
 It is research evidence, not a deployed fix or Apple playback acceptance.
+
+[Fluid stream repair progress](fluid-stream-repairs-2026-11-07.md) records the
+subsequent implementation, local qualification and remaining physical test gates.

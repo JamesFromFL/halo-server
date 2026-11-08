@@ -8,11 +8,13 @@ from types import SimpleNamespace
 import av
 import pytest
 from aiortc.rtp import RtcpPacket
+from test_diagnostic_output import Trace
 from test_homekit_live import native_crypto, observe_video_clock, prepared, reconstruct
 
 from halo_server.media import homekit_live
+from halo_server.media.diagnostic_capture import _validated_fields
 from halo_server.media.h264 import VideoConfiguration, annexb, split_annexb
-from halo_server.media.transcode import AccessUnitAdapter
+from halo_server.media.transcode import AccessUnitAdapter, VideoTransformError
 
 CONFIG = VideoConfiguration(320, 240, 15, "baseline", "3.1", 1000)
 
@@ -101,11 +103,9 @@ async def test_rtcp_only_change_preserves_adapter_and_all_eleven_decoded_picture
         {"profile": "high"},
         {"level": "4.0"},
         {"max_bit_rate": 800},
-        {"payload_type": 100},
-        {"mtu": 512},
     ],
 )
-async def test_media_and_mtu_changes_still_reset_adapter_even_with_rtcp_change(change):
+async def test_copy_media_changes_keep_explicit_source_idr_recovery(change):
     source = source_pictures()
     adapter = AccessUnitAdapter(CONFIG)
     try:
@@ -118,6 +118,70 @@ async def test_media_and_mtu_changes_still_reset_adapter_even_with_rtcp_change(c
         resumed = await adapter.feed(*source[8], capture_epoch=1, received_at=108.0)
         assert len(resumed) == 1 and resumed[0].is_keyframe
         assert resumed[0].configuration_generation == 2
+    finally:
+        await adapter.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("width", [320, 640])
+async def test_mtu_change_preserves_input_decoder_and_next_source_p_frame(width):
+    source = source_pictures(width=width)
+    adapter = AccessUnitAdapter(CONFIG)
+    try:
+        first = (await adapter.feed(*source[0], capture_epoch=1, received_at=100))[0]
+        before = adapter_state(adapter)
+        await adapter.reconfigure(replace(CONFIG, mtu=512))
+        assert adapter_state(adapter) == before
+        second = (await adapter.feed(*source[1], capture_epoch=1, received_at=101))[0]
+        assert second.timestamp == first.timestamp + 90000
+        assert second.configuration_generation == first.configuration_generation == 1
+        with pytest.raises(VideoTransformError, match="payload type"):
+            await adapter.reconfigure(replace(CONFIG, payload_type=100))
+        assert adapter.configuration == replace(CONFIG, mtu=512)
+    finally:
+        await adapter.close()
+
+
+@pytest.mark.asyncio
+async def test_repeated_adapted_quality_changes_keep_every_picture_receipt_and_timestamp_wrap():
+    adapter = AccessUnitAdapter(CONFIG)
+    decoder = av.CodecContext.create("h264", "r")
+    decoder.thread_count = 1
+    changes = {
+        2: replace(CONFIG, width=160, height=128, max_bit_rate=132),
+        3: CONFIG,
+        4: replace(CONFIG, fps=10),
+        5: replace(CONFIG, max_bit_rate=299),
+        6: replace(CONFIG, profile="high", level="4.0"),
+        7: CONFIG,
+    }
+    decoded, generation = [], 1
+    base = (1 << 32) - 180000
+    try:
+        for index, (payload, pts) in enumerate(source_pictures(width=640)):
+            if index in changes:
+                worker, pid = adapter._worker, adapter._worker.pid
+                await adapter.reconfigure(changes[index])
+                generation += 1
+                assert adapter._worker is worker and worker.pid == pid
+                assert adapter.mode == "adapt" and not adapter._waiting_idr
+            output = (
+                await adapter.feed(
+                    payload, (base + pts) & 0xFFFFFFFF, capture_epoch=1, received_at=100 + index
+                )
+            )[0]
+            assert output.configuration_generation == generation
+            assert output.timestamp == base + pts and output.received_at == 100 + index
+            if index in changes:
+                assert output.is_keyframe
+                fresh = av.CodecContext.create("h264", "r")
+                fresh.thread_count = 1
+                assert len(fresh.decode(av.Packet(output.payload))) == 1
+            packet = av.Packet(output.payload)
+            packet.pts, packet.time_base = output.timestamp, Fraction(1, 90000)
+            decoded.extend(frame.pts for frame in decoder.decode(packet))
+        assert decoded == [base + index * 90000 for index in range(11)]
+        assert not adapter._source_receipts and not adapter._pending_forces
     finally:
         await adapter.close()
 
@@ -210,7 +274,7 @@ async def test_rtcp_only_live_reconfiguration_keeps_all_pictures_and_srtp_timeli
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("change", [{"max_bit_rate": 800}, {"mtu": 512}])
-async def test_media_and_mtu_live_changes_still_clear_old_repairs_and_require_idr(change):
+async def test_media_and_mtu_live_changes_clear_repairs_but_only_codec_changes_require_idr(change):
     manager, controller, identity, _, receiver = await prepared()
     session = manager._sessions[identity]
     session.state, session.config, session.handle = "active", CONFIG, controller.handle
@@ -223,13 +287,142 @@ async def test_media_and_mtu_live_changes_still_clear_old_repairs_and_require_id
         await manager.reconfigure(
             controller.boot, controller.scope, identity, replace(CONFIG, **change)
         )
-        assert session.awaiting_idr and session.recovery_revision == 1
-        assert session.adapter.configuration_generation == 2
+        codec_change = "mtu" not in change
+        assert session.awaiting_idr is codec_change
+        assert session.recovery_revision == int(codec_change)
+        assert session.adapter.configuration_generation == 1 + int(codec_change)
         assert not session.retransmit and session.retransmit_bytes == 0
         assert session.repair_queue.snapshot()["pending_packets"] == 0
     finally:
         await manager.close()
         receiver.close()
+
+
+@pytest.mark.asyncio
+async def test_live_quality_changes_keep_srtp_sequence_and_emit_exact_transition_evidence():
+    manager, controller, identity, video, receiver = await prepared()
+    session = manager._sessions[identity]
+    session.packetizer.sequence = 65530
+    trace = controller.handle.diagnostic_trace = Trace()
+    crypto = native_crypto(video.ssrc)
+    decoder = av.CodecContext.create("h264", "r")
+    decoder.thread_count = 1
+    sequences, timestamps, decoded = [], [], []
+    try:
+        await manager.start(controller.boot, controller.scope, identity, CONFIG)
+        transport = session.socket, session.secure, session.timeline
+        for index, (payload, pts) in enumerate(source_pictures(width=640)):
+            if index in (2, 3, 4, 5):
+                selected = (
+                    replace(CONFIG, width=160, height=128, max_bit_rate=132)
+                    if index % 2 == 0
+                    else CONFIG
+                )
+                pid = session.adapter._worker.pid
+                if index == 3:
+                    await manager.reconfigure(
+                        controller.boot, controller.scope, identity, replace(CONFIG, fps=12)
+                    )
+                await manager.reconfigure(controller.boot, controller.scope, identity, selected)
+                assert session.adapter._worker.pid == pid
+                assert (session.socket, session.secure, session.timeline) == transport
+            controller.handle.buffer.append_video(payload, pts)
+            clear = []
+            async with asyncio.timeout(3):
+                while True:
+                    protected = await asyncio.get_running_loop().sock_recv(receiver, 2048)
+                    if 192 <= protected[1] <= 223:
+                        crypto.unprotect_rtcp(protected)
+                        continue
+                    packet = crypto.unprotect(protected)
+                    sequences.append(int.from_bytes(packet[2:4], "big"))
+                    clear.append(packet)
+                    if packet[1] & 0x80:
+                        timestamps.append(int.from_bytes(packet[4:8], "big"))
+                        break
+            picture = av.Packet(annexb(reconstruct(clear)))
+            picture.pts, picture.time_base = pts, Fraction(1, 90000)
+            decoded.extend(frame.pts for frame in decoder.decode(picture))
+        assert decoded == [index * 90000 for index in range(11)]
+        assert timestamps == [(timestamps[0] + i * 90000) & 0xFFFFFFFF for i in range(11)]
+        assert sequences == [(65530 + i) & 0xFFFF for i in range(len(sequences))]
+        assert controller.opens == 1
+        assert session.adapter.decoder_generation == 1
+        assert session.adapter.configuration_generation == 6
+        assert not session.awaiting_idr
+        for stage in ("reconfigure_request", "reconfigure_applied", "reconfigure_first_idr"):
+            events = [fields for name, _, fields in trace.events if name == stage]
+            expected = [1, 3, 4, 5] if stage == "reconfigure_first_idr" else [1, 2, 3, 4, 5]
+            assert [fields["request_revision"] for fields in events] == expected
+            assert all(_validated_fields(stage, "video", fields) is not None for fields in events)
+            if stage == "reconfigure_applied":
+                assert all(
+                    fields["decoder_preserved"] and fields["changed_fields"] for fields in events
+                )
+        encoded = [f for name, _, f in trace.events if name == "encoded_output"]
+        assert [f["config_epoch"] for f in encoded] == [1, 1, 2, 4, 5, 6, 6, 6, 6, 6, 6]
+        superseded = [f for name, _, f in trace.events if name == "reconfigure_superseded"]
+        assert [f["request_revision"] for f in superseded] == [2]
+    finally:
+        await manager.close()
+        receiver.close()
+
+
+@pytest.mark.asyncio
+async def test_mtu_commit_waits_for_inflight_repair_and_preserves_existing_recovery():
+    manager, controller, identity, _, receiver = await prepared()
+    session = manager._sessions[identity]
+    session.state, session.config, session.handle = "active", CONFIG, controller.handle
+    session.adapter = AccessUnitAdapter(CONFIG)
+    session.awaiting_idr, session.recovery_revision = True, 4
+    await session.send_lock.acquire()
+    task = asyncio.create_task(
+        manager.reconfigure(controller.boot, controller.scope, identity, replace(CONFIG, mtu=512))
+    )
+    try:
+        async with asyncio.timeout(1):
+            while session.adapter.configuration.mtu != 512:
+                await asyncio.sleep(0)
+        assert not task.done() and session.config.mtu == CONFIG.mtu
+        session.send_lock.release()
+        await task
+        assert session.config.mtu == 512
+        assert session.awaiting_idr and session.recovery_revision == 4
+    finally:
+        if session.send_lock.locked():
+            session.send_lock.release()
+        await asyncio.gather(task, return_exceptions=True)
+        await manager.close()
+        receiver.close()
+
+
+@pytest.mark.asyncio
+async def test_stop_during_encoder_reconfiguration_never_commits_retired_selection():
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    class Worker:
+        async def reconfigure(self, _configuration):
+            entered.set()
+            await release.wait()
+
+        async def close(self):
+            pass
+
+    adapter = AccessUnitAdapter(CONFIG)
+    adapter._worker, adapter._mode = Worker(), "adapt"
+    task = asyncio.create_task(adapter.reconfigure(replace(CONFIG, max_bit_rate=132)))
+    try:
+        await asyncio.wait_for(entered.wait(), 1)
+        await adapter.close()
+        release.set()
+        with pytest.raises(VideoTransformError, match="retired"):
+            await task
+        assert adapter.configuration == CONFIG and adapter.configuration_generation == 1
+        assert adapter._worker is None
+    finally:
+        release.set()
+        await asyncio.gather(task, return_exceptions=True)
+        await adapter.close()
 
 
 @pytest.mark.asyncio

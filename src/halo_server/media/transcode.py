@@ -84,8 +84,13 @@ class VideoWorker:
         self._terminal_probe = False
         self._fed = False
         self._force_serial = 0
+        self._configuration_revision = 0
         self._last_output_force_requests: tuple[int, ...] = ()
         self._last_pending_frames = 0
+
+    @property
+    def configuration_revision(self):
+        return self._configuration_revision
 
     @property
     def last_output_force_requests(self):
@@ -144,12 +149,45 @@ class VideoWorker:
                 if self._spawn is spawn and spawn.done():
                     self._spawn = None
 
-    async def _read(self):
+    async def _read(self, maximum=_MAX_RESPONSE):
         header = await self._process.stdout.readexactly(4)
         count = struct.unpack("!I", header)[0]
-        if not 0 < count <= _MAX_RESPONSE:
+        if not 0 < count <= maximum:
             raise VideoTransformError("Video worker returned oversized data")
         return await self._process.stdout.readexactly(count)
+
+    async def reconfigure(self, configuration: VideoConfiguration):
+        """Replace only the output encoder; retain the child's source decoder."""
+        if self._terminal_probe or self._operation.locked():
+            raise VideoTransformError("Video reconfiguration is terminal or busy")
+        if not isinstance(configuration, VideoConfiguration):
+            raise VideoTransformError("Invalid video worker configuration")
+        # Revalidate before allocating or writing to the child, including an
+        # object whose frozen fields were bypassed by an internal caller.
+        configuration = VideoConfiguration(**asdict(configuration))
+        payload = json.dumps(asdict(configuration), separators=(",", ":")).encode()
+        revision = self._configuration_revision + 1
+        if len(payload) > 8192 or revision >= 2**53:
+            raise VideoTransformError("Invalid video worker configuration")
+        async with self._operation:
+            await self.start()
+            if self._closed:
+                raise VideoTransformError("Video worker is retired")
+            try:
+                async with asyncio.timeout(FRAME_SECONDS):
+                    self._process.stdin.write(_HEADER.pack(b"C", revision, 0, len(payload)))
+                    self._process.stdin.write(payload)
+                    await self._process.stdin.drain()
+                    body = await self._read(maximum=9)
+                if self._closed or body != b"C" + struct.pack("!Q", revision):
+                    raise VideoTransformError("Video configuration acknowledgement is invalid")
+                self.configuration = configuration
+                self._configuration_revision = revision
+            except BaseException:
+                # A failed command may have changed native state. Never keep
+                # streaming under an unacknowledged parent configuration.
+                await self.close()
+                raise
 
     async def feed(self, payload: bytes, timestamp: int, *, force_idr=False, force_request=None):
         if self._terminal_probe or self._operation.locked():
@@ -308,6 +346,7 @@ class AccessUnitAdapter:
         self._bucket_timestamp = None
         self._tokens = configuration.max_bit_rate * 1000
         self._configuration_generation = 1
+        self._decoder_generation = 0
         self._lifecycle_generation = 0
         self._source_receipts: OrderedDict[tuple[int, int], float | None] = OrderedDict()
         self._pending_forces: dict[int, tuple[int, int]] = {}
@@ -328,6 +367,10 @@ class AccessUnitAdapter:
     @property
     def configuration_generation(self):
         return self._configuration_generation
+
+    @property
+    def decoder_generation(self):
+        return self._decoder_generation
 
     def _current(self, generation=None):
         if self._closed or generation is not None and generation != self._lifecycle_generation:
@@ -376,15 +419,42 @@ class AccessUnitAdapter:
         async with self._operation:
             if self._closed:
                 raise VideoTransformError("Video output is retired")
-            # Report cadence does not change picture dependencies or provenance.
-            # Keep MTU changes on the reset path: cached packets may exceed it.
+            if not isinstance(configuration, VideoConfiguration):
+                raise VideoTransformError("Invalid video configuration")
+            if configuration.payload_type != self.configuration.payload_type:
+                raise VideoTransformError("Video payload type cannot be reconfigured")
+            # Transport-only changes do not change picture dependencies. The
+            # live manager fences its packet repair cache separately for MTU.
             if (
-                replace(self.configuration, rtcp_interval=configuration.rtcp_interval)
+                replace(
+                    self.configuration,
+                    rtcp_interval=configuration.rtcp_interval,
+                    mtu=configuration.mtu,
+                )
                 == configuration
             ):
                 self.configuration = configuration
                 return
+            if self._mode == "adapt" and self._worker is not None:
+                worker = self._worker
+                generation = self._lifecycle_generation
+                await worker.reconfigure(configuration)
+                self._current(generation)
+                if self._worker is not worker:
+                    raise VideoTransformError("Video worker ownership changed")
+                self.configuration = configuration
+                self._configuration_generation += 1
+                # Keep the source decoder's held origins, extended timestamps,
+                # pending force acknowledgements and original receipts. Only
+                # the output reference chain changes; require its own new IDR.
+                self._output = None
+                self._last_output_idr = None
+                self._force = True
+                self._force_revision += 1
+                return
             if self.configuration != configuration:
+                # Copy mode has no warm decoder. Preserve bounded source-IDR
+                # recovery when a changed selection may require adaptation.
                 await self._reset(clear_parameters=False)
                 self._current()
                 self.configuration = configuration
@@ -549,6 +619,7 @@ class AccessUnitAdapter:
             self._current()
             if self._worker is None:
                 self._worker = VideoWorker(self.configuration)
+                self._decoder_generation += 1
             if not self._source.progressive:
                 raise VideoTransformError("Interlaced source video is not qualified")
             # Feedback may request an IDR while the native feed is in flight.

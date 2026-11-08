@@ -9,6 +9,7 @@ from __future__ import annotations
 import contextlib
 import importlib.util
 import json
+import math
 import os
 import resource
 import struct
@@ -40,6 +41,21 @@ HEADER = struct.Struct("!cQQI")
 MAX_PENDING_FRAMES = 8
 MAX_INPUT_ORIGINS = 64
 MAX_FORCE_REQUESTS = 8
+MAX_CONFIG = 8192
+CONFIG_FIELDS = frozenset(
+    (
+        "width",
+        "height",
+        "fps",
+        "profile",
+        "level",
+        "max_bit_rate",
+        "payload_type",
+        "rtcp_interval",
+        "mtu",
+    )
+)
+ENCODER_FIELDS = ("width", "height", "fps", "profile", "level", "max_bit_rate")
 RATE_SAMPLES = 128
 RATE_INTERVALS = 8
 RATE_SPAN = 45000
@@ -48,6 +64,65 @@ RATE_COOLDOWN = 5 * 90000
 RATE_MAINTENANCE_SPAN = 4 * 90000
 RATE_VOTE_SPAN = 2 * 90000
 RATE_SMALL_VOTE_SPAN = 4 * 90000
+
+
+def validate_configuration(config):
+    """Validate the finite parent contract without importing the service graph."""
+    if type(config) is not dict or config.keys() != CONFIG_FIELDS:
+        raise ValueError
+    for name, lower, upper in (
+        ("width", 2, 1920),
+        ("height", 2, 1080),
+        ("fps", 1, 30),
+        ("max_bit_rate", 1, 20000),
+        ("payload_type", 96, 127),
+        ("mtu", 256, 1378),
+    ):
+        if type(config[name]) is not int or not lower <= config[name] <= upper:
+            raise ValueError
+    if (
+        config["width"] % 2
+        or config["height"] % 2
+        or config["width"] * config["height"] > 1920 * 1080
+        or type(config["profile"]) is not str
+        or config["profile"] not in {"baseline", "main", "high"}
+        or type(config["level"]) is not str
+        or config["level"] not in {"3.1", "3.2", "4.0"}
+        or type(config["rtcp_interval"]) not in {int, float}
+        or not math.isfinite(config["rtcp_interval"])
+        or not 0.1 <= config["rtcp_interval"] <= 10
+    ):
+        raise ValueError
+    levels = {"3.1": (3600, 108000), "3.2": (5120, 216000), "4.0": (8192, 245760)}
+    maximum_frame, maximum_rate = levels[config["level"]]
+    macroblocks = ((config["width"] + 15) // 16) * ((config["height"] + 15) // 16)
+    if (
+        macroblocks > maximum_frame
+        or macroblocks * config["fps"] > maximum_rate
+        or config["level"] == "3.1"
+        and config["max_bit_rate"] > (17500 if config["profile"] == "high" else 14000)
+    ):
+        raise ValueError
+    return dict(config)
+
+
+def decode_configuration(payload):
+    def unique_fields(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError
+            result[key] = value
+        return result
+
+    def invalid_constant(_value):
+        raise ValueError
+
+    if not 0 < len(payload) <= MAX_CONFIG:
+        raise ValueError
+    return validate_configuration(
+        json.loads(payload, object_pairs_hook=unique_fields, parse_constant=invalid_constant)
+    )
 
 
 def read_exact(count):
@@ -225,7 +300,7 @@ class Encoder:
     """Finite decoder/encoder provenance, including delayed native output."""
 
     def __init__(self, config):
-        self.config = config
+        self.config = validate_configuration(config)
         self.decoder = av.CodecContext.create("h264", "r")
         self.decoder.thread_count = 1
         self.encoder = None
@@ -239,6 +314,46 @@ class Encoder:
         self.forces = deque()
         self.last_force = 0
         self.terminal = False
+        self.configuration_revision = 0
+        self.last_output_source = None
+
+    def reconfigure(self, config, revision):
+        """Atomically change output settings without flushing source pictures."""
+        config = validate_configuration(config)
+        if (
+            self.terminal
+            or self.pending
+            or type(revision) is not int
+            or not 0 < revision < 2**53
+            or revision != self.configuration_revision + 1
+        ):
+            raise ValueError
+        if not any(config[name] != self.config[name] for name in ENCODER_FIELDS):
+            self.config, self.configuration_revision = config, revision
+            return
+        cadence, rate, nominal_fps = self.cadence, self.rate, self.nominal_fps
+        if config["fps"] != self.config["fps"]:
+            cadence = _cadence.SourceCadence(config["fps"])
+            if self.last_output_source is not None:
+                cadence.accept(self.last_output_source)
+            # The old nominal may describe a capped output, not the source.
+            # Learn from the new ceiling rather than overfunding faster frames
+            # with a stale low nominal rate after a ceiling increase.
+            rate = RateCadence(config["fps"])
+            nominal_fps = config["fps"]
+        replacement = (
+            open_encoder(config, source=self.encoder, nominal_fps=nominal_fps)
+            if self.encoder is not None
+            else None
+        )
+        previous = self.encoder
+        self.config, self.encoder = config, replacement
+        self.cadence, self.rate, self.nominal_fps = cadence, rate, nominal_fps
+        self.last_idr_source = None
+        self.configuration_revision = revision
+        # Preserve decoder inputs, force FIFO/serial, and original source time.
+        # Only the output reference chain starts again, on the next real frame.
+        del previous
 
     def feed(self, payload, timestamp, force):
         if self.terminal or timestamp in self.inputs or timestamp in self.pending:
@@ -332,6 +447,8 @@ class Encoder:
         )
         for stamp in groups:
             del self.pending[stamp]
+        if result:
+            self.last_output_source = result[-1][0]
         return result
 
     def probe(self):
@@ -364,9 +481,9 @@ def main():
     resource.setrlimit(resource.RLIMIT_AS, (768 * 1024 * 1024,) * 2)
     resource.setrlimit(resource.RLIMIT_NOFILE, (64, 64))
     size = struct.unpack("!I", read_exact(4))[0]
-    if not 0 < size <= 8192:
+    if not 0 < size <= MAX_CONFIG:
         raise ValueError
-    config = json.loads(read_exact(size))
+    config = decode_configuration(read_exact(size))
     worker = Encoder(config)
     write(b"S")
     while True:
@@ -375,12 +492,18 @@ def main():
         except EOFError:
             return
         if (
-            kind not in {b"F", b"P"}
+            kind not in {b"F", b"P", b"C"}
             or not 0 <= timestamp < 2**53
             or not 0 <= force < 2**53
             or not 0 <= count <= MAX_AU
         ):
             raise ValueError
+        if kind == b"C":
+            if force or not 0 < count <= MAX_CONFIG:
+                raise ValueError
+            worker.reconfigure(decode_configuration(read_exact(count)), timestamp)
+            write(b"C" + struct.pack("!Q", timestamp))
+            continue
         if kind == b"P":
             if count or timestamp or force:
                 raise ValueError

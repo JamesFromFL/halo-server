@@ -59,6 +59,10 @@ STAGES = frozenset(
         "stream_end",
         "packet_schedule",
         "packet_sent",
+        "reconfigure_request",
+        "reconfigure_applied",
+        "reconfigure_first_idr",
+        "reconfigure_superseded",
     }
 )
 TRACKS = frozenset({"audio", "video", "session"})
@@ -135,6 +139,15 @@ NUMERIC_FIELDS = frozenset(
         "presentation_us",
         "source_pts",
         "wall_us",
+        "request_revision",
+        "decoder_epoch",
+        "decoder_preserved",
+        "changed_fields",
+        "mtu",
+        "rtcp_interval_us",
+        "profile_code",
+        "level_code",
+        "nal_mask",
     }
 )
 REASONS = frozenset(

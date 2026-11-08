@@ -276,9 +276,7 @@ async def test_failed_retirement_keeps_exact_owner_for_retry():
 
 
 @pytest.mark.asyncio
-async def test_epoch_and_reconfigure_clear_only_retired_origins_and_advance_contract(
-    monkeypatch, bitstreams
-):
+async def test_reconfigure_preserves_origins_but_source_epoch_retires_them(monkeypatch, bitstreams):
     source, outputs = bitstreams
     workers = []
 
@@ -294,21 +292,23 @@ async def test_epoch_and_reconfigure_clear_only_retired_origins_and_advance_cont
         async def close(self):
             self.closed = True
 
+        async def reconfigure(self, _configuration):
+            pass
+
     monkeypatch.setattr(transcode, "VideoWorker", Worker)
     adapter = configured()
     try:
         assert await adapter.feed(*source[0], capture_epoch=1, received_at=100) == ()
         await adapter.reconfigure(adapter.configuration)
         assert adapter.configuration_generation == 1 and len(adapter._source_receipts) == 1
+        receipts, forces = dict(adapter._source_receipts), dict(adapter._pending_forces)
         await adapter.reconfigure(replace(adapter.configuration, max_bit_rate=900))
-        assert workers[0].closed and not adapter._source_receipts
+        assert not workers[0].closed and dict(adapter._source_receipts) == receipts
+        assert adapter._pending_forces == forces
         assert adapter.configuration_generation == 2
-        result = (await adapter.feed(*source[0], capture_epoch=1, received_at=200))[0]
-        assert result.received_at == 200 and result.capture_epoch == 1
-        assert result.configuration_generation == 2
         result = (await adapter.feed(*source[0], capture_epoch=2, received_at=300))[0]
         assert result.received_at == 300 and result.capture_epoch == 2
-        assert result.configuration_generation == 2 and workers[1].closed
+        assert result.configuration_generation == 2 and workers[0].closed
     finally:
         await adapter.close()
 
