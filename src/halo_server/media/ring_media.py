@@ -31,6 +31,7 @@ from aiortc.mediastreams import AudioStreamTrack, MediaStreamError
 from av import AudioFrame
 
 from halo_server.media.buffer import h264_nal_types
+from halo_server.media.diagnostic_ingress import ScopedDiagnosticTrace, trace_frame
 from halo_server.media.keyframes import SourceKeyframes
 from halo_server.media.ring_speaker import (
     RingSpeakerControlError,
@@ -60,12 +61,19 @@ def _diagnostic_notify(callback, *args):
     return None
 
 
-def _encoded_source_callback(receiver, kind, callback, on_source_clock, on_ingress):
-    if on_source_clock is None and on_ingress is None:
+def _encoded_source_callback(
+    receiver, kind, callback, on_source_clock, on_ingress, diagnostic_trace=None
+):
+    if on_source_clock is None and on_ingress is None and diagnostic_trace is None:
         return callback
     observe = (
-        install_source_clock_observer(receiver, kind, on_source_clock)
-        if on_source_clock is not None
+        install_source_clock_observer(
+            receiver,
+            kind,
+            on_source_clock or (lambda _observation: None),
+            **({"diagnostic_trace": diagnostic_trace} if diagnostic_trace is not None else {}),
+        )
+        if on_source_clock is not None or diagnostic_trace is not None
         else None
     )
 
@@ -262,7 +270,9 @@ class SourceClockObservation:
     capture_epoch: int = 0
 
 
-def install_source_clock_observer(receiver, kind, callback, *, clock=time.monotonic):
+def install_source_clock_observer(
+    receiver, kind, callback, *, clock=time.monotonic, diagnostic_trace=None
+):
     """Wrap one pinned receiver, preserving its original RTCP processing.
 
     Encoded frames use aiortc's TimestampMapper domain, which has a separate
@@ -313,6 +323,17 @@ def install_source_clock_observer(receiver, kind, callback, *, clock=time.monoto
             and 0 <= info.rtp_timestamp < 2**32
         ):
             latest = (packet.ssrc, info.rtp_timestamp, info.ntp_timestamp, clock())
+            if diagnostic_trace is not None:
+                with contextlib.suppress(BaseException):
+                    diagnostic_trace.event(
+                        "source_sender_report",
+                        kind,
+                        rtp_timestamp=info.rtp_timestamp,
+                        ntp_seconds=info.ntp_timestamp >> 32,
+                        ntp_fraction=info.ntp_timestamp & 0xFFFFFFFF,
+                        received_ns=round(latest[3] * 1_000_000_000),
+                        **({"origin": mapper._origin} if type(mapper._origin) is int else {}),
+                    )
 
     receiver._handle_rtcp_packet = handle
 
@@ -415,6 +436,7 @@ class _EncodedFrameQueue(queue.Queue):
         on_incompatible: Callable[[str, str], None] | None,
         decoder_queue=None,
         on_codec=None,
+        diagnostic_trace=None,
     ) -> None:
         super().__init__()
         self._kind = kind
@@ -423,6 +445,7 @@ class _EncodedFrameQueue(queue.Queue):
         self._on_incompatible = on_incompatible
         self._decoder_queue = decoder_queue
         self._on_codec = on_codec
+        self._diagnostic_trace = diagnostic_trace
         self._reported_mime_types: set[str] = set()
 
     def put(self, item, block: bool = True, timeout: float | None = None) -> None:
@@ -439,6 +462,7 @@ class _EncodedFrameQueue(queue.Queue):
         _diagnostic_notify(self._on_codec, self._kind, codec)
         mime_type = str(getattr(codec, "mimeType", "")).lower()
         if mime_type == _ENCODED_MIME_TYPES[self._kind]:
+            trace_frame(self._diagnostic_trace, self._kind, frame)
             self._callback(bytes(frame.data), int(frame.timestamp))
             if not self._forward_to_decoder:
                 return
@@ -472,6 +496,7 @@ def install_encoded_frame_adapter(
     on_incompatible: Callable[[str, str], None] | None = None,
     decoder_queue=None,
     on_codec=None,
+    diagnostic_trace=None,
 ) -> queue.Queue:
     """Install Halo's validated aiortc 1.15 encoded-frame queue on one receiver."""
     import aiortc
@@ -506,6 +531,7 @@ def install_encoded_frame_adapter(
         on_incompatible=on_incompatible,
         decoder_queue=decoder_queue,
         on_codec=on_codec,
+        diagnostic_trace=diagnostic_trace,
     )
     setattr(receiver, _DECODER_QUEUE_ATTRIBUTE, adapter)
     return adapter
@@ -1438,6 +1464,7 @@ class RingStreamReceiver:
         first_video_timeout: float = FIRST_VIDEO_TIMEOUT,
         video_stall_timeout: float = VIDEO_STALL_TIMEOUT,
         on_terminating: Callable[[BaseException | None], None] | None = None,
+        diagnostic_trace=None,
     ) -> None:
         self._device = device
         self._on_video = on_video
@@ -1459,6 +1486,7 @@ class RingStreamReceiver:
         self._first_video_timeout = first_video_timeout
         self._video_stall_timeout = video_stall_timeout
         self._on_terminating = on_terminating
+        self._diagnostic_trace = diagnostic_trace
 
     async def receive(self, stop: threading.Event) -> None:
         import numpy as np
@@ -1475,6 +1503,11 @@ class RingStreamReceiver:
         camera_id = _diagnostic_value(getattr(self._device, "id", "unknown"))
         camera_kind = _diagnostic_value(getattr(self._device, "kind", "unknown"))
         loop = asyncio.get_running_loop()
+        diagnostic_trace = (
+            ScopedDiagnosticTrace(self._diagnostic_trace, lambda: not stop.is_set())
+            if self._diagnostic_trace is not None
+            else None
+        )
         pc = None
         decoded_lane = pipeline = keyframes = stream_info = codecs = None
         audio_transceiver = None
@@ -1689,7 +1722,7 @@ class RingStreamReceiver:
                     from halo_server.media.decoded_audio import DecodedAudioLane
 
                     decoded_lane = DecodedAudioLane()
-                if self._on_receiver_stats is not None:
+                if self._on_receiver_stats is not None or diagnostic_trace is not None:
                     from halo_server.media.receiver_metrics import (
                         ReceiverMetricsError,
                         ReceiverPipeline,
@@ -1697,7 +1730,13 @@ class RingStreamReceiver:
                     )
 
                     pipeline = ReceiverPipeline(
-                        audio_transceiver.receiver, video_transceiver.receiver
+                        audio_transceiver.receiver,
+                        video_transceiver.receiver,
+                        **(
+                            {"diagnostic_trace": diagnostic_trace}
+                            if diagnostic_trace is not None
+                            else {}
+                        ),
                     )
                     try:
                         install_rtp_observer(audio_transceiver.receiver, "audio", pipeline)
@@ -1719,6 +1758,7 @@ class RingStreamReceiver:
                         callback,
                         self._on_source_clock,
                         ingress if pipeline is not None else self._on_encoded_ingress,
+                        diagnostic_trace=diagnostic_trace,
                     )
 
                 if self._on_encoded_video is not None:
@@ -1728,6 +1768,11 @@ class RingStreamReceiver:
                         source_callback(video_transceiver.receiver, "video", encoded_video),
                         forward_to_decoder=self._decode_video,
                         on_incompatible=on_encoded_incompatible,
+                        **(
+                            {"diagnostic_trace": diagnostic_trace}
+                            if diagnostic_trace is not None
+                            else {}
+                        ),
                         **({"on_codec": codecs.frame} if codecs is not None else {}),
                     )
                 if self._on_encoded_audio is not None:
@@ -1739,6 +1784,11 @@ class RingStreamReceiver:
                         ),
                         forward_to_decoder=self._decode_audio,
                         on_incompatible=on_encoded_incompatible,
+                        **(
+                            {"diagnostic_trace": diagnostic_trace}
+                            if diagnostic_trace is not None
+                            else {}
+                        ),
                         **({"on_codec": codecs.frame} if codecs is not None else {}),
                         **(
                             {"decoder_queue": decoded_lane.input}
@@ -1941,6 +1991,8 @@ class RingStreamReceiver:
             raise RingMediaProgressError("video_startup_timeout") from exc
         finally:
             terminal.set()
+            if diagnostic_trace is not None:
+                diagnostic_trace.fence()
             stream_options.fence()
             if stream_info is not None:
                 stream_info.fence()

@@ -30,6 +30,10 @@ class OwnerAdministration:
             "homekit_pairing_reset",
             "doctor",
             "support_report",
+            "stream_capture_start",
+            "stream_capture_status",
+            "stream_capture_mark",
+            "stream_capture_stop",
         }
     )
 
@@ -40,8 +44,13 @@ class OwnerAdministration:
         self.probe_lock = asyncio.Lock()
         self.control_backend = ServiceHomeKitBackend(service, owner_controls=True)
         self.controls = OrderedDict()
+        from halo_server.owner_capture import OwnerCapture
+
+        self.stream_capture = OwnerCapture(self)
 
     async def handle(self, method, params):
+        if method.startswith("stream_capture_"):
+            return await self.stream_capture.handle(method, params)
         if method.startswith("configuration_"):
             return await self._configuration(method, params)
         if method == "camera_control_list":
@@ -84,6 +93,10 @@ class OwnerAdministration:
     async def close(self):
         tasks = tuple(task for _, task in self.controls.values() if not task.done())
         failures = []
+        try:
+            await self.stream_capture.close()
+        except Exception as error:
+            failures.append(error)
         if tasks:
             _, pending = await asyncio.wait(tasks, timeout=5)
             if pending:

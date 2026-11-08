@@ -20,6 +20,7 @@ from halo_server.media.audio import (
     NormalizedOpusEncoder,
 )
 from halo_server.media.buffer import EncodedMediaBuffer, MediaBufferError
+from halo_server.media.diagnostic_ingress import ScopedDiagnosticTrace
 from halo_server.media.leases import (
     LeaseAction,
     LeaseActionType,
@@ -98,6 +99,7 @@ class CameraMediaSession:
         on_raw_audio: Callable[[bytes, int, int], None] | None = None,
         audio_encoder_factory=NormalizedOpusEncoder,
         legacy_audio_enabled: bool = True,
+        diagnostic_trace=None,
         clock: Callable[[], float] = time.monotonic,
         retry_initial: float = RETRY_INITIAL_SECONDS,
         retry_max: float = RETRY_MAX_SECONDS,
@@ -127,6 +129,7 @@ class CameraMediaSession:
         # The service mode is fixed for this capture's lifetime. Native live
         # and recording consumers read original Opus directly.
         self._legacy_audio_enabled = legacy_audio_enabled
+        self._diagnostic_trace = diagnostic_trace
         self._lock = threading.RLock()
         self._condition = threading.Condition(self._lock)
         self._stop: threading.Event | None = None
@@ -206,6 +209,27 @@ class CameraMediaSession:
                 "receiver_stats_collection",
             ),
         )
+
+    @property
+    def diagnostic_trace(self):
+        """The optional capture owner, shared with native HomeKit output tracing."""
+        return self._diagnostic_trace
+
+    def set_diagnostic_trace(self, trace):
+        """Bind an owner only between fully retired source lifetimes."""
+        with self._lock:
+            if (
+                self._state is not MediaSessionState.IDLE
+                or self._leases.snapshot().leases
+                or self._future is not None
+                or self._stop is not None
+                or self._audio_owner is not None
+                or self._retiring_audio
+                or self._receiver_completed is not None
+            ):
+                return False
+            self._diagnostic_trace = trace
+            return True
 
     def _diagnostic_time(self):
         try:
@@ -795,6 +819,16 @@ class CameraMediaSession:
             "microphone_source": self._microphone_source,
         }
         raw_audio_callback = None
+        if self._diagnostic_trace is not None:
+            receiver_kwargs["diagnostic_trace"] = ScopedDiagnosticTrace(
+                self._diagnostic_trace,
+                lambda: (
+                    self._runner_generation == action.generation
+                    and self._stop is stop
+                    and not stop.is_set()
+                ),
+                source_generation=action.generation,
+            )
         if self._legacy_audio_enabled:
             receiver_kwargs["on_decoded_audio"] = lambda frame: self._decoded_audio(
                 action.generation, frame
@@ -900,7 +934,10 @@ class CameraMediaSession:
 
     def _attempt_started(self, generation: int, attempt: int) -> None:
         with self._lock:
-            if not self._accepts_media_locked(generation) or attempt == 1:
+            if not self._accepts_media_locked(generation):
+                return
+            if attempt == 1:
+                self._trace_attempt(generation, attempt)
                 return
             if self._retiring_audio:
                 raise AudioNormalizationError("Previous legacy audio cleanup pending")
@@ -918,6 +955,19 @@ class CameraMediaSession:
                 )
             self._legacy_failure = None
             self._microphone_source.clear()
+            self._trace_attempt(generation, attempt)
+
+    def _trace_attempt(self, generation, attempt):
+        if self._diagnostic_trace is not None:
+            with suppress(BaseException):
+                self._diagnostic_trace.event(
+                    "lifecycle",
+                    "session",
+                    reason="start",
+                    source_generation=generation,
+                    attempt=attempt,
+                    capture_epoch=self._buffer.capture_epoch,
+                )
 
     def _attempt_ended(self, generation: int, _attempt: int, error: Exception | None) -> None:
         with self._lock:

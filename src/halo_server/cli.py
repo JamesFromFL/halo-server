@@ -125,6 +125,19 @@ def build_parser() -> argparse.ArgumentParser:
     support = subparsers.add_parser("support", help="Export a bounded sanitized support report")
     _add_path_arguments(support)
     support.add_argument("--output", type=Path, required=True)
+    capture = subparsers.add_parser(
+        "stream-capture", help="Explicit bounded stream diagnostics with private media excerpts"
+    )
+    _add_path_arguments(capture)
+    captures = capture.add_subparsers(dest="capture_command", required=True)
+    begin = captures.add_parser("start", help="Arm diagnostics; the camera stays closed")
+    begin.add_argument("camera_id")
+    begin.add_argument("--seconds", type=int, default=240)
+    begin.add_argument("--capture-id", default=None, help="Optional UUID for idempotent retries")
+    captures.add_parser("status")
+    for name in ("mark", "stop"):
+        action = captures.add_parser(name)
+        action.add_argument("capture_id", help="Capture UUID returned by start")
     return parser
 
 
@@ -161,7 +174,14 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command in {"status", "shutdown"}:
         return asyncio.run(_run_admin_command(paths, args.command))
-    if args.command in {"homekit", "config", "camera-control", "doctor", "support"}:
+    if args.command in {
+        "homekit",
+        "config",
+        "camera-control",
+        "doctor",
+        "support",
+        "stream-capture",
+    }:
         if (
             args.command == "homekit"
             and args.homekit_command == "select"
@@ -335,6 +355,18 @@ async def _run_owner_command(paths: ServerPaths, args: argparse.Namespace) -> in
                 args.control,
                 args.state == "on",
             )
+        elif args.command == "stream-capture":
+            params = {}
+            if args.capture_command == "start":
+                params = {
+                    "camera_id": args.camera_id,
+                    "seconds": args.seconds,
+                    "capture_id": args.capture_id or str(uuid4()),
+                    "record_media": True,
+                }
+            elif args.capture_command != "status":
+                params = {"capture_id": args.capture_id}
+            result = await client.request("stream_capture_" + args.capture_command, **params)
         elif args.command == "doctor":
             try:
                 result = await client.doctor(probe=args.probe)

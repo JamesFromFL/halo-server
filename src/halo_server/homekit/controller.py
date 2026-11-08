@@ -664,6 +664,14 @@ class NativeLiveHandle:
         return self._claim.session_id
 
     @property
+    def diagnostic_trace(self):
+        # Recording has its own privacy/demand ownership and is outside the
+        # explicit live-view diagnostic lease.
+        if self._recording:
+            return None
+        return getattr(self._claim.resource, "diagnostic_trace", None)
+
+    @property
     def scope(self):
         return self._claim.scope
 

@@ -12,6 +12,11 @@ from collections import deque
 
 import aiortc
 
+from halo_server.media.diagnostic_ingress import (
+    ScopedDiagnosticTrace,
+    install_audio_jitter_trace,
+    trace_rtp,
+)
 from halo_server.media.send_clock import SendClock
 from halo_server.media.telemetry import StreamMetrics
 
@@ -33,7 +38,9 @@ def _safe(callback, *args):
 
 
 class ReceiverPipeline:
-    def __init__(self, audio_receiver, video_receiver, *, clock=time.monotonic):
+    def __init__(
+        self, audio_receiver, video_receiver, *, clock=time.monotonic, diagnostic_trace=None
+    ):
         self.metrics = StreamMetrics(
             counters=("audio_rtp", "video_rtp", "audio_frames", "video_frames"),
             timings=(
@@ -55,6 +62,11 @@ class ReceiverPipeline:
         self._previous = {}
         self._lower = None
         self._send_clock = SendClock()
+        self._diagnostic_trace = (
+            ScopedDiagnosticTrace(diagnostic_trace, lambda: not self._fenced)
+            if diagnostic_trace is not None
+            else None
+        )
 
     def _now(self):
         with contextlib.suppress(BaseException):
@@ -181,6 +193,7 @@ class ReceiverPipeline:
             self._receivers = ()
             self._previous.clear()
             lower, self._lower = self._lower, None
+            self._diagnostic_trace = None
         if lower is not None:
             lower.fence()
         self._send_clock.fence()
@@ -213,12 +226,19 @@ def install_rtp_observer(receiver, kind, pipeline):
 
     async def observed(packet, arrival_time_ms):
         entered = _safe(pipeline._entry, kind)
+        trace_rtp(pipeline._diagnostic_trace, kind, packet, receiver)
         _safe(pipeline._send_clock.observe_receiver, kind, receiver, packet, entered)
         try:
             return await original(packet, arrival_time_ms)
         finally:
             _safe(pipeline._finish, kind, entered)
 
+    if kind == "audio" and pipeline._diagnostic_trace is not None:
+        _safe(
+            lambda: install_audio_jitter_trace(
+                receiver, pipeline._diagnostic_trace, clock=pipeline._clock
+            )
+        )
     receiver._handle_rtp_packet = observed
 
 

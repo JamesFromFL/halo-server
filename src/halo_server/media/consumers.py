@@ -20,6 +20,7 @@ class BufferedMediaConsumer:
     original_audio_buffer: object | None = None
     source_clock_callback: Callable[[], tuple] | None = None
     keyframe_callback: Callable[[int], bool] | None = None
+    diagnostic_trace: object | None = None
 
     def __post_init__(self) -> None:
         self._lock = threading.Lock()

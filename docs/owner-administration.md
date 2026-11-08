@@ -8,6 +8,11 @@ The direct HomeKit path currently targets Linux. Its local synthetic/native test
 qualified separately from real Ring camera, Apple Home hub, notification and HKSV timeline
 acceptance. Those real-device checks remain unfinished.
 
+For an explicitly coordinated stream investigation, see
+[bounded stream diagnostics](engineering/bounded-stream-diagnostics.md). Its local
+`stream-capture` commands collect short private media excerpts and packet timing;
+they do not start a camera or change recording settings.
+
 ## Operating mode and restart
 
 ```sh

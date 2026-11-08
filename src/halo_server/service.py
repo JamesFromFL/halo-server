@@ -1267,6 +1267,10 @@ class HaloService:
     async def _tick_incidents(self) -> None:
         while True:
             await asyncio.sleep(TICK_INTERVAL)
+            try:
+                await self._owner_admin.stream_capture.reconcile()
+            except Exception:
+                _log.exception("Diagnostic capture cleanup failed")
             for camera_id, coordinator in list(self._incidents.items()):
                 self._handle_incident_actions(camera_id, coordinator.tick())
             for session in list(self._media_sessions.values()):
@@ -1521,8 +1525,12 @@ class HaloService:
         device = self._find_media_device(camera_id)
         if device is None:
             return None
+        trace = self._owner_admin.stream_capture.trace_for(camera_id)
         session = self._media_session_factory(
-            client, device, legacy_audio_enabled=self.configuration.compatibility_enabled
+            client,
+            device,
+            legacy_audio_enabled=self.configuration.compatibility_enabled,
+            **({"diagnostic_trace": trace} if trace is not None else {}),
         )
         self._media_sessions[camera_id] = session
         return session

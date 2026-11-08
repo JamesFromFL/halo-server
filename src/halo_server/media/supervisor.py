@@ -8,6 +8,7 @@ import threading
 from dataclasses import dataclass
 from functools import partial
 
+from halo_server.media.diagnostic_ingress import ScopedDiagnosticTrace
 from halo_server.media.ring_media import (
     EncodedFrameAdapterError,
     MediaCompatibilityError,
@@ -73,6 +74,12 @@ async def supervise_receiver(
         attempt_error = None
 
         attempt_kwargs = dict(base_kwargs)
+        if attempt_kwargs.get("diagnostic_trace") is not None:
+            attempt_kwargs["diagnostic_trace"] = ScopedDiagnosticTrace(
+                attempt_kwargs["diagnostic_trace"],
+                lambda state=state: state.active and not stop.is_set(),
+                attempt=attempt,
+            )
         if on_attempt_end is not None:
             attempt_kwargs["on_terminating"] = partial(_end_attempt, on_attempt_end, state, attempt)
         for callback_name in (

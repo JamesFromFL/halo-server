@@ -227,6 +227,22 @@ def _measure(session, method, name, value=1):
         getattr(session.metrics, method)(name, value)
 
 
+def _diagnostic(session, stage, *, payload=None, **fields):
+    """The opt-in recorder must never participate in media success/failure."""
+    trace = getattr(session, "diagnostic_trace", None)
+    if trace is not None:
+        with contextlib.suppress(BaseException):
+            fields["stream_id"] = session.diagnostic_stream_id
+            if payload is None:
+                trace.event(stage, "video", **fields)
+            else:
+                # Media excerpts have a short rolling window. Keep the frame
+                # chronology for the entire capture independently of that window.
+                fields["size"] = len(payload)
+                trace.event(stage, "video", **fields)
+                trace.media(stage, "video", payload, **fields)
+
+
 class _SourceChanged(RuntimeError):
     """An inner capture attempt retired while encoded output was being prepared."""
 
@@ -319,6 +335,8 @@ class _Session:
     terminal: dict | None = None
     active_started_at: float | None = None
     terminal_at: float | None = None
+    diagnostic_trace: object | None = None
+    diagnostic_stream_id: int = 0
 
 
 def _uuid(value):
@@ -530,6 +548,13 @@ class HomeKitLiveManager:
         if session.trace_terminal:
             return
         session.trace_terminal = True
+        if session.diagnostic_trace is not None:
+            _diagnostic(session, "stream_end")
+            with contextlib.suppress(BaseException):
+                # Preserve the final viewing window even when the owner keeps
+                # collecting metadata through a long closed-view cleanup tail.
+                # The recorder retains an earlier symptom trigger if one exists.
+                session.diagnostic_trace.trigger("stop")
         try:
             now = self._clock()
             session.terminal_at = now
@@ -801,6 +826,20 @@ class HomeKitLiveManager:
                 session.boot, session.scope, session_id=session.identity
             )
             self._current(session)
+            with contextlib.suppress(BaseException):
+                trace = getattr(session.handle, "diagnostic_trace", None)
+                if trace is not None:
+                    session.diagnostic_stream_id = trace.allocate_stream()
+                    session.diagnostic_trace = trace
+                    _diagnostic(
+                        session,
+                        "stream_start",
+                        width=session.config.width,
+                        height=session.config.height,
+                        fps=session.config.fps,
+                        bit_rate=session.config.max_bit_rate,
+                        clock_rate=90000,
+                    )
             factory = self._adapter_factory or AccessUnitAdapter
             session.adapter = factory(session.config)
             session.timeline = LiveTimeline(
@@ -815,6 +854,8 @@ class HomeKitLiveManager:
                     session.audio_config,
                     speaker_volume=session.speaker_volume,
                     timeline=session.timeline,
+                    diagnostic_trace=session.diagnostic_trace,
+                    diagnostic_stream_id=session.diagnostic_stream_id,
                 )
             session.last_source = session.last_feedback = session.last_renewal = self._clock()
             session.active_started_at = session.last_source
@@ -1023,6 +1064,15 @@ class HomeKitLiveManager:
         return result
 
     def _observe_source(self, session, packet):
+        if getattr(session, "diagnostic_trace", None) is not None:
+            _diagnostic(
+                session,
+                "source_read",
+                pts=packet.rtp_timestamp,
+                received_us=round(packet.received_at * 1_000_000),
+                capture_epoch=packet.capture_epoch,
+                size=len(packet.payload),
+            )
         with contextlib.suppress(Exception):
             metrics = session.metrics
             metrics.count("source_access_units")
@@ -1045,6 +1095,17 @@ class HomeKitLiveManager:
         with contextlib.suppress(Exception):
             metrics = session.metrics
             for output in outputs:
+                if getattr(session, "diagnostic_trace", None) is not None:
+                    _diagnostic(
+                        session,
+                        "encoded_output",
+                        payload=output.payload,
+                        pts=output.timestamp,
+                        capture_epoch=output.capture_epoch,
+                        keyframe=output.is_keyframe is True,
+                        adapted=output.mode == "adapt",
+                        received_us=round(output.received_at * 1_000_000),
+                    )
                 metrics.count("output_access_units")
                 metrics.count("output_keyframes", int(output.is_keyframe is True))
                 if output.mode in {"copy", "adapt"}:
@@ -1142,12 +1203,28 @@ class HomeKitLiveManager:
                         generation = self._configuration_generation(session)
                         feed_started = self._clock()
                         _measure(session, "count", "adapter_feeds")
+                        if session.diagnostic_trace is not None:
+                            _diagnostic(
+                                session,
+                                "conversion_start",
+                                pts=packet.rtp_timestamp,
+                                capture_epoch=packet.capture_epoch,
+                            )
                         outputs = await session.adapter.feed(
                             packet.payload,
                             packet.rtp_timestamp,
                             capture_epoch=packet.capture_epoch,
                             received_at=packet.received_at,
                         )
+                        if session.diagnostic_trace is not None:
+                            _diagnostic(
+                                session,
+                                "conversion_end",
+                                pts=packet.rtp_timestamp,
+                                capture_epoch=packet.capture_epoch,
+                                output_count=len(outputs),
+                                elapsed_us=round((self._clock() - feed_started) * 1_000_000),
+                            )
                         _measure(
                             session, "observe", "adapter_feed", max(0, self._clock() - feed_started)
                         )
@@ -1180,12 +1257,32 @@ class HomeKitLiveManager:
                                     if self._actual_idr(session, output):
                                         feed_started = self._clock()
                                         _measure(session, "count", "adapter_feeds")
+                                        if session.diagnostic_trace is not None:
+                                            _diagnostic(
+                                                session,
+                                                "conversion_start",
+                                                pts=packet.rtp_timestamp,
+                                                capture_epoch=packet.capture_epoch,
+                                                adapted=True,
+                                            )
                                         adapted = await session.adapter.feed(
                                             packet.payload,
                                             packet.rtp_timestamp,
                                             capture_epoch=packet.capture_epoch,
                                             received_at=packet.received_at,
                                         )
+                                        if session.diagnostic_trace is not None:
+                                            _diagnostic(
+                                                session,
+                                                "conversion_end",
+                                                pts=packet.rtp_timestamp,
+                                                capture_epoch=packet.capture_epoch,
+                                                adapted=True,
+                                                output_count=len(adapted),
+                                                elapsed_us=round(
+                                                    (self._clock() - feed_started) * 1_000_000
+                                                ),
+                                            )
                                         _measure(
                                             session,
                                             "observe",
@@ -1268,10 +1365,32 @@ class HomeKitLiveManager:
                 output.payload, timestamp, payload_type=config.payload_type, mtu=config.mtu
             )
             presentation = self._presentation_time(session, "video", output.timestamp, receipt)
+            if session.diagnostic_trace is not None:
+                _diagnostic(
+                    session,
+                    "timeline",
+                    pts=output.timestamp,
+                    rtp_timestamp=timestamp,
+                    presentation_us=round(presentation * 1_000_000),
+                    capture_epoch=epoch,
+                    clock_rate=90000,
+                )
             revision, before = session.recovery_revision, session.packets
             try:
                 for item in datagrams:
                     self._current(session)
+                    if session.diagnostic_trace is not None:
+                        _diagnostic(
+                            session,
+                            "rtp_send",
+                            sequence=item.sequence,
+                            rtp_timestamp=item.timestamp,
+                            size=item.payload_bytes,
+                            payload_type=config.payload_type,
+                            marker=bool(item.packet[1] & 0x80),
+                            capture_epoch=epoch,
+                            pts=output.timestamp,
+                        )
                     protected = session.secure.protect(item.packet)
                     await self._paced_send(
                         session, protected, epoch=epoch, deadline=deadline, reserved=True
@@ -1281,6 +1400,16 @@ class HomeKitLiveManager:
                     session.last_packet_at = presentation
                     session.packets += 1
                     session.octets += item.payload_bytes
+                    if session.diagnostic_trace is not None:
+                        _diagnostic(
+                            session,
+                            "rtp_sent",
+                            sequence=item.sequence,
+                            rtp_timestamp=item.timestamp,
+                            size=item.payload_bytes,
+                            actual_us=round(self._clock() * 1_000_000),
+                            capture_epoch=epoch,
+                        )
                     _measure(session, "count", "sent_packets")
                     _measure(session, "count", "sent_payload_bytes", item.payload_bytes)
                     _measure(session, "count", "sent_protected_bytes", len(protected))
@@ -1359,6 +1488,15 @@ class HomeKitLiveManager:
         admission_deadline = limit - service
         if target > admission_deadline:
             raise _VideoDeadline
+        if getattr(session, "diagnostic_trace", None) is not None:
+            _diagnostic(
+                session,
+                "packet_schedule",
+                scheduled_us=round(target * 1_000_000),
+                size=len(protected),
+                repair=repair is not None,
+                capture_epoch=epoch,
+            )
         if target > now:
             _measure(session, "observe", "pacer_wait", target - now)
             await asyncio.sleep(target - now)
@@ -1367,6 +1505,16 @@ class HomeKitLiveManager:
             session, protected, epoch=epoch, deadline=admission_deadline, repair=repair
         )
         session.next_packet_at = self._clock() + service
+        if getattr(session, "diagnostic_trace", None) is not None:
+            _diagnostic(
+                session,
+                "packet_sent",
+                scheduled_us=round(target * 1_000_000),
+                actual_us=round(self._clock() * 1_000_000),
+                size=len(protected),
+                repair=repair is not None,
+                capture_epoch=epoch,
+            )
 
     def _prune_retransmit(self, session):
         cutoff = self._clock() - RETRANSMIT_SECONDS
@@ -1406,6 +1554,19 @@ class HomeKitLiveManager:
                     continue
                 now = self._clock()
                 session.last_feedback = now
+                if session.diagnostic_trace is not None:
+                    for report in feedback.receiver_reports:
+                        _diagnostic(
+                            session,
+                            "receiver_report",
+                            fraction_lost=report.fraction_lost,
+                            lost=report.packets_lost,
+                            highest_sequence=report.highest_sequence,
+                            jitter=report.jitter,
+                            lsr=report.lsr,
+                            dlsr=report.dlsr,
+                            clock_rate=90000,
+                        )
                 _measure(session, "count", "receiver_reports", feedback.reports)
                 _measure(session, "count", "nack_requests", len(feedback.nack))
                 _measure(session, "count", "pli_requests", int(feedback.pli))
@@ -1518,6 +1679,16 @@ class HomeKitLiveManager:
                         cname=session.timeline.cname,
                     )
                     await self._send(session, session.secure.protect_rtcp(report))
+                    if session.diagnostic_trace is not None:
+                        _diagnostic(
+                            session,
+                            "sender_report",
+                            rtp_timestamp=pair.rtp_timestamp,
+                            wall_us=round(pair.wall_time * 1_000_000),
+                            actual_us=round(self._clock() * 1_000_000),
+                            capture_epoch=session.capture_epoch,
+                            clock_rate=90000,
+                        )
                     _measure(session, "count", "sender_reports")
                     with contextlib.suppress(Exception):
                         session.receiver_stats.sent(report, self._clock())

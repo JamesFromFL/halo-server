@@ -14,3 +14,6 @@ were already committed through `6677086`. No real camera media, credentials or
 paired state are included.
 
 Implementation progress and verification are tracked in `stream-repair-progress.md`.
+
+[Bounded stream diagnostics](bounded-stream-diagnostics.md) describes the opt-in
+packet/media recorder and offline audio replay added for the next controlled test.

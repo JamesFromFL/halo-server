@@ -208,6 +208,37 @@ class ServiceHomeKitBackend:
                 )
             )
 
+    def diagnostic_scope_current(self, scope: MediaScope) -> bool | None:
+        """Check current ownership without making observation wait on inventory.
+
+        None means lock contention, not revoked authority. The diagnostic owner
+        must skip and count that observation; it must not admit it using a cached
+        permission. The real account properties also take an RLock, so both
+        locks must be available before invoking the unchanged ownership checks.
+        """
+        if not isinstance(scope, MediaScope):
+            return False
+        if not self._lock.acquire(blocking=False):
+            return None
+        account_lock = None
+        try:
+            candidate = getattr(self._service._sessions, "_lock", None)
+            if candidate is not None:
+                # Production RingSessionManager uses the same RLock type. Do
+                # not re-enter an unfamiliar injected, non-reentrant lock.
+                if not isinstance(candidate, type(self._lock)):
+                    return None
+                if not candidate.acquire(blocking=False):
+                    return None
+                account_lock = candidate
+            return self.scope_current(scope)
+        except Exception:
+            return False
+        finally:
+            if account_lock is not None:
+                account_lock.release()
+            self._lock.release()
+
     def _guard(self, scope: MediaScope, admission: Callable[[], bool]) -> Callable[[], bool]:
         def current() -> bool:
             return self.scope_current(scope) and bool(admission())
@@ -248,6 +279,7 @@ class ServiceHomeKitBackend:
             ),
             original_audio_buffer=getattr(session, "original_audio_buffer", None),
             source_clock_callback=getattr(session, "source_clock_snapshot", None),
+            diagnostic_trace=None if recording else getattr(session, "diagnostic_trace", None),
             keyframe_callback=(lambda epoch: request_keyframe(lease_id, epoch, admission=guard))
             if not recording and callable(request_keyframe)
             else None,

@@ -366,6 +366,8 @@ class AudioTrack:
         self._touch_feedback, self._last_seen = touch_feedback, last_feedback
         self._adapter_factory, self._decoder_factory = adapter_factory, decoder_factory
         self._diagnostic_failure = diagnostic_failure
+        self._diagnostic_trace = None
+        self._diagnostic_stream_id = 0
         self._controller, self._boot, self._scope = controller, boot, scope
         self._retired = False
         self.socket = socket.socket(family, socket.SOCK_DGRAM)
@@ -458,10 +460,28 @@ class AudioTrack:
         )
         self.failure = None
 
-    def start(self, handle, config, *, speaker_volume, timeline=None):
+    def start(
+        self,
+        handle,
+        config,
+        *,
+        speaker_volume,
+        timeline=None,
+        diagnostic_trace=None,
+        diagnostic_stream_id=0,
+    ):
         from halo_server.media.homekit_audio_codec import AudioAdapter
 
         self.handle, self.config = handle, config
+        self._diagnostic_trace = diagnostic_trace
+        self._diagnostic_stream_id = diagnostic_stream_id
+        if diagnostic_trace is not None:
+            self._diagnostic(
+                "stream_start",
+                clock_rate=config.sample_rate,
+                bit_rate=config.max_bit_rate,
+                packet_time=config.packet_time,
+            )
         self._timeline = timeline or self._new_timeline()
         self._receiver_reports = ReceiverReportStats(clock_rate=config.sample_rate)
         self._timing = _AudioTiming(config, self._clock())
@@ -595,6 +615,18 @@ class AudioTrack:
         with contextlib.suppress(BaseException):
             if self._timing is not None:
                 getattr(self._timing, method)(*args)
+
+    def _diagnostic(self, stage, *, payload=None, **fields):
+        trace = self._diagnostic_trace
+        if trace is not None:
+            with contextlib.suppress(BaseException):
+                fields["stream_id"] = self._diagnostic_stream_id
+                if payload is None:
+                    trace.event(stage, "audio", **fields)
+                else:
+                    fields["size"] = len(payload)
+                    trace.event(stage, "audio", **fields)
+                    trace.media(stage, "audio", payload, **fields)
 
     def _may(self, permission):
         if self._retired:
@@ -786,6 +818,14 @@ class AudioTrack:
                 return
             for packet in packets:
                 self._trace("source", packet, self._clock())
+                if self._diagnostic_trace is not None:
+                    self._diagnostic(
+                        "source_read",
+                        pts=packet.rtp_timestamp,
+                        received_us=round(packet.received_at * 1_000_000),
+                        capture_epoch=packet.capture_epoch,
+                        size=len(packet.payload),
+                    )
             # Live viewers start at the current complete packet. Replaying
             # almost-expired history can make converter startup expire the
             # next prefix repeatedly, even while Ring supplies clean audio.
@@ -873,6 +913,12 @@ class AudioTrack:
                 ledger.record(input_index, "source_submitted")
                 self._submitted_any = True
                 feed_started = self._clock()
+                if self._diagnostic_trace is not None:
+                    self._diagnostic(
+                        "conversion_start",
+                        pts=packet.rtp_timestamp,
+                        capture_epoch=packet.capture_epoch,
+                    )
                 try:
                     outputs = await self._adapter.feed(
                         packet.payload, packet.rtp_timestamp, capture_epoch=packet.capture_epoch
@@ -880,6 +926,14 @@ class AudioTrack:
                 finally:
                     self._trace("feed", self._clock() - feed_started)
                     self._measure("feed", feed_started)
+                if self._diagnostic_trace is not None:
+                    self._diagnostic(
+                        "conversion_end",
+                        pts=packet.rtp_timestamp,
+                        capture_epoch=packet.capture_epoch,
+                        output_count=len(outputs),
+                        elapsed_us=round((self._clock() - feed_started) * 1_000_000),
+                    )
                 self._live_edge_pending = False
                 try:
                     await self._audio_outputs(outputs, packet)
@@ -974,6 +1028,15 @@ class AudioTrack:
                 ledger.visit(index)
                 self._trace("output", output)
                 received_at = receipts[index]
+                if self._diagnostic_trace is not None:
+                    self._diagnostic(
+                        "encoded_output",
+                        payload=output.payload,
+                        pts=output.timestamp,
+                        duration_samples=output.duration,
+                        capture_epoch=packet.capture_epoch,
+                        received_us=round(received_at * 1_000_000),
+                    )
                 staging_bytes -= len(output.payload)
                 if packet.capture_epoch != self._current_epoch():
                     self._trace("count", "epoch_drop")
@@ -1057,6 +1120,15 @@ class AudioTrack:
                 # or wire allowance cannot admit it before its own deadline.
                 self._output_result(item, "output_budget_rejected")
                 return
+            if self._diagnostic_trace is not None:
+                self._diagnostic(
+                    "packet_schedule",
+                    pts=output.timestamp,
+                    duration_samples=output.duration,
+                    scheduled_us=round(target * 1_000_000),
+                    capture_epoch=item.epoch,
+                    queue_depth=len(self._outputs),
+                )
             if target > self._clock():
                 began = self._clock()
                 try:
@@ -1088,6 +1160,18 @@ class AudioTrack:
                 )
                 + output.payload
             )
+            sequence = self._sequence
+            if self._diagnostic_trace is not None:
+                self._diagnostic(
+                    "rtp_send",
+                    sequence=sequence,
+                    rtp_timestamp=timestamp,
+                    pts=output.timestamp,
+                    size=len(output.payload),
+                    capture_epoch=item.epoch,
+                    payload_type=self.config.payload_type,
+                    marker=False,
+                )
             protected = self.secure.protect(plain)
             # Native SRTP consumed this index even if a final fence rejects it.
             self._sequence = (self._sequence + 1) & 65535
@@ -1101,6 +1185,17 @@ class AudioTrack:
                 self._output_result(item, "output_send_fenced")
                 return
             self._pacer.sent(wire_size, self._clock())
+            if self._diagnostic_trace is not None:
+                self._diagnostic(
+                    "rtp_sent",
+                    sequence=sequence,
+                    rtp_timestamp=timestamp,
+                    pts=output.timestamp,
+                    size=len(output.payload),
+                    capture_epoch=item.epoch,
+                    scheduled_us=round(target * 1_000_000),
+                    actual_us=round(self._clock() * 1_000_000),
+                )
             if catchup:
                 self._metric("count", "catchup_packets")
             self._output_result(item, "output_sent")
@@ -1114,6 +1209,15 @@ class AudioTrack:
                 )
             finally:
                 self._measure("presentation", began)
+            if self._diagnostic_trace is not None:
+                self._diagnostic(
+                    "timeline",
+                    pts=output.timestamp,
+                    rtp_timestamp=timestamp,
+                    presentation_us=round(self._last_presentation * 1_000_000),
+                    capture_epoch=item.epoch,
+                    clock_rate=self.config.sample_rate,
+                )
             self._packets += 1
             self._octets += len(output.payload)
             self._trace(
@@ -1152,6 +1256,18 @@ class AudioTrack:
                             self.secure.unprotect_rtcp(protected), self.prepared.ssrc
                         )
                         self._receiver_metric("observe", feedback.receiver_reports, now)
+                        if self._diagnostic_trace is not None:
+                            for report in feedback.receiver_reports:
+                                self._diagnostic(
+                                    "receiver_report",
+                                    fraction_lost=report.fraction_lost,
+                                    lost=report.packets_lost,
+                                    highest_sequence=report.highest_sequence,
+                                    jitter=report.jitter,
+                                    lsr=report.lsr,
+                                    dlsr=report.dlsr,
+                                    clock_rate=self.config.sample_rate,
+                                )
                         self._last_feedback = now
                         self._touch_feedback(now)
                         if feedback.bye:
@@ -1220,6 +1336,15 @@ class AudioTrack:
                         epoch=self._capture_epoch,
                     )
                     if sent:
+                        if self._diagnostic_trace is not None:
+                            self._diagnostic(
+                                "sender_report",
+                                rtp_timestamp=pair.rtp_timestamp,
+                                wall_us=round(pair.wall_time * 1_000_000),
+                                actual_us=round(self._clock() * 1_000_000),
+                                capture_epoch=self._capture_epoch,
+                                clock_rate=self.config.sample_rate,
+                            )
                         self._receiver_metric("sent", report, self._clock())
                         self._trace("count", "rtcp_sent")
                         self._trace(
@@ -1233,6 +1358,8 @@ class AudioTrack:
             self._failed("audio_reports", "audio_report_failed", exc)
 
     def fence(self):
+        if not self._retired and self._diagnostic_trace is not None:
+            self._diagnostic("stream_end")
         self._retired = True
         self._delivery_generation += 1
         self._discard_outputs("output_retired")
