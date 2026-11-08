@@ -56,7 +56,25 @@ The reproducible local qualification is retained under
 Its JSON includes source/probe hashes and loaded native library versions. It uses
 synthetic imagery; camera payload stays outside Git.
 
-## Remaining slices
+## Slice 2: receive-boundary observer — implemented and locally qualified
+
+The [standalone observer](receive-observer.md) has no camera-opening or send path.
+It uses a separate Linux packet socket with a locked exact-flow filter before
+binding. The kernel retains only the fixed RTP header; artifacts contain numeric
+timing/header observations and coverage/loss evidence. Duration, packet count,
+storage, track count and output directory handling are bounded. It supports the
+declared IPv4 direct-SRTP Ethernet path, with up to two visible VLAN tags; TURN,
+IPv6 and other unsupported transport modes remain explicit exclusions.
+
+All 54 focused tests pass. A separate native-kernel test on synthetic Unix-domain
+datagrams accepted/truncated 18 valid fixtures and rejected five invalid fixtures.
+It opened no packet socket and observed no network traffic. Independent review
+resulted in pinned parent-directory operations and an explicit coverage boundary
+before final statistics/cleanup. Actual AF_PACKET reception and kernel timestamps
+still require a controlled host qualification. No capture service or persistent
+privilege was installed.
+
+## Remaining audio and physical qualification
 
 Audio release is being qualified through the actual output pacer. Its existing
 startup discard and catch-up rules must not consume the intentional source
@@ -64,7 +82,6 @@ retention; any new path must preserve original receipt/PTS and A/V alignment,
 bounded storage, permission epochs and raw audio. The arrival-only timing model
 does not qualify production integration by itself.
 
-An independent bounded kernel receive observer is being added for the selected
-incoming flow. It will separate packet delivery before callbacks from application
-dispatch delay, without replacing the active UDP reader. Actual privileged host
-capture and a subsequent controlled Apple session remain physical test gates.
+Actual privileged host capture and a subsequent controlled Apple session remain
+physical test gates. The observer will separate packet delivery before callbacks
+from application dispatch delay without replacing the active UDP reader.
