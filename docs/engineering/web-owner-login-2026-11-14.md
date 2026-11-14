@@ -97,13 +97,52 @@ Evidence is under
 including `browser/browser-smoke.json`, `browser/fixture-media.json`, and
 `legacy-auth-compatibility.json` with its reproduction script. All credentials
 used in these checks were synthetic; the owner's real password was not collected.
-The full source suite passed. Installed package qualification is still in progress.
+Installed qualification also passed against the previously verified server runtime
+snapshot, using source commit `097b8c8b7ad4d18a7bee98ff4c3e89f2c245170b`:
+854 Python tests with no skips, 56 frontend tests, 60 real HTTPS browser layouts,
+and 323 adapter tests. The camera and device children and daemon each exited zero.
+Two complete release builds matched. All Halo imports and static assets came from
+the installed release. The browser used private network and PID namespaces, and
+its exact Playwright files matched lockfile-authenticated cached npm tarballs.
+This local qualification did not contact the server or exercise real Ring devices.
+A separate parent check verified every one of the final receipt's 97 file hashes.
+
+Final receipt: `work/halo-server-web-owner-login-2026-11-14/final-qualification.json`.
+SHA256: `1c319155d4b889b9f92aafb7001a637a4c33a86748d657d70fae693c7a793357`.
 
 ## Release boundary
 
 The previously qualified and staged inactive release is
 `2b4a3ef49620b6c062cb5c171be04fdeca7040e8350fc9d742e9e2862c500600`.
-It predates this owner-login change. A new release must be built and qualified
-before activation can include the new sign-in behavior. No activation is part
-of this implementation pass, and the running server continues using its existing
-release until a later controlled activation.
+It predates this owner-login change and must not be selected when deploying this
+new login behavior.
+
+The replacement package is qualified locally:
+
+- Release: `6feb97db8f068af3f51d8fa7059adae3e53b3e58ddf9c23de47facd6cb0de9a3`.
+- Manifest SHA256: `41d8ee7b71e1d1db0f8cb6ff57516370443dbbbc2f9ac297f16dd2ddc667deec`.
+- Archive SHA256: `ecb432c32d7d2d8dde03b9d1c8bfdc1293e71a0d0d169c4a0ebe0ac4dabb7205`.
+- Installer SHA256: `c0704f33ef11ef6839a3a858b09fdce9f16dc4da75bca602f9f66961d4a6c681`.
+
+This replacement has not been staged on the server or activated. Refresh target
+runtime and preservation checks, stage the exact verified package, and use managed
+activation before testing the new username form on the real installation.
+The owner can enroll a private password on the currently running password-only
+console first; the new `admin` login retains it. Never generate or collect the
+owner's code or password in assistant output.
+
+## Interactive SSH repair during owner setup
+
+The owner reported `PTY allocation request failed on channel 0` while connecting
+from Ghostty. Read-only investigation confirmed that the desktop's host-specific
+SSH entry selected the deployment key, whose server authorization used `restrict`.
+That flag disabled terminal allocation even though noninteractive SSH succeeded.
+The earlier access qualification had missed an actual interactive terminal check.
+
+After explicit owner approval, only this existing key's options changed to
+`restrict,pty`. Its other restrictions and the other authorized key were preserved,
+and a private backup of `authorized_keys` was retained on the server. Real forced-PTY
+checks then passed through both `james@192.168.1.136` and the `james-server` alias.
+The repair did not restart SSH or Halo services. A sanitized receipt and exact
+repair script are in the same work directory as the qualification evidence.
+This infrastructure repair is separate from the local package qualification.

@@ -1,5 +1,9 @@
 # Non-camera target qualification — November 14, 2026
 
+Subsequent owner-login work produced a newer, locally qualified replacement package.
+See [Local web owner login](web-owner-login-2026-11-14.md) before deployment.
+The staging results below remain the historical record for the earlier device package.
+
 This continues wave 9 after restoring the desktop's dedicated SSH identity.
 The candidate is built for the server runtime. Cache staging, if verified below,
 does not activate it or change the production release selection.
