@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Adapted from JamesFromFL/halo-gtk c2f99aa3c8da3f75181a23201c53fcb972203309.
-"""Bounded read-only JSON transport over the single Ring Auth session."""
+"""Bounded allowlisted JSON requests over the single Ring Auth session."""
 
 from __future__ import annotations
 
@@ -12,16 +12,21 @@ import math
 import ssl
 from collections import deque
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from importlib.metadata import version
+from typing import Literal
 from urllib.parse import parse_qsl, urlsplit
 
 import aiohttp
 from oauthlib.oauth2 import TokenExpiredError
 from yarl import URL
 
+from halo_server.ring.control_routes import allowed_read, allowed_write
+
 MAX_RESPONSE_BYTES = 1024 * 1024
+MAX_WRITE_REPLY_BYTES = 64 * 1024
 MAX_JSON_DEPTH = 32
 MAX_JSON_NODES = 50_000
 _ORIGINS = frozenset({"api.ring.com", "prd-api-us.prd.rings.solutions"})
@@ -36,6 +41,30 @@ class RingJsonError(RuntimeError):
         self.status = status
         self.retry_after = retry_after
         self.possibly_sent = possibly_sent
+
+
+@dataclass(frozen=True, slots=True)
+class RingWriteReceipt:
+    """HTTP acceptance only; a feature must independently confirm device state."""
+
+    outcome: Literal["accepted", "rejected", "uncertain"]
+    code: str
+    http_status: int | None = None
+    possibly_sent: bool = False
+    retry_after: float | None = None
+
+    @property
+    def accepted(self):
+        return self.outcome == "accepted"
+
+
+class RingWriteCancelled(asyncio.CancelledError):
+    """Cancellation preserves the admission boundary without swallowing shutdown."""
+
+    def __init__(self, *, possibly_sent, http_status=None):
+        super().__init__("write-cancelled")
+        self.possibly_sent = possibly_sent
+        self.http_status = http_status
 
 
 class RingJsonTransport:
@@ -150,8 +179,155 @@ class RingJsonTransport:
                     self._background_active -= int(not recovery)
                     self._condition.notify_all()
 
-    async def request_write(self, *_args, **_kwargs):
-        raise RingJsonError("operation-not-allowed")
+    async def request_write(
+        self, url, *, method, json=None, timeout=10, admission=None, on_admitted=None
+    ) -> RingWriteReceipt:
+        """Admit one exact known write; never retry a submitted HTTP request.
+
+        Invalid schemas raise before any I/O. Operational outcomes are receipts;
+        cancellation is re-raised with possibly-sent metadata. ``on_admitted``
+        lets the operation owner keep that metadata across future cancellation.
+        """
+        if not allowed_write(url, method, json):
+            raise RingJsonError("operation-not-allowed")
+        if not callable(admission) or (on_admitted is not None and not callable(on_admitted)):
+            raise RingJsonError("invalid-admission")
+        # Copy before waiting for any lock; caller mutation cannot change the
+        # operation whose schema and identity were admitted.
+        payload = json_module.loads(json_module.dumps(json, allow_nan=False))
+        duration = _duration(timeout, 10)
+        current = asyncio.current_task()
+        self._requests.add(current)
+        deadline = asyncio.get_running_loop().time() + duration
+        sent = False
+        status = None
+        response = None
+        try:
+            self._check_auth()
+            _write_admission(admission)
+            async with asyncio.timeout_at(deadline), self._admit(False):
+                with self._auth._halo_auth_request_scope():
+                    # Token preparation may refresh once before a write. A 401
+                    # after handoff is a final rejection, never a replay trigger.
+                    for attempt in range(2):
+                        self._check_auth()
+                        headers = {
+                            "User-Agent": self._auth.user_agent,
+                            "hardware_id": self._auth.get_hardware_id(),
+                            "Accept": "application/json",
+                            "Accept-Encoding": "identity",
+                        }
+                        if payload is not None:
+                            headers["Content-Type"] = "application/json"
+                        try:
+                            prepared, headers, body = self._auth._oauth_client.add_token(
+                                url, http_method=method, body=None, headers=headers
+                            )
+                            break
+                        except TokenExpiredError:
+                            if attempt:
+                                raise RingJsonError("authentication-required") from None
+                            await self._refresh()
+                    if prepared != url or body is not None:
+                        raise RingJsonError("token-preparation-changed-endpoint")
+                    self._check_auth()
+                    if asyncio.get_running_loop().time() >= deadline:
+                        raise RingJsonError("timeout")
+                    _write_admission(admission)
+                    if on_admitted is not None:
+                        try:
+                            _callback(on_admitted)
+                        except Exception:
+                            raise RingJsonError("invalid-admission") from None
+                    remaining = max(0.001, deadline - asyncio.get_running_loop().time())
+                    options = {"json": payload} if payload is not None else {}
+                    attempted = False
+
+                    async def send_once(request, handler):
+                        nonlocal attempted
+                        # aiohttp retries idempotent PUT on a disconnected
+                        # persistent connection. Enforce at-most-one send even
+                        # inside that retry loop, without mutating shared Auth.
+                        if attempted:
+                            raise RingJsonError("write-replay-blocked")
+                        attempted = True
+                        if str(request.url) != url or request.method != method:
+                            raise RingJsonError("token-preparation-changed-endpoint")
+                        self._check_auth()
+                        _write_admission(admission)
+                        return await handler(request)
+
+                    # Innermost placement also blocks a session middleware that
+                    # invokes its downstream handler twice. Keep existing SDK
+                    # middleware rather than changing the shared session.
+                    middlewares = (*getattr(self._auth._session, "_middlewares", ()), send_once)
+                    # No await separates the final authority check and handoff.
+                    # Connector work may await, so this is possibly, not proven, sent.
+                    sent = True
+                    response = await self._auth._session.request(
+                        method,
+                        URL(prepared, encoded=True),
+                        headers=headers,
+                        timeout=aiohttp.ClientTimeout(
+                            total=min(10, remaining),
+                            connect=min(3, remaining),
+                            sock_connect=min(3, remaining),
+                            sock_read=min(3, remaining),
+                        ),
+                        allow_redirects=False,
+                        auto_decompress=False,
+                        ssl=self._tls,
+                        middlewares=middlewares,
+                        **options,
+                    )
+                    async with response:
+                        status = response.status
+                        if type(status) is not int or not 100 <= status <= 599:
+                            status = None
+                            raise RingJsonError("invalid-response")
+                        if not 200 <= status < 300:
+                            code = {
+                                401: "authentication-required",
+                                403: "permission-denied",
+                                429: "rate-limited",
+                            }.get(
+                                status,
+                                "redirect-not-allowed" if 300 <= status < 400 else "request-failed",
+                            )
+                            return RingWriteReceipt(
+                                "rejected"
+                                if 400 <= status < 500 and status != 408
+                                else "uncertain",
+                                code,
+                                status,
+                                True,
+                                _retry_after(response.headers.get("Retry-After")),
+                            )
+                        # Ignore response contents. A bounded, fully read body
+                        # proves HTTP completion, never actual volume/light state.
+                        await _read(response, MAX_WRITE_REPLY_BYTES)
+                    if asyncio.get_running_loop().time() >= deadline:
+                        raise RingJsonError("timeout")
+                    return RingWriteReceipt("accepted", "http-accepted", status, True)
+        except asyncio.CancelledError:
+            raise RingWriteCancelled(possibly_sent=sent, http_status=status) from None
+        except RingJsonError as error:
+            return RingWriteReceipt("uncertain" if sent else "rejected", error.code, status, sent)
+        except TimeoutError:
+            return RingWriteReceipt("uncertain" if sent else "rejected", "timeout", status, sent)
+        except aiohttp.ClientError:
+            return RingWriteReceipt(
+                "uncertain" if sent else "rejected", "network-unavailable", status, sent
+            )
+        except Exception:
+            return RingWriteReceipt(
+                "uncertain" if sent else "rejected", "request-failed", status, sent
+            )
+        finally:
+            if response is not None:
+                with contextlib.suppress(Exception):
+                    response.close()
+            self._requests.discard(current)
 
     async def _request(
         self,
@@ -288,6 +464,23 @@ def _callback(callback):
         raise RingJsonError("invalid-admission")
 
 
+def _write_admission(callback):
+    try:
+        result = callback()
+        if inspect.isawaitable(result):
+            if inspect.iscoroutine(result):
+                result.close()
+            raise RingJsonError("invalid-admission")
+        if result is not True:
+            raise RingJsonError("admission-denied")
+    except RingJsonError as error:
+        if error.code not in {"invalid-admission", "admission-denied", "closed"}:
+            raise RingJsonError("admission-denied") from None
+        raise
+    except Exception:
+        raise RingJsonError("admission-denied") from None
+
+
 def _validate_url(url):
     try:
         if not isinstance(url, str) or len(url) > 8192:
@@ -307,6 +500,8 @@ def _validate_url(url):
             "https://api.ring.com/devices/v1/locations",
             "https://api.ring.com/clients_api/ring_devices",
         }:
+            if allowed_read(url):
+                return
             if (
                 parsed.hostname != "prd-api-us.prd.rings.solutions"
                 or parsed.path != "/api/v1/clap/tickets"

@@ -85,6 +85,11 @@ class RingAlarmRestGateway:
         return self._transport._active
 
     @property
+    def shared_transport(self):
+        """Share one authenticated budget with feature-owned narrow gateways."""
+        return self._transport
+
+    @property
     def _recovery_waiters(self):
         return self._transport.recovery_waiters
 
