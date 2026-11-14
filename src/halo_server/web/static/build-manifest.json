@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "source_hash": "22fe7266e18e6e736f7497c06714cc6ab3d979b9b3237a6e3f0ac2ce65644883",
+  "source_hash": "2a250beb029e82a35e305530e3015332427afa4184a789685306cb859050028b",
   "source_files": [
     {
       "path": ".prettierignore",
@@ -44,7 +44,7 @@
     },
     {
       "path": "scripts/browser-smoke.mjs",
-      "sha256": "a2ff5c214f2a430baae70fd73a928d5cb3fe35f850e6fcc441b726697c184bbc"
+      "sha256": "7663bb942ac6e761731f8c1589fcde6777fbf463f7c7406bc3f835978cf2db2e"
     },
     {
       "path": "scripts/build-manifest.mjs",
@@ -72,7 +72,7 @@
     },
     {
       "path": "src/App.svelte",
-      "sha256": "16cb23d99c0bf7b9280daf2e6d7d15ba3e4b7530cc83e1a5818fa066a3db9aca"
+      "sha256": "fabdb81e70dfbd5ded72bff99eb414e6be3f6c69ff87581c1d412e81dc1248e9"
     },
     {
       "path": "src/components/AlarmControls.svelte",
@@ -129,6 +129,10 @@
     {
       "path": "src/lib/api.ts",
       "sha256": "d3d1a7fddf35905277b5ded70ed3078cc0be1ae4b70629795f9ba673f3a157a8"
+    },
+    {
+      "path": "src/lib/auth.ts",
+      "sha256": "1d057216026a8fcc468001781f47a30339e0a81c43b0ef104aa7ec120510a851"
     },
     {
       "path": "src/lib/bridge-homekit.ts",
@@ -188,11 +192,11 @@
     },
     {
       "path": "src/pages/Settings.svelte",
-      "sha256": "5895f7b3a584886d4c2f1730ebae3d3a7e6f250bd98a7145802d2a699cf80ce4"
+      "sha256": "a73bc52f4187e58ff580a24a899a18eaf5c925dc79727d9418ab21ff9b7ecee1"
     },
     {
       "path": "src/pages/SignIn.svelte",
-      "sha256": "68086cef7d8e92d9e5b7e469ed6b63e2e1dee2fb1dfc6de9fce102dec9094025"
+      "sha256": "cfb87001e697e09d2557aaa94b8e15ee455e412068181d7bb29f9a4bcf310b88"
     },
     {
       "path": "src/theme.css",
@@ -208,7 +212,7 @@
     },
     {
       "path": "tests/api.test.ts",
-      "sha256": "7af2e423e61a6fd330b063d3dd3f4c6b2b831cdcf82ddf487b29f72d6ae69842"
+      "sha256": "492b228c7131fbdb15fffc284dfe3a247051f733260f8f2439fc4405635f091a"
     },
     {
       "path": "tests/bridge-homekit.test.ts",
@@ -236,7 +240,7 @@
     },
     {
       "path": "tests/password.test.ts",
-      "sha256": "aec04526ca50003fb7a277b15fb5b7817064de2d2992a5d1906bc1f5e3fa0ca7"
+      "sha256": "c9fc83e405380e310bfac0b5c2fa75dba2f6c8cdc333402be08e6c22a43bc312"
     },
     {
       "path": "tsconfig.json",
@@ -253,8 +257,8 @@
       "sha256": "27b3a540203dab45ee90ade440f4840b513dd2055969a84a9ebccb561fd14799"
     },
     {
-      "path": "assets/index-BXC-d3lF.js",
-      "sha256": "79aa3600d1f5b18c61a1df850b86eb292f7a49c6670cdd4bd8c08aa497c70ad6"
+      "path": "assets/index-BCn9O6S-.js",
+      "sha256": "77d94e4ab169063ae4cbeb31c66d795b61015ded4d6c4a7ff165e23f8cc0e14d"
     },
     {
       "path": "assets/index-B_958Fvz.css",
@@ -266,7 +270,7 @@
     },
     {
       "path": "index.html",
-      "sha256": "d77b11ca57fae23e51e43f43ddd7ea064566ab276f9191d5db690859b3ab4d64"
+      "sha256": "6dc397a708b523bb74f2adef690e959604ee37451d8f8592acf3b5c9ee36d61c"
     }
   ]
 }

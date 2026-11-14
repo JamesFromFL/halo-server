@@ -21,6 +21,7 @@ from cryptography.x509.oid import NameOID
 
 from halo_server.paths import open_private_directory
 from halo_server.private_json import PrivateJsonError, PrivateJsonStore
+from halo_server.web.defaults import DEFAULT_WEB_PORT
 
 
 class WebSettingsError(PrivateJsonError):
@@ -51,7 +52,7 @@ class WebSettings:
     revision: int = 0
     enabled: bool = False
     host: str = "127.0.0.1"
-    port: int = 18444
+    port: int = DEFAULT_WEB_PORT
     canonical_host: str = "127.0.0.1"
     lan_enabled: bool = False
     certificate_file: str | None = None
@@ -247,7 +248,7 @@ def configure(
     paths,
     *,
     host="127.0.0.1",
-    port=18444,
+    port=DEFAULT_WEB_PORT,
     canonical_host=None,
     allow_lan=False,
     renew_certificate=False,

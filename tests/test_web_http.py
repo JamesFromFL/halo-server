@@ -14,6 +14,7 @@ from aiohttp.test_utils import TestServer
 
 from halo_server.paths import ServerPaths
 from halo_server.web.auth import COOKIE, IDLE_SECONDS, issue_setup
+from halo_server.web.defaults import OWNER_USERNAME
 from halo_server.web.errors import WebError
 from halo_server.web.routes import PREFIX, WebConsole, create_application
 from halo_server.web.settings import (
@@ -144,7 +145,7 @@ async def console(tmp_path):
             "POST",
             "/setup",
             headers=headers,
-            json={"setup_code": result.code, "password": PASSWORD},
+            json={"setup_code": result.code, "username": OWNER_USERNAME, "password": PASSWORD},
         )
         assert response.status == 200, await response.text()
         result.csrf = (await response.json())["result"]["csrf_token"]
@@ -168,7 +169,7 @@ async def test_https_setup_cookie_rotation_host_origin_and_csrf(console):
     assert cookie["path"] == "/" and not cookie["domain"]
     anonymous_token = cookie.value
     session = (await response.json())["result"]
-    payload = {"setup_code": console.code, "password": PASSWORD}
+    payload = {"setup_code": console.code, "username": OWNER_USERNAME, "password": PASSWORD}
     for headers in (
         {},
         {"Origin": "https://evil.example", "X-Halo-CSRF": session["csrf_token"]},
@@ -328,7 +329,12 @@ async def test_session_expiry_revocation_and_cli_reset_take_effect_on_next_read(
     assert (await console.call("GET", "/state")).status == 401
     anonymous = (await (await console.call("GET", "/session")).json())["result"]
     headers = {"Origin": console.web.settings.origin, "X-Halo-CSRF": anonymous["csrf_token"]}
-    response = await console.call("POST", "/login", headers=headers, json={"password": PASSWORD})
+    response = await console.call(
+        "POST",
+        "/login",
+        headers=headers,
+        json={"username": OWNER_USERNAME, "password": PASSWORD},
+    )
     session = (await response.json())["result"]
     headers["X-Halo-CSRF"] = session["csrf_token"]
     response = await console.call("DELETE", "/sessions/" + session["session_id"], headers=headers)
@@ -366,3 +372,98 @@ async def test_event_feed_has_bounded_cursor_protocol_and_never_extends_idle_ses
     await console.web.state.get(force=True)
     assert await asyncio.wait_for(response.content.read(), 2) == b""
     response.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("anonymous_cookie", [False, True])
+async def test_every_private_http_route_rejects_unsigned_owner(console, anonymous_cookie):
+    headers = {"Origin": console.web.settings.origin}
+    if anonymous_cookie:
+        response = await console.call("GET", "/session")
+        headers["X-Halo-CSRF"] = (await response.json())["result"]["csrf_token"]
+    routes = set()
+    for route in console.server.app.router.routes():
+        path = route.resource.canonical
+        if not path.startswith(PREFIX):
+            continue
+        paths = [path]
+        if "{action}" in path:
+            paths = [path.replace("{action}", value) for value in ("logout", "reauth", "password")]
+        elif "{read}" in path:
+            paths = [
+                path.replace("{read}", value)
+                for value in ("selection", "controls", "recording", "configuration")
+            ]
+        elif "{identifier}" in path:
+            paths = [path.replace("{identifier}", "fixture")]
+        for candidate in paths:
+            assert "{" not in candidate, "Add a representative URL for this route parameter"
+            if candidate == PREFIX + "/session":
+                continue
+            routes.add((route.method, candidate.removeprefix(PREFIX)))
+    assert ("POST", "/devices/alarm/mode") in routes
+    assert ("POST", "/devices/chime/set") in routes
+    assert ("POST", "/restart") in routes
+    for method, path in sorted(routes):
+        response = await console.call(method, path, headers=headers)
+        assert response.status == 401, (method, path, response.status)
+        await response.read()
+    assert not console.owner.calls
+    assert not console.web.operations.rows
+
+
+@pytest.mark.asyncio
+async def test_http_login_requires_username_and_password_and_rotates_cookie(console):
+    headers = await console.enroll()
+    response = await console.call("POST", "/logout", headers=headers, json={})
+    assert response.status == 200
+    response = await console.call("GET", "/session")
+    before = response.cookies[COOKIE].value
+    session = (await response.json())["result"]
+    headers["X-Halo-CSRF"] = session["csrf_token"]
+    for payload, status in (
+        ({"password": PASSWORD}, 400),
+        ({"username": OWNER_USERNAME}, 400),
+        ({"username": "visitor", "password": PASSWORD}, 401),
+        ({"username": OWNER_USERNAME, "password": "a wrong private password"}, 401),
+    ):
+        response = await console.call("POST", "/login", headers=headers, json=payload)
+        assert response.status == status
+        if status == 401:
+            assert (await response.json())["error"]["code"] == "authentication_failed"
+        assert (await console.call("GET", "/state")).status == 401
+    response = await console.call(
+        "POST",
+        "/login",
+        headers=headers,
+        json={"username": OWNER_USERNAME, "password": PASSWORD},
+    )
+    assert response.status == 200
+    assert response.cookies[COOKIE].value != before
+    assert (await response.json())["result"]["authenticated"]
+    assert (await console.call("GET", "/state")).status == 200
+
+
+@pytest.mark.asyncio
+async def test_http_setup_requires_username_without_changing_private_state(console):
+    response = await console.call("GET", "/session")
+    session = (await response.json())["result"]
+    headers = {"Origin": console.web.settings.origin, "X-Halo-CSRF": session["csrf_token"]}
+    before = console.web.auth.record
+    response = await console.call(
+        "POST",
+        "/setup",
+        headers=headers,
+        json={"setup_code": console.code, "password": PASSWORD},
+    )
+    assert response.status == 400
+    response = await console.call(
+        "POST",
+        "/setup",
+        headers=headers,
+        json={"setup_code": console.code, "username": "visitor", "password": PASSWORD},
+    )
+    assert response.status == 401
+    assert console.web.auth.record == before
+    assert (await console.call("GET", "/state")).status == 401
+    await console.enroll()

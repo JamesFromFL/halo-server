@@ -2,6 +2,7 @@
 import { chromium } from '@playwright/test';
 import assert from 'node:assert/strict';
 import { mkdir, writeFile } from 'node:fs/promises';
+import { OWNER_USERNAME, USERNAME_MAX_LENGTH } from '../src/lib/auth.ts';
 const url = process.env.HALO_TEST_URL;
 if (!url || !/^https:\/\/(127\.0\.0\.1|localhost):[0-9]+\/?$/.test(url))
   throw new Error('HALO_TEST_URL must identify an isolated loopback HTTPS companion');
@@ -33,13 +34,29 @@ await page.addInitScript(() =>
     ];
   }),
 );
+async function captureBlankAccessForm(name) {
+  for (const width of [390, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    assert.ok(
+      await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1),
+      `${name} fits at ${width}px`,
+    );
+    await page.screenshot({ path: `${output}/${name}-${width}.png`, fullPage: true });
+  }
+}
 try {
   await page.goto(url);
   await page.getByRole('heading', { name: /Set up web access|Welcome back/ }).waitFor();
   if (await page.getByRole('heading', { name: 'Set up web access' }).isVisible()) {
+    await captureBlankAccessForm('setup-blank');
     if (!process.env.HALO_SETUP_CODE)
       throw new Error('Fresh test companion requires HALO_SETUP_CODE');
     await page.getByLabel('Setup code', { exact: true }).fill(process.env.HALO_SETUP_CODE);
+    const owner = page.getByLabel('Username', { exact: true });
+    assert.equal(await owner.inputValue(), OWNER_USERNAME);
+    assert.equal(await owner.getAttribute('autocomplete'), 'username');
+    assert.equal(await owner.getAttribute('name'), 'username');
+    assert.equal(await owner.getAttribute('readonly'), '');
     const createPassword = page.getByLabel('Create password', { exact: true });
     for (const label of ['Create password', 'Repeat password']) {
       const field = page.getByLabel(label, { exact: true });
@@ -61,11 +78,72 @@ try {
     );
     await createPassword.fill(password);
     await page.getByLabel('Repeat password', { exact: true }).fill(password);
+    const enrollment = page.waitForRequest(
+      (request) => request.method() === 'POST' && request.url().endsWith('/setup'),
+    );
     await page.getByRole('button', { name: 'Create web access', exact: true }).click();
-  } else {
-    await page.getByLabel('Password', { exact: true }).fill(password);
-    await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+    assert.deepEqual((await enrollment).postDataJSON(), {
+      setup_code: process.env.HALO_SETUP_CODE,
+      username: OWNER_USERNAME,
+      password,
+    });
+    await page.getByRole('heading', { name: 'Your Halo Server' }).waitFor();
+    await page.evaluate(() => {
+      location.hash = '/settings';
+    });
+    await page.getByRole('button', { name: 'Sign out', exact: true }).click();
   }
+  await page.getByRole('heading', { name: 'Welcome back' }).waitFor();
+  await page.evaluate(() => {
+    location.hash = '/overview';
+  });
+  const usernameField = page.getByLabel('Username', { exact: true });
+  const passwordField = page.getByLabel('Password', { exact: true });
+  await captureBlankAccessForm('signin-blank');
+  assert.equal(await usernameField.inputValue(), '', 'login does not invent an owner identity');
+  assert.equal(await usernameField.getAttribute('autocomplete'), 'username');
+  assert.equal(await usernameField.getAttribute('autocapitalize'), 'off');
+  assert.equal(await usernameField.getAttribute('spellcheck'), 'false');
+  assert.equal(await usernameField.getAttribute('maxlength'), String(USERNAME_MAX_LENGTH));
+  assert.equal(await passwordField.getAttribute('autocomplete'), 'current-password');
+  await passwordField.fill(password);
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+  assert.equal(await usernameField.evaluate((el) => el.validity.valueMissing), true);
+  assert.equal(
+    requests.filter((r) => r.method === 'POST' && r.path.endsWith('/login')).length,
+    0,
+    'missing username never sent',
+  );
+  const failures = [];
+  for (const [username, candidatePassword] of [
+    ['unknown-owner', password],
+    [OWNER_USERNAME, 'invalid-fixture-password'],
+  ]) {
+    await usernameField.fill(username);
+    await passwordField.fill(candidatePassword);
+    const request = page.waitForRequest(
+      (request) => request.method() === 'POST' && request.url().endsWith('/login'),
+    );
+    const response = page.waitForResponse(
+      (response) => response.request().method() === 'POST' && response.url().endsWith('/login'),
+    );
+    await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+    assert.deepEqual((await request).postDataJSON(), { username, password: candidatePassword });
+    assert.equal((await response).status(), 401, 'invalid credentials are rejected');
+    await page.getByRole('alert').waitFor();
+    await page.getByRole('button', { name: 'Sign in', exact: true }).waitFor();
+    failures.push(await page.getByRole('alert').textContent());
+    assert.equal(await passwordField.inputValue(), '', 'failed login clears the password');
+    assert.equal(await usernameField.inputValue(), username, 'failed login preserves the username');
+  }
+  assert.equal(failures[0], failures[1], 'credential errors do not identify which field failed');
+  await usernameField.fill(OWNER_USERNAME);
+  await passwordField.fill(password);
+  const login = page.waitForRequest(
+    (request) => request.method() === 'POST' && request.url().endsWith('/login'),
+  );
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+  assert.deepEqual((await login).postDataJSON(), { username: OWNER_USERNAME, password });
   await page.getByRole('heading', { name: 'Your Halo Server' }).waitFor();
   const cookies = await context.cookies();
   const sessionCookie = cookies.find((v) => v.name.startsWith('__Host-'));
@@ -75,6 +153,8 @@ try {
   );
   const checks = [
     'web password limits match backend 15–128; short setup password blocked before POST',
+    'setup uses readonly admin owner; login requires username and password with password-manager semantics',
+    'unknown username and wrong password fail alike; failed login clears the password; valid admin credentials sign in',
   ];
   async function navigate(route) {
     await page.evaluate((value) => {

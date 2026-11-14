@@ -14,6 +14,7 @@ from halo_server.private_json import PrivateJsonError
 from halo_server.release_activation import ActivationError
 from halo_server.release_execution import managed_context, release_status
 from halo_server.web.auth import COOKIE, Authentication
+from halo_server.web.defaults import OWNER_USERNAME
 from halo_server.web.errors import WebError, boolean, fields, integer, text
 from halo_server.web.operations import Operations, RpcPool, operation_id
 from halo_server.web.ring_login import RingLogin
@@ -193,14 +194,24 @@ class WebConsole:
         if self.draining:
             raise WebError("service_stopping", "Web administration is draining", status=503)
         if action == "setup":
-            value = await body(request, ("setup_code", "password"))
+            value = await body(request, ("setup_code", "username", "password"))
             session, token = await self.auth.setup(
-                session, value["setup_code"], value["password"], request.remote
+                session,
+                value["setup_code"],
+                value["password"],
+                request.remote,
+                username=value["username"],
             )
         elif action in {"login", "reauth"}:
-            value = await body(request, ("password",))
+            value = await body(
+                request, ("username", "password") if action == "login" else ("password",)
+            )
+            # Reauthentication already requires a signed-in owner session.
             session, token = await self.auth.authenticate(
-                session, value["password"], request.remote
+                session,
+                value["password"],
+                request.remote,
+                username=value["username"] if action == "login" else OWNER_USERNAME,
             )
         elif action == "password":
             value = await body(request, ("current_password", "password"))

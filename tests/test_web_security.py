@@ -18,6 +18,7 @@ from halo_server.web.auth import (
     RateLimiter,
     issue_setup,
 )
+from halo_server.web.defaults import OWNER_USERNAME
 from halo_server.web.errors import WebError
 from halo_server.web.settings import (
     SettingsStore,
@@ -44,7 +45,9 @@ async def enrolled(paths, **kwargs):
     auth = Authentication(paths, **kwargs)
     await auth.refresh()
     anonymous, _ = auth.create()
-    session, token = await auth.setup(anonymous, setup["setup_code"], PASSWORD, "127.0.0.1")
+    session, token = await auth.setup(
+        anonymous, setup["setup_code"], PASSWORD, "127.0.0.1", username=OWNER_USERNAME
+    )
     return auth, session, token
 
 
@@ -106,7 +109,9 @@ async def test_setup_recovery_and_rotation_leave_ring_and_pairings_intact(paths)
     with pytest.raises(AuthStoreError):
         issue_setup(paths)
     anonymous, _ = auth.create()
-    second, second_token = await auth.authenticate(anonymous, PASSWORD, "127.0.0.2")
+    second, second_token = await auth.authenticate(
+        anonymous, PASSWORD, "127.0.0.2", username=OWNER_USERNAME
+    )
     assert second.authenticated and second_token != token
     issue_setup(paths, reset=True)
     await auth.refresh()
@@ -138,7 +143,7 @@ async def test_local_reset_after_password_save_cannot_mint_session(paths, monkey
     monkeypatch.setattr(auth.store, "save", reset_after_save)
     with pytest.raises(WebError) as error:
         if action == "setup":
-            await auth.setup(session, code, PASSWORD, "peer")
+            await auth.setup(session, code, PASSWORD, "peer", username=OWNER_USERNAME)
         else:
             await auth.change_password(session, PASSWORD, "a different local password", "peer")
     assert error.value.code == "authentication_changed"
@@ -247,3 +252,101 @@ async def test_cancelled_auth_reads_coalesce_and_retirement_keeps_real_worker(pa
     release.set()
     await auth.close()
     assert not auth.tasks
+
+
+@pytest.mark.asyncio
+async def test_wrong_username_verifies_password_and_never_creates_owner_session(paths, monkeypatch):
+    from halo_server.web import auth as module
+
+    auth, session, _ = await enrolled(paths)
+    auth.revoke(session.key)
+    anonymous, _ = auth.create()
+    before = AuthStore(paths).load()
+    verified = []
+    original = module._verify
+
+    def verify(value, verifier):
+        verified.append(value)
+        return original(value, verifier)
+
+    monkeypatch.setattr(module, "_verify", verify)
+    names = ("visitor", "Admin", " admin", "admin ", "admіn", None, {}, "a" * 65)
+    for index, username in enumerate(names):
+        with pytest.raises(WebError) as error:
+            await auth.authenticate(anonymous, PASSWORD, str(index), username=username)
+        assert error.value.code == "authentication_failed" and error.value.status == 401
+        assert not any(row.authenticated for row in auth.sessions.values())
+    assert verified == [PASSWORD.encode()] * len(names)
+    with pytest.raises(WebError) as error:
+        await auth.authenticate(
+            anonymous, "a different long password", "wrong-password", username=OWNER_USERNAME
+        )
+    assert error.value.code == "authentication_failed" and error.value.status == 401
+    assert AuthStore(paths).load() == before
+    assert set(before.as_dict()) == {
+        "version",
+        "revision",
+        "verifier",
+        "setup_digest",
+        "setup_expires_at",
+    }
+    assert before.version == 1
+    authenticated, _ = await auth.authenticate(
+        anonymous, PASSWORD, "success", username=OWNER_USERNAME
+    )
+    assert authenticated.authenticated
+    await auth.close()
+
+
+@pytest.mark.asyncio
+async def test_bad_username_attempts_share_login_rate_limit(paths):
+    auth, session, _ = await enrolled(paths)
+    auth.revoke(session.key)
+    anonymous, _ = auth.create()
+    for _ in range(5):
+        with pytest.raises(WebError) as error:
+            await auth.authenticate(anonymous, PASSWORD, "peer", username="visitor")
+        assert error.value.code == "authentication_failed"
+    with pytest.raises(WebError) as error:
+        await auth.authenticate(anonymous, PASSWORD, "peer", username=OWNER_USERNAME)
+    assert error.value.code == "rate_limited" and error.value.status == 429
+    assert not any(row.authenticated for row in auth.sessions.values())
+    await auth.close()
+
+
+@pytest.mark.asyncio
+async def test_wrong_setup_username_does_not_consume_enrollment_code(paths):
+    code = issue_setup(paths)["setup_code"]
+    auth = Authentication(paths)
+    await auth.refresh()
+    anonymous, _ = auth.create()
+    before = AuthStore(paths).load()
+    with pytest.raises(WebError) as error:
+        await auth.setup(anonymous, code, PASSWORD, "peer", username="visitor")
+    assert error.value.code == "setup_rejected"
+    assert AuthStore(paths).load() == before
+    assert not any(row.authenticated for row in auth.sessions.values())
+    owner, _ = await auth.setup(anonymous, code, PASSWORD, "peer", username=OWNER_USERNAME)
+    assert owner.authenticated
+    assert AuthStore(paths).load().setup_digest is None
+    await auth.close()
+
+
+@pytest.mark.asyncio
+async def test_owner_password_rotation_revokes_sessions_and_preserves_v1_record(paths):
+    auth, session, token = await enrolled(paths)
+    before = AuthStore(paths).load()
+    new_password = "a rotated private owner password"
+    owner, new_token = await auth.change_password(session, PASSWORD, new_password, "rotate")
+    assert owner.authenticated and new_token != token
+    assert auth.get(token) is None
+    record = AuthStore(paths).load()
+    assert record.version == 1 and record.revision > before.revision
+    assert set(record.as_dict()) == set(before.as_dict())
+    anonymous, _ = auth.create()
+    with pytest.raises(WebError) as error:
+        await auth.authenticate(anonymous, PASSWORD, "old", username=OWNER_USERNAME)
+    assert error.value.code == "authentication_failed"
+    signed_in, _ = await auth.authenticate(anonymous, new_password, "new", username=OWNER_USERNAME)
+    assert signed_in.authenticated
+    await auth.close()

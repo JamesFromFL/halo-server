@@ -100,3 +100,39 @@ test('rotated sessions refresh CSRF; clear prevents another mutation', async () 
   client.clear();
   await assert.rejects(client.post('controls', {}));
 });
+
+for (const path of ['setup', 'login']) {
+  test(`${path} sends owner credentials only in the protected JSON body and does not retry failure`, async () => {
+    const credentials = {
+      ...(path === 'setup' ? { setup_code: 'test-only-setup-code' } : {}),
+      username: 'admin',
+      password: 'test-only-owner-password',
+    };
+    const calls: { url: string; init: RequestInit }[] = [];
+    const client = new ApiClient(async (url, init) => {
+      if (init?.method === 'GET') return ok({ ...session, authenticated: false });
+      calls.push({ url: String(url), init: init! });
+      return new Response(
+        JSON.stringify({
+          ok: false,
+          error: { code: 'authentication_failed', message: 'Sign-in failed' },
+        }),
+        { status: 401 },
+      );
+    });
+    await client.session();
+    await assert.rejects(
+      client.post(path, credentials),
+      (error: unknown) => error instanceof ApiError && error.status === 401 && !error.possiblySent,
+    );
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].url, `/api/web/v1/${path}`);
+    assert.equal(calls[0].init.credentials, 'same-origin');
+    assert.equal(calls[0].init.cache, 'no-store');
+    assert.equal(calls[0].init.redirect, 'error');
+    const headers = calls[0].init.headers as Record<string, string>;
+    assert.equal(headers['X-Halo-CSRF'], session.csrf_token);
+    assert.equal(headers['Content-Type'], 'application/json');
+    assert.deepEqual(JSON.parse(String(calls[0].init.body)), credentials);
+  });
+}

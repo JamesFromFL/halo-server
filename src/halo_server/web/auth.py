@@ -16,6 +16,7 @@ from cryptography.exceptions import InvalidKey
 from cryptography.hazmat.primitives.kdf.argon2 import Argon2id
 
 from halo_server.private_json import PrivateJsonError, PrivateJsonStore
+from halo_server.web.defaults import OWNER_USERNAME
 from halo_server.web.errors import WebError, text
 from halo_server.web.settings import web_directory
 
@@ -103,6 +104,17 @@ def issue_setup(paths, *, reset=False):
 
 def _digest(value):
     return hashlib.sha256(value.encode()).hexdigest()
+
+
+def _owner_matches(value):
+    # A public single-owner identifier; the password remains the secret. Keep
+    # the v1 credential record readable by retained recovery releases.
+    return (
+        isinstance(value, str)
+        and len(value) <= 64
+        and value.isascii()
+        and hmac.compare_digest(value, OWNER_USERNAME)
+    )
 
 
 def _password(value):
@@ -303,11 +315,15 @@ class Authentication:
         task.add_done_callback(self._finished)
         return await asyncio.shield(task)
 
-    async def authenticate(self, session, password, peer):
+    async def authenticate(self, session, password, peer, *, username):
         self.rates.admit(peer)
         encoded = _password(password)
         record = self.record
-        if record.verifier is None or not await self._work(_verify, encoded, record.verifier):
+        # A wrong username must not bypass password verification or throttling.
+        verified = record.verifier is not None and await self._work(
+            _verify, encoded, record.verifier
+        )
+        if not verified or not _owner_matches(username):
             raise WebError(
                 "authentication_failed", "Halo authentication was not accepted", status=401
             )
@@ -319,12 +335,13 @@ class Authentication:
         self.revoke(session.key)
         return self.create(authenticated=True)
 
-    async def setup(self, session, code, password, peer):
+    async def setup(self, session, code, password, peer, *, username):
         self.rates.admit(peer)
         encoded = _password(password)
         record = self.record
         if (
-            record.verifier is not None
+            not _owner_matches(username)
+            or record.verifier is not None
             or record.setup_digest is None
             or self.wall_clock() >= record.setup_expires_at
             or not isinstance(code, str)

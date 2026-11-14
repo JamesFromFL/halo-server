@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { OWNER_USERNAME } from '../lib/auth.ts';
   import { PASSWORD_MIN_LENGTH, PASSWORD_MAX_LENGTH } from '../lib/password.ts';
   import { onMount, onDestroy } from 'svelte';
   import { api, ApiError, errorMessage, operationId } from '../lib/api.ts';
@@ -459,6 +460,7 @@
   </section>{/if}
 <h3>Web access</h3>
 <div class="group">
+  <Row title="Owner username" subtitle={OWNER_USERNAME} />
   <Row title="Halo password" subtitle="Separate from your Ring account"
     ><button disabled={busy} onclick={togglePassword}>Change password…</button></Row
   ><Row title="This browser" subtitle="Sign out of Halo web management"
@@ -466,6 +468,14 @@
   >
 </div>
 {#if showPassword}<form class="group form-section form" onsubmit={password}>
+    <label
+      >Username<input
+        name="username"
+        value={OWNER_USERNAME}
+        autocomplete="username"
+        readonly
+      /></label
+    >
     <label
       >Current Halo password<input
         type="password"

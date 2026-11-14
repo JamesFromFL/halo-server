@@ -1,9 +1,11 @@
 <script lang="ts">
+  import { OWNER_USERNAME, USERNAME_MAX_LENGTH } from '../lib/auth.ts';
   import { PASSWORD_MIN_LENGTH, PASSWORD_MAX_LENGTH } from '../lib/password.ts';
   import { api, errorMessage } from '../lib/api.ts';
   import type { Session } from '../lib/types.ts';
   let { session, onauthenticated }: { session: Session; onauthenticated: () => Promise<void> } =
     $props();
+  let username = $state('');
   let password = $state('');
   let confirmation = $state('');
   let setupCode = $state('');
@@ -20,7 +22,9 @@
     try {
       await api.post(
         session.setup_required ? 'setup' : 'login',
-        session.setup_required ? { setup_code: setupCode, password } : { password },
+        session.setup_required
+          ? { setup_code: setupCode, username: OWNER_USERNAME, password }
+          : { username, password },
       );
       await onauthenticated();
     } catch (e) {
@@ -48,6 +52,33 @@
     </p>
     {#if error}<div class="notice error" role="alert">{error}</div>{/if}
     <form class="form" onsubmit={submit}>
+      {#if session.setup_required}
+        <label
+          >Username<input
+            name="username"
+            value={OWNER_USERNAME}
+            autocomplete="username"
+            autocapitalize="off"
+            spellcheck="false"
+            readonly
+          /></label
+        >
+        <small>Halo uses one owner account named {OWNER_USERNAME}. Choose its password below.</small
+        >
+      {:else}
+        <label
+          >Username<input
+            name="username"
+            bind:value={username}
+            autocomplete="username"
+            autocapitalize="off"
+            spellcheck="false"
+            maxlength={USERNAME_MAX_LENGTH}
+            required
+          /></label
+        >
+        <small>The owner username is {OWNER_USERNAME} (lowercase).</small>
+      {/if}
       {#if session.setup_required}<label
           >Setup code<input
             bind:value={setupCode}
@@ -60,6 +91,7 @@
       <label
         >{session.setup_required ? 'Create password' : 'Password'}<input
           type="password"
+          name="password"
           bind:value={password}
           autocomplete={session.setup_required ? 'new-password' : 'current-password'}
           required
@@ -70,6 +102,7 @@
       {#if session.setup_required}<label
           >Repeat password<input
             type="password"
+            name="password-confirmation"
             bind:value={confirmation}
             autocomplete="new-password"
             required

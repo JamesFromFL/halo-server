@@ -21,6 +21,7 @@ from halo_server.configuration import (
     is_loopback_host,
 )
 from halo_server.paths import ServerPaths
+from halo_server.web.defaults import DEFAULT_WEB_PORT
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -78,7 +79,12 @@ def build_parser() -> argparse.ArgumentParser:
     web_commands.add_parser("serve", help="Run the independent HTTPS companion")
     web_configure = web_commands.add_parser("configure", help="Prepare local HTTPS access")
     web_configure.add_argument("--host", default="127.0.0.1")
-    web_configure.add_argument("--port", type=_tcp_port, default=18444)
+    web_configure.add_argument(
+        "--port",
+        type=_tcp_port,
+        default=DEFAULT_WEB_PORT,
+        help=f"HTTPS port (default: {DEFAULT_WEB_PORT})",
+    )
     web_configure.add_argument("--canonical-host")
     web_configure.add_argument(
         "--renew-certificate",

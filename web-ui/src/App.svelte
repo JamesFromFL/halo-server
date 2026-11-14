@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { OWNER_USERNAME } from './lib/auth.ts';
   import { PASSWORD_MIN_LENGTH, PASSWORD_MAX_LENGTH } from './lib/password.ts';
   import { onMount, tick } from 'svelte';
   import { API, api, errorMessage } from './lib/api.ts';
@@ -380,6 +381,14 @@
     ><p>Recent authentication is required for this sensitive action.</p>
     {#if reauthError}<div class="notice error" role="alert">{reauthError}</div>{/if}
     <form class="form" onsubmit={doReauth}>
+      <label
+        >Username<input
+          name="username"
+          value={OWNER_USERNAME}
+          autocomplete="username"
+          readonly
+        /></label
+      >
       <label
         >Password<input
           type="password"

@@ -52,13 +52,22 @@ halo-server web
 ```
 
 `configure` prints the HTTPS URL and certificate fingerprint. `setup` prints a
-short-lived single-use enrollment code. Enter that code and a new **Halo web
-password** in the browser. The web password is separate from the Ring password.
-Do not share the enrollment code or put it in a URL, screenshot, journal, or chat.
-Keep using the existing Ring session when it is already connected.
+ten-minute, single-use enrollment code. Open the console, use the fixed owner
+username **`admin`**, enter the enrollment code, and choose a **Halo web password**
+privately in the browser. The password must contain 15–128 characters. There is
+no default password, and the Halo password is separate from the Ring password.
+The username is exactly lowercase `admin`; it is a public account name, not a
+second secret. This console currently has one owner account.
 
-The default address is `https://127.0.0.1:18444`. Local-network binding requires
-explicit owner configuration, for example:
+Do not share the enrollment code or put it in a URL, screenshot, journal, or chat.
+Keep using the existing Ring session when it is already connected. If you already
+created a Halo web password on an earlier release, sign in with `admin` and that
+same password after upgrading. No new enrollment or password reset is required.
+
+The default HTTPS port is **18444**, and the initial address is
+`https://127.0.0.1:18444`. The port can be overridden with `--port` during
+configuration. Local-network binding requires explicit owner configuration, for
+example:
 
 ```sh
 halo-server web configure --host 192.168.1.20 --canonical-host 192.168.1.20 --allow-lan
@@ -119,8 +128,16 @@ If the web password is lost, run:
 halo-server web reset --yes
 ```
 
-This revokes web authentication and issues a new enrollment code. It preserves
+This revokes web authentication and issues a new enrollment code. Use `admin`
+and choose a replacement password privately in the browser. Recovery preserves
 Ring credentials, HomeKit pairing, device selection, and recording preferences.
+
+Adding the fixed owner username does not change the stored password format or
+raise the managed release reader floor. An explicit rollback to a retained web
+release from before this change restores its password-only sign-in form; use the
+same current Halo password there. That older interface still requires password
+authentication. Returning to this release restores the `admin` username field.
+Release rollback never restores an older password or other mutable state.
 
 ## Everyday use
 
