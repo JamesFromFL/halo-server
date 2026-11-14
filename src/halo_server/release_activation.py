@@ -445,6 +445,9 @@ class ReleaseActivator:
 
             mode_store = ManagedModeStore(self.state_directory / "configuration.json")
             await owned_thread(mode_store.preflight, self.initial_mode)
+            configure = getattr(self.service, "configure", None)
+            if configure is not None:
+                await configure(verified, first_install=selected.active is None)
             if self.prepare_unit:
                 await self.service.prepare(self.prefix)
             await self.service.stop()
@@ -466,6 +469,9 @@ class ReleaseActivator:
             await owned_thread(mode_store.prepare, self.initial_mode)
             if selected.active is None:
                 await owned_thread(self.install, verified)
+            before_select = getattr(self.service, "before_select", None)
+            if before_select is not None:
+                await before_select(verified)
             policy = await owned_thread(self.policy.advance, reader)
             try:
                 selected = await owned_thread(
@@ -501,6 +507,10 @@ class ReleaseActivator:
                         raise ActivationError(code="reader_too_old")
                 except Exception:
                     return ActivationResult("stopped", selected, policy, "rollback_incompatible")
+                if configure is not None:
+                    await configure(old)
+                if before_select is not None:
+                    await before_select(old)
                 selected = await owned_thread(
                     self.selection.activate, previous, expected_revision=selected.revision
                 )

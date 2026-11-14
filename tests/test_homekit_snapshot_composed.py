@@ -3,12 +3,12 @@
 import asyncio
 import concurrent.futures
 import json
-from pathlib import Path
 
 import pytest
 from test_homekit_bridge import ADAPTER, NODE
 from test_homekit_broker import setup_broker
 from test_homekit_snapshot_codec import jpeg_source, rgb
+from test_native_service import Camera
 
 from halo_server.homekit.runtime import HomeKitRuntime
 from halo_server.media.jpeg import inspect_jpeg
@@ -88,10 +88,7 @@ async def test_public_hap_snapshots_reach_isolated_worker_exact_size_and_gracefu
         return result
 
     client.submit_snapshot_for_device = submit
-    hap_entry = (
-        Path(__file__).resolve().parents[1]
-        / "homekit-adapter/node_modules/@homebridge/hap-nodejs/dist/index.js"
-    )
+    hap_entry = ADAPTER.parents[1] / "node_modules/@homebridge/hap-nodejs/dist/index.js"
     script = (
         SCENARIO.replace("__ROOT__", json.dumps(ADAPTER.as_uri()))
         .replace("__HAP__", json.dumps(hap_entry.resolve().as_uri()))
@@ -145,6 +142,106 @@ async def test_public_hap_snapshots_reach_isolated_worker_exact_size_and_gracefu
         assert requests == [True, False, False, False]
         assert client.submissions == 4
         assert images.pending_resources == 0 and images.cache_bytes > 0
+        process = runtime._process
+        await asyncio.wait_for(runtime.stop(), 4)
+        assert process.returncode == 0
+        assert images.pending_resources == images.cache_bytes == 0
+        assert not broker._snapshot_jobs and service.homekit.pending_resources == 0
+    finally:
+        await runtime.stop()
+        await images.close()
+
+
+@pytest.mark.asyncio
+async def test_seven_camera_tiles_share_two_image_slots_through_public_hap(tmp_path):
+    cameras = [Camera(str(index + 42)) for index in range(7)]
+    broker, old_boot, _, service, client, _ = await setup_broker(tmp_path, cameras=cameras)
+    await broker.retired(old_boot)
+    images = HomeKitSnapshots(service.homekit)
+    await images.qualify()
+    assert images.ready
+    broker.snapshot_manager = images
+    source = jpeg_source(640, 360)
+    requested = []
+    peak_jobs = 0
+
+    def submit(device, *, fresh=False):
+        nonlocal peak_jobs
+        assert device in cameras and fresh is False
+        requested.append(device.id)
+        peak_jobs = max(peak_jobs, images.pending_resources)
+        result = concurrent.futures.Future()
+        result.set_result(source)
+        return result
+
+    client.submit_snapshot_for_device = submit
+    exercise = r"""
+async function exercise(){
+ try {
+  for(let i=0;i<1000&&!session.inventoryComplete;i++)await new Promise(r=>setTimeout(r,2));
+  const cameras=[];
+  camera={closeStreams:()=>Promise.all(cameras.map(item=>item.closeStreams()))};
+  for(let i=0;i<7;i++){
+   const native=session.camera(String(42+i));
+   const item=new CameraAccessory({camera_id:String(42+i),accessory_id:randomUUID(),
+     username:`02:11:22:33:44:${String(55+i)}`,doorbell:false,audio:null},native.info,{native});
+   cameras.push(item);
+   await item.streamingDelegate.synchronizePolicy();
+  }
+  await Promise.all(cameras.map(async(item,index)=>{
+   const image=await item.controller.handleSnapshotRequest(
+     360,640,undefined,hap.ResourceRequestReason.PERIODIC);
+   await writeFile(`${__OUTPUT__}/tile-${index}.jpg`,image,{mode:0o600});
+  }));
+  await send('status',{state:'ready',reason:'seven-tiles-pass'});
+ }catch{await send('status',{state:'degraded',reason:'seven-tiles-failed'});}
+}
+"""
+    before, tail = SCENARIO.split("async function exercise(){", 1)
+    _, after = tail.split("channel.on('message'", 1)
+    hap_entry = ADAPTER.parents[1] / "node_modules/@homebridge/hap-nodejs/dist/index.js"
+    script = (
+        (before + exercise + "channel.on('message'" + after)
+        .replace("__ROOT__", json.dumps(ADAPTER.as_uri()))
+        .replace("__HAP__", json.dumps(hap_entry.resolve().as_uri()))
+        .replace("__OUTPUT__", json.dumps(str(tmp_path)))
+    )
+    entry = tmp_path / "seven-tiles.mjs"
+    entry.write_text(script)
+    outcome = asyncio.get_running_loop().create_future()
+
+    async def notice(message):
+        if message["kind"] == "status":
+            if not outcome.done():
+                outcome.set_result(message["payload"]["reason"])
+        else:
+            await broker.notice(message)
+
+    async def retired(boot):
+        service.homekit.fence()
+        await images.retired(boot)
+        await broker.retired(boot)
+
+    runtime = HomeKitRuntime(
+        NODE,
+        entry,
+        build_id="seven-camera-snapshot-fixture",
+        on_ready=broker.ready,
+        on_request=broker.request,
+        on_replied=broker.replied,
+        on_notice=notice,
+        on_retired=retired,
+        max_restarts=0,
+    )
+    broker.runtime = runtime
+    try:
+        await asyncio.wait_for(runtime.start(), 4)
+        assert await asyncio.wait_for(outcome, 15) == "seven-tiles-pass"
+        assert sorted(requested) == [camera.id for camera in cameras]
+        assert peak_jobs == 2
+        for index in range(7):
+            assert (tmp_path / f"tile-{index}.jpg").read_bytes() == source
+        assert images.pending_resources == 0
         process = runtime._process
         await asyncio.wait_for(runtime.stop(), 4)
         assert process.returncode == 0

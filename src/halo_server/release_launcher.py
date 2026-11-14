@@ -14,7 +14,14 @@ import shlex
 import stat
 from pathlib import Path
 
-from halo_server.release import ReleaseError, _open_directory, _read_at, canonical
+from halo_server.release import (
+    ReleaseError,
+    _json,
+    _open_directory,
+    _read_at,
+    _read_relative,
+    canonical,
+)
 
 LAUNCHER = """import argparse,hashlib,os,stat,sys,types
 from pathlib import Path
@@ -54,6 +61,44 @@ except Exception as error:
     print("halo-server: managed release unavailable: " + str(error), file=sys.stderr)
     raise SystemExit(1)
 """
+
+
+def verify_installed_launchers(prefix: Path, *, interpreter: Path) -> None:
+    """Read-only verification before a browser can restart the fixed unit."""
+    directory = _open_directory(Path(prefix))
+    try:
+        raw, _ = _read_relative(
+            directory, Path("libexec/launcher-manifest.json"), limit=16384, mode=0o444
+        )
+        manifest = _json(raw)
+        names = {
+            "halo_release_runtime.py",
+            "release_guard.py",
+            "launcher.py",
+            "bin/halo-server",
+            "bin/halo-release",
+        }
+        if (
+            set(manifest) != {"version", "interpreter", "files"}
+            or type(manifest["version"]) is not int
+            or manifest["version"] != 1
+            or manifest["interpreter"] != str(interpreter)
+            or not isinstance(manifest["files"], dict)
+            or set(manifest["files"]) != names
+        ):
+            raise ReleaseError("unsafe_launcher")
+        for name in names:
+            path = Path(name if name.startswith("bin/") else "libexec/" + name)
+            body, _ = _read_relative(
+                directory,
+                path,
+                limit=1024 * 1024,
+                mode=0o555 if name.startswith("bin/") else 0o444,
+            )
+            if hashlib.sha256(body).hexdigest() != manifest["files"][name]:
+                raise ReleaseError("unsafe_launcher")
+    finally:
+        os.close(directory)
 
 
 def _directory(parent, name):

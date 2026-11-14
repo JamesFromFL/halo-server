@@ -1,0 +1,176 @@
+{
+  "schema": 1,
+  "source_hash": "a345212543204f49f46fbb8f90a5698a81145d89049588fe0ee7683fe9936470",
+  "source_files": [
+    {
+      "path": ".prettierignore",
+      "sha256": "3ea790a8412bd5987adcfffacde56cbd543238c8f11ffb0daf9c37e66f3f9f7e"
+    },
+    {
+      "path": ".prettierrc.json",
+      "sha256": "e206d48b92126c4fa003a6d6088d078eda0bc416caca1678de1b6851f42740ee"
+    },
+    {
+      "path": "README.md",
+      "sha256": "be006fbc337a2b72c76ad77c97e4e906319100fc82f241844b047fbea4482a52"
+    },
+    {
+      "path": "index.html",
+      "sha256": "88b423240265215718b5ba44934bbfd109b4c2fe3195319c7d8ba0169528b8f5"
+    },
+    {
+      "path": "package-lock.json",
+      "sha256": "9aa3da2606a28005ea3c078a5931940169ac1ee9441f809081e49adeee589c9b"
+    },
+    {
+      "path": "package.json",
+      "sha256": "bfbd510633bd20b6e79c591d866f5326585528ed32866fe524a55037c3b6550b"
+    },
+    {
+      "path": "public/THIRD_PARTY_NOTICES.txt",
+      "sha256": "d032955594deb5f32e2b15fee7775cd8ec4f1423587c4a0da1f97c44f0b58fd3"
+    },
+    {
+      "path": "public/halo.png",
+      "sha256": "36107b698063ceba045c4875dfce5501b5d3cbd38d190ed1eefea7450f4a5cc3"
+    },
+    {
+      "path": "scripts/browser-smoke.mjs",
+      "sha256": "a2ff5c214f2a430baae70fd73a928d5cb3fe35f850e6fcc441b726697c184bbc"
+    },
+    {
+      "path": "scripts/build-manifest.mjs",
+      "sha256": "45b68e586c795291dd929ca4e4e0a23605fd8769bd3489379ff106d9aadc6d17"
+    },
+    {
+      "path": "scripts/licenses.mjs",
+      "sha256": "8ddb7b83a22aeaa6a9ca00cb9abfa075d9db2b04c907bbd81a363d9456915cb2"
+    },
+    {
+      "path": "src/App.svelte",
+      "sha256": "c0636577c00215fbc675230f1f2c97e683b151072472b8eb2ea5e9daa255f712"
+    },
+    {
+      "path": "src/components/Confirm.svelte",
+      "sha256": "38ec48daa823352273b8cc1003926ab78ba8662e1056a659dd69e40d1a9f366b"
+    },
+    {
+      "path": "src/components/Icon.svelte",
+      "sha256": "b32ca93c297d70869397ac207922c390a616534fe54a4523fae134813d5eacaf"
+    },
+    {
+      "path": "src/components/OperationStatus.svelte",
+      "sha256": "fae5b65f9bb6fb06686ecff75086f54d358b3d4c4ae24c5a0b4ddd9d3813c177"
+    },
+    {
+      "path": "src/components/PairingCode.svelte",
+      "sha256": "033fb52e6033c85211c75a456d70e1802ddebab0af939f57c3b822d843c7ee01"
+    },
+    {
+      "path": "src/components/Row.svelte",
+      "sha256": "0d05134ff5562e58218e22112ab06651fdad31fdd756bb0b34287649c7be9886"
+    },
+    {
+      "path": "src/components/Status.svelte",
+      "sha256": "c799c0bae3d01254ddf1740513e752b42508c1e7f21c7fbf973255fd0c6f00c2"
+    },
+    {
+      "path": "src/lib/api.ts",
+      "sha256": "d3d1a7fddf35905277b5ded70ed3078cc0be1ae4b70629795f9ba673f3a157a8"
+    },
+    {
+      "path": "src/lib/model.ts",
+      "sha256": "58e2681ddf6cc1540dc74ca3ec7b639345961f05e58d6c0e7a2b7d60f9e54202"
+    },
+    {
+      "path": "src/lib/password.ts",
+      "sha256": "df2227735cb933e92ee9c93feced7b17dba8d674168a54b97d5d87f588765913"
+    },
+    {
+      "path": "src/lib/types.ts",
+      "sha256": "dc31a4330e848737f080d7fea8a9f441e49d21482f357e554444170a04f58bc4"
+    },
+    {
+      "path": "src/main.ts",
+      "sha256": "3f874b3ce454e0143cdaea74e4721f3ff97990e8e6eef827fc06796504a2950c"
+    },
+    {
+      "path": "src/pages/Activity.svelte",
+      "sha256": "aa7492ae6c4dbc67f121aa875ec87e9a241e222e96a2772cb64218957e80e73f"
+    },
+    {
+      "path": "src/pages/Devices.svelte",
+      "sha256": "ce83bd6e5c5cd266ca01e481d3a3d6f8d350f5a3868e09751afec04782da5d82"
+    },
+    {
+      "path": "src/pages/Diagnostics.svelte",
+      "sha256": "4b34abd29a58f1411031f8073c718fd8f3b048bc01c3c4fb5529d3e0c56986d6"
+    },
+    {
+      "path": "src/pages/Integrations.svelte",
+      "sha256": "3765573458a1429ef54abe8bc09232a17aab2697868bc32c7c70e208388f4de4"
+    },
+    {
+      "path": "src/pages/Overview.svelte",
+      "sha256": "1dc0130402b32f6ffc815c7171a39f6a9165e97723ec0d344dca83855d4290fb"
+    },
+    {
+      "path": "src/pages/Settings.svelte",
+      "sha256": "5895f7b3a584886d4c2f1730ebae3d3a7e6f250bd98a7145802d2a699cf80ce4"
+    },
+    {
+      "path": "src/pages/SignIn.svelte",
+      "sha256": "68086cef7d8e92d9e5b7e469ed6b63e2e1dee2fb1dfc6de9fce102dec9094025"
+    },
+    {
+      "path": "src/theme.css",
+      "sha256": "2ceba2cf9a013484fdf77e87441cfd44fafe8b9b549977d532dd7d2be12d4787"
+    },
+    {
+      "path": "svelte.config.js",
+      "sha256": "3c328d509de22605aa7d1bcfd4a34941b99c2ecaea7026dde935785d8b6661e4"
+    },
+    {
+      "path": "tests/api.test.ts",
+      "sha256": "7af2e423e61a6fd330b063d3dd3f4c6b2b831cdcf82ddf487b29f72d6ae69842"
+    },
+    {
+      "path": "tests/model.test.ts",
+      "sha256": "deacc957c7233d3885db2dfbc5eb802446cc5d06a1106ddd54c7a76cbd44570a"
+    },
+    {
+      "path": "tests/password.test.ts",
+      "sha256": "aec04526ca50003fb7a277b15fb5b7817064de2d2992a5d1906bc1f5e3fa0ca7"
+    },
+    {
+      "path": "tsconfig.json",
+      "sha256": "0e48324abd4267d1d2183e0d5be45e379512af7ccd2e0a3a58a27d96630ac8bf"
+    },
+    {
+      "path": "vite.config.ts",
+      "sha256": "2d99afda1829a29197e9df767c64c3016f8c21ebc8d61bbd2ad29c7de0af245d"
+    }
+  ],
+  "assets": [
+    {
+      "path": "THIRD_PARTY_NOTICES.txt",
+      "sha256": "27b3a540203dab45ee90ade440f4840b513dd2055969a84a9ebccb561fd14799"
+    },
+    {
+      "path": "assets/index-BZPF6Fbe.js",
+      "sha256": "596dc54f9f79ae865608a3ecb86e5b1c556bc7f2324a3b125810cf63c3a5ab27"
+    },
+    {
+      "path": "assets/index-DeDQZVdt.css",
+      "sha256": "5f5d0e5662b7b93f8c4517d01d491e2e01606c439939c8cf5800dd2622a62d9a"
+    },
+    {
+      "path": "halo.png",
+      "sha256": "36107b698063ceba045c4875dfce5501b5d3cbd38d190ed1eefea7450f4a5cc3"
+    },
+    {
+      "path": "index.html",
+      "sha256": "152c41c0ce95eb212b321a6886a7b215ee1a5f7ff9e8150323dea5a5f929cffd"
+    }
+  ]
+}

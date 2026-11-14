@@ -153,6 +153,7 @@ async def test_warm_revocation_retains_failed_cleanup_and_cannot_rearm_around_it
         with pytest.raises(ExceptionGroup):
             await owner.refresh(boot)
         assert owner.cleanup_failures == owner.pending_resources == 1
+        assert owner.warm_budget == {"capacity": 2, "reserved": 1}
         assert owner.status(scope).state == "cleanup_pending"
         with pytest.raises(ExceptionGroup):
             await owner.close()
@@ -161,6 +162,7 @@ async def test_warm_revocation_retains_failed_cleanup_and_cannot_rearm_around_it
         source.fail_close = False
         await owner.retired(boot)
         assert not owner.pending_resources and not captures.pending_resources
+        assert owner.warm_budget == {"capacity": 2, "reserved": 0}
         await owner.ready(boot)
         assert not owner.pending_resources  # Revoked owner setting stays off.
     finally:
@@ -189,6 +191,8 @@ async def test_warm_owner_capacity_counts_pending_acquisitions_and_old_boot_does
         await owner.ready(boot)
         await until(lambda: len(opened) == 2)
         assert owner.pending_resources == 2
+        assert owner.warm_budget == {"capacity": 2, "reserved": 2}
+        assert all(entry.capture is None for entry in owner._entries.values())
         assert owner.status(scopes[2]).state == "capacity"
         assert not owner.status(scopes[2]).history_ready
         await owner.refresh(boot)

@@ -1,0 +1,35 @@
+{
+  "name": "halo-server-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "GPL-3.0-or-later",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "check": "svelte-check --tsconfig ./tsconfig.json --fail-on-warnings",
+    "test": "node --experimental-strip-types --test --test-isolation=none tests/*.test.ts",
+    "build": "vite build && node scripts/licenses.mjs && node scripts/build-manifest.mjs",
+    "verify": "npm run format:check && npm run check && npm test && npm run build",
+    "test:browser": "node scripts/browser-smoke.mjs",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "dependencies": {
+    "qrcode": "1.5.4",
+    "svelte": "5.57.3"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.65.1",
+    "@sveltejs/vite-plugin-svelte": "7.3.1",
+    "@types/node": "26.6.6",
+    "@types/qrcode": "1.5.6",
+    "prettier": "3.10.1",
+    "prettier-plugin-svelte": "4.1.1",
+    "svelte-check": "4.7.8",
+    "typescript": "6.0.3",
+    "vite": "8.3.8"
+  }
+}

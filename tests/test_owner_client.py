@@ -150,6 +150,15 @@ async def test_owner_camera_pages_are_bounded_and_complete():
 
 
 @pytest.mark.asyncio
+async def test_recording_pages_preserve_observed_global_warm_reservations():
+    client = Pages()
+    client.fixture.view["warm_budget"] = {"capacity": 2, "reserved": 1}
+    page = await client.homekit_recording_cameras()
+    assert len(page["cameras"]) == 33 and client.calls == 2
+    assert page["warm_budget"] == {"capacity": 2, "reserved": 1}
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("changed", ["profile_id", "account_generation", "revision"])
 async def test_owner_camera_pages_never_merge_changed_authority(changed):
     client = Pages(changed=changed)

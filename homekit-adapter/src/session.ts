@@ -50,6 +50,7 @@ interface VideoResource { scope: MediaScope; retired: boolean; endpoint: VideoEn
   ended: () => void; stopping: Promise<void> | null }
 interface SnapshotJob {
   scope: MediaScope; transferId: string | null; cancelled: boolean;
+  width: number; height: number; reason: SnapshotReason; dispatched: boolean; deadline: number;
   resolve: (value: Buffer) => void; reject: (error: Error) => void;
   result: Promise<Buffer>; timer: NodeJS.Timeout; receiver: ReceiveHandle | null; cleanupTimer: NodeJS.Timeout | null;
 }
@@ -104,6 +105,7 @@ export class AdapterSession {
   private readonly live = new Map<string, Resource>();
   private readonly speakers = new Map<string, Resource>();
   private readonly snapshots = new Map<string, SnapshotJob>();
+  private dispatchingSnapshots = false;
   private readonly recordings = new Map<string, RecordingJob>();
   private readonly policyChanges = new Set<string>();
   private readonly policySynchronization = new Map<string, Promise<void>>();
@@ -710,30 +712,22 @@ export class AdapterSession {
     reason: SnapshotReason = "explicit", signal?: AbortSignal): Promise<Buffer> {
     const scope = {...this.entry(cameraId, identity, "snapshots").camera.scope};
     if (signal?.aborted) throw new ProtocolError("snapshot-cancelled");
-    if ([...this.snapshots.values()].filter(job => !job.cancelled).length >= MAX_SNAPSHOT_REQUESTS ||
-        this.snapshots.size >= MAX_SESSION_REQUESTS) throw new ProtocolError("snapshot-capacity");
+    // Tile refreshes arrive together across cameras. Bound their metadata queue
+    // separately from the two actual image/transfer owners below.
+    if (this.snapshots.size >= MAX_SESSION_REQUESTS) throw new ProtocolError("snapshot-capacity");
     const jobId = randomUUID();
     validateDirection({v: 1, boot_id: this.bootId, request_id: randomUUID(), kind: "snapshot_request",
       payload: {scope, job_id: jobId, width, height, reason}}, "hap");
     let resolve!: (value: Buffer) => void, reject!: (error: Error) => void;
     const result = new Promise<Buffer>((ok, no) => {resolve = ok; reject = no;}); void result.catch(() => {});
-    const timer = setTimeout(() => this.cancelSnapshot(jobId, "snapshot-timeout"), Math.min(this.timeout, SNAPSHOT_TIMEOUT_MS));
-    const job: SnapshotJob = {scope, transferId: null, cancelled: false, result, resolve, reject, timer, receiver: null, cleanupTimer: null};
+    const lifetime = Math.min(this.timeout, SNAPSHOT_TIMEOUT_MS), deadline = performance.now() + lifetime;
+    const timer = setTimeout(() => this.cancelSnapshot(jobId, "snapshot-timeout"), lifetime);
+    const job: SnapshotJob = {scope, width, height, reason, deadline, dispatched: false,
+      transferId: null, cancelled: false, result, resolve, reject, timer, receiver: null, cleanupTimer: null};
     this.snapshots.set(jobId, job);
     const abort = (): void => this.cancelSnapshot(jobId, "snapshot-cancelled");
     signal?.addEventListener("abort", abort, {once:true});
-    // Keep the owned RPC correlation after caller cancellation. Its exact late
-    // READY/OPEN may authorize draining, but can never invoke the caller again.
-    const request = this.request("snapshot_request", {scope, job_id: jobId, width, height, reason}, message => {
-      if (message.payload.status === "ready" && message.payload.code === "ok") job.transferId = message.payload.transfer_id as string;
-    }, Math.min(this.timeout, SNAPSHOT_REPLY_TIMEOUT_MS));
-    void request.then(reply => {
-      if (reply.payload.status !== "ready" || reply.payload.code !== "ok") {
-        const code = reply.payload.code;
-        job.reject(new ProtocolError(typeof code === "string" && SNAPSHOT_REJECTION_CODES.has(code) ?
-          `snapshot-${code}` : "snapshot-rejected")); this.finishSnapshot(jobId, job);
-      }
-    }).catch(error => {job.reject(error as Error); this.cancelSnapshot(jobId, "snapshot-cancelled");});
+    this.dispatchSnapshots();
     try {
       const bytes = await result;
       if (signal?.aborted || job.cancelled || !sameScope(this.entry(cameraId, identity, "snapshots").camera.scope, scope)) throw new ProtocolError("resource-retired");
@@ -744,13 +738,55 @@ export class AdapterSession {
       if (!job.cancelled) this.finishSnapshot(jobId, job);
     }
   }
+  private dispatchSnapshots(): void {
+    if (this.dispatchingSnapshots || this.closed || this.quiesced || !this.complete) return;
+    this.dispatchingSnapshots = true;
+    try {
+      let active = [...this.snapshots.values()].filter(job => job.dispatched).length;
+      for (const [id, job] of this.snapshots) {
+        if (active >= MAX_SNAPSHOT_REQUESTS) break;
+        if (job.dispatched || job.cancelled) continue;
+        const remaining = job.deadline - performance.now();
+        if (remaining <= 0) {this.cancelSnapshot(id, "snapshot-timeout"); continue;}
+        try {
+          if (!sameScope(this.entry(job.scope.camera_id, sourceKey(job.scope), "snapshots").camera.scope, job.scope)) {
+            throw new ProtocolError("resource-retired");
+          }
+        } catch (error) {
+          job.reject(error as Error); this.finishSnapshot(id, job); continue;
+        }
+        job.dispatched = true; active++;
+        // Keep the owned RPC correlation and active slot after cancellation.
+        // Its exact late READY/OPEN may drain, but never deliver to the caller.
+        const request = this.request("snapshot_request", {scope: job.scope, job_id: id,
+          width: job.width, height: job.height, reason: job.reason}, message => {
+          if (message.payload.status === "ready" && message.payload.code === "ok") job.transferId = message.payload.transfer_id as string;
+        }, Math.min(remaining, SNAPSHOT_REPLY_TIMEOUT_MS));
+        void request.then(reply => {
+          if (reply.payload.status !== "ready" || reply.payload.code !== "ok") {
+            const code = reply.payload.code;
+            job.reject(new ProtocolError(typeof code === "string" && SNAPSHOT_REJECTION_CODES.has(code) ?
+              `snapshot-${code}` : "snapshot-rejected")); this.finishSnapshot(id, job);
+          }
+        }).catch(error => {
+          job.reject(error as Error);
+          // These local refusals never sent a request, so no late transfer can
+          // exist. Other failures retain their original cleanup correlation.
+          if (error instanceof ProtocolError && ["request-capacity", "session-closed", "request-not-supported"].includes(error.code)) {
+            this.finishSnapshot(id, job);
+          } else this.cancelSnapshot(id, "snapshot-cancelled");
+        });
+      }
+    } finally { this.dispatchingSnapshots = false; }
+  }
   private finishSnapshot(id: string, job: SnapshotJob): void {
     if (this.snapshots.get(id) !== job) return;
     clearTimeout(job.timer); if (job.cleanupTimer) clearTimeout(job.cleanupTimer); this.snapshots.delete(id);
+    this.dispatchSnapshots();
   }
   private authorizeSnapshot(message: Envelope): void {
     const payload = message.payload, id = payload.operation_id as string, job = this.snapshots.get(id);
-    if (!job || job.receiver || job.transferId !== payload.transfer_id || payload.kind !== "snapshot" ||
+    if (!job || !job.dispatched || job.receiver || job.transferId !== payload.transfer_id || payload.kind !== "snapshot" ||
         !sameScope(job.scope, payload.scope as MediaScope) || !this.options.bulk ||
         (payload.total_bytes as number) > BULK_LIMITS.snapshot) throw this.fail(new ProtocolError("unsolicited-transfer"));
     const chunks: Buffer[] = []; let length = 0;
@@ -781,6 +817,7 @@ export class AdapterSession {
     const job = this.snapshots.get(id);
     if (!job || job.cancelled) return;
     job.cancelled = true; clearTimeout(job.timer); job.reject(new ProtocolError(code));
+    if (!job.dispatched) {this.finishSnapshot(id, job); return;}
     if (job.receiver) void job.receiver.cancel(code === "snapshot-timeout" ? "timeout" : "invalidated").catch(() => {});
     // A finite deny-only owner is retained for a ready reply/OPEN already in
     // flight. It cannot grant credits or accept a different transfer identity.

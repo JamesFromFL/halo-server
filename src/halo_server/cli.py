@@ -72,6 +72,32 @@ def build_parser() -> argparse.ArgumentParser:
     tui = subparsers.add_parser("tui", help="Open the local administration interface")
     _add_path_arguments(tui)
 
+    web = subparsers.add_parser("web", help="Run or configure the secure browser interface")
+    _add_path_arguments(web)
+    web_commands = web.add_subparsers(dest="web_command")
+    web_commands.add_parser("serve", help="Run the independent HTTPS companion")
+    web_configure = web_commands.add_parser("configure", help="Prepare local HTTPS access")
+    web_configure.add_argument("--host", default="127.0.0.1")
+    web_configure.add_argument("--port", type=_tcp_port, default=18444)
+    web_configure.add_argument("--canonical-host")
+    web_configure.add_argument(
+        "--renew-certificate",
+        action="store_true",
+        help="Explicitly replace the local certificate and fingerprint",
+    )
+    web_configure.add_argument(
+        "--allow-lan", action="store_true", help="Explicitly allow local-network access"
+    )
+    web_commands.add_parser("access", help="Show the access URL and certificate fingerprint")
+    web_commands.add_parser("setup", help="Issue a short-lived initial owner enrollment code")
+    web_certificate = web_commands.add_parser(
+        "certificate", help="Import an owner-trusted TLS certificate"
+    )
+    web_certificate.add_argument("--certificate", type=Path, required=True)
+    web_certificate.add_argument("--private-key", type=Path, required=True)
+    web_reset = web_commands.add_parser("reset", help="Reset only the web password and sessions")
+    web_reset.add_argument("--yes", action="store_true", help="Confirm web authentication recovery")
+
     status = subparsers.add_parser("status", help="Print daemon status as JSON")
     _add_path_arguments(status)
 
@@ -172,6 +198,10 @@ def main(argv: list[str] | None = None) -> int:
 
         HaloTui(AdminClient(paths.admin_socket)).run()
         return 0
+    if args.command == "web":
+        if args.web_command == "reset" and not args.yes:
+            parser.error("web reset revokes browser access; use --yes to confirm recovery")
+        return _run_web_command(paths, args)
     if args.command in {"status", "shutdown"}:
         return asyncio.run(_run_admin_command(paths, args.command))
     if args.command in {
@@ -198,6 +228,46 @@ def main(argv: list[str] | None = None) -> int:
         return asyncio.run(_run_owner_command(paths, args))
     parser.error(f"Unknown command: {args.command}")
     return 2
+
+
+def _run_web_command(paths: ServerPaths, args: argparse.Namespace) -> int:
+    """Only local owner commands may configure access or recover credentials."""
+    lease = None
+    try:
+        from halo_server.web import auth, server, settings
+
+        command = args.web_command or "serve"
+        if command == "serve":
+            asyncio.run(server.serve(paths))
+            return 0
+        from halo_server.release_execution import validate_runtime_state
+        from halo_server.release_guard import acquire_source_guard
+
+        lease = acquire_source_guard(paths.state_directory)
+        validate_runtime_state(paths.state_directory)
+        if command == "configure":
+            result = settings.configure(
+                paths,
+                host=args.host,
+                port=args.port,
+                canonical_host=args.canonical_host,
+                allow_lan=args.allow_lan,
+                renew_certificate=args.renew_certificate,
+            )
+        elif command == "access":
+            result = settings.access_info(paths)
+        elif command == "certificate":
+            result = settings.import_certificate(paths, args.certificate, args.private_key)
+        else:
+            result = auth.issue_setup(paths, reset=command == "reset")
+        print(json.dumps(result, indent=2, sort_keys=True))
+        return 0
+    except (RuntimeError, OSError, ValueError) as error:
+        print(f"halo-server web: {error}", file=sys.stderr)
+        return 1
+    finally:
+        if lease is not None:
+            lease.close()
 
 
 def _add_path_arguments(parser: argparse.ArgumentParser) -> None:

@@ -237,6 +237,11 @@ class HaloService:
         self._intercom_leases: dict[str, str] = {}
         self._media_tasks: set[asyncio.Task] = set()
         self._account_tasks: set[asyncio.Task] = set()
+        self._owner_tasks: set[asyncio.Task] = set()
+        self._owner_boot_id = str(uuid.uuid4())
+        from halo_server.owner_activity import OwnerActivity
+
+        self._owner_activity = OwnerActivity(self._current_account_scope)
         self._event_state = EventConnectionState.OFFLINE
         self._incidents: dict[str, IncidentCoordinator] = {}
         self._recent_events: deque[dict[str, Any]] = deque(maxlen=RECENT_EVENT_LIMIT)
@@ -295,6 +300,7 @@ class HaloService:
         self._recent_events.clear()
         self._recent_actions.clear()
         self._plugin_events.reset()
+        self._owner_activity.reset()
         self._event_state = EventConnectionState.OFFLINE
 
     async def start(self) -> None:
@@ -398,6 +404,10 @@ class HaloService:
         if self._plugin_api is not None:
             await attempt("plugin API", self._plugin_api.stop())
         await attempt("admin API", self._admin.stop())
+        if self._owner_tasks:
+            _, pending = await asyncio.wait(tuple(self._owner_tasks), timeout=5)
+            if pending:
+                failures.append(RuntimeError("Owner operation retirement is pending"))
         await attempt("owner administration", self._owner_admin.close())
         initial_restore = self._initial_restore_task
         self._initial_restore_task = None
@@ -553,23 +563,92 @@ class HaloService:
 
     async def handle_admin(self, method: str, params: dict[str, Any]) -> Any:
         """Dispatch one authenticated local admin request."""
+        from halo_server.owner_activity import OWNER_ACTIONS
+
+        if method not in OWNER_ACTIONS:
+            return await self._dispatch_admin(method, params)
+        if len(self._owner_tasks) >= 16:
+            raise AdminProtocolError("busy", "Owner operations are at capacity")
+        scope = self._current_account_scope()
+        target = params.get("camera_id")
+        inventory = self._owner_admin.control_backend.inventory()
+        if not isinstance(target, str) or not any(
+            camera.scope.camera_id == target for camera in inventory.cameras
+        ):
+            target = None
+
+        async def owned():
+            outcome = "unknown"
+            try:
+                result = await self._dispatch_admin(method, params)
+                outcome = (
+                    result.get("status", "accepted") if isinstance(result, dict) else "accepted"
+                )
+                if outcome not in {"accepted", "rejected", "unknown", "pending", "completed"}:
+                    outcome = "accepted"
+                return result
+            except AdminProtocolError as error:
+                # Storage/cleanup failures can follow an effect. Only proven
+                # pre-effect rejections may be described as rejected.
+                if error.code in {
+                    "bad_params",
+                    "authentication_failed",
+                    "two_factor_required",
+                    "configuration_conflict",
+                    "homekit_disabled",
+                    "unsupported",
+                    "managed_mode_unsupported",
+                    "operation_conflict",
+                    "account_changed",
+                    "busy",
+                }:
+                    outcome = "rejected"
+                raise
+            finally:
+                self._owner_activity.record(
+                    "owner",
+                    method,
+                    outcome,
+                    camera_id=target,
+                    expected_scope=self._current_account_scope()
+                    if method in {"login", "logout"}
+                    else scope,
+                )
+
+        task = asyncio.create_task(owned(), name="owner-operation")
+        self._owner_tasks.add(task)
+
+        def completed(done):
+            self._owner_tasks.discard(done)
+            if not done.cancelled():
+                done.exception()
+
+        task.add_done_callback(completed)
+        return await asyncio.shield(task)
+
+    async def _dispatch_admin(self, method: str, params: dict[str, Any]) -> Any:
         if method in self._owner_admin.methods:
             return await self._owner_admin.handle(method, params)
         if method == "status":
             _require_only(params, set())
             return self.status()
         if method == "login":
-            _require_only(params, {"email", "password", "otp_code"})
+            _require_only(params, {"email", "password", "otp_code", "expected_epoch"})
             return await self._owned_account_operation(
                 self._login(
                     _required_string(params, "email", max_length=320),
                     _required_string(params, "password", max_length=4096),
                     _optional_string(params, "otp_code", max_length=32),
+                    expected_epoch=_optional_string(params, "expected_epoch", max_length=128),
                 )
             )
         if method == "logout":
-            _require_only(params, set())
-            return await self._owned_account_operation(self._logout())
+            _require_only(params, {"expected_epoch"})
+            return await self._owned_account_operation(
+                self._logout(
+                    expected_epoch=_optional_string(params, "expected_epoch", max_length=128)
+                )
+            )
         if method == "plugin_pair":
             _require_only(params, {"label"})
             return await self._pair_plugin(_required_string(params, "label", max_length=80))
@@ -608,6 +687,7 @@ class HaloService:
                         "account_generation": inventory.account_generation,
                         "revision": bridge._recording_settings.revision,
                         "available": bridge._recording_available,
+                        "warm_budget": bridge._recording_policy.warm_budget,
                         "offset": offset,
                         "total": len(rows),
                         "cameras": [
@@ -952,8 +1032,11 @@ class HaloService:
         email: str,
         password: str,
         otp_code: str | None,
+        *,
+        expected_epoch: str | None = None,
     ) -> dict[str, Any]:
         async with self._session_change_lock:
+            self._check_owner_epoch(expected_epoch)
             if self._stop_requested.is_set():
                 raise AdminProtocolError("service_stopping", "Halo Server is stopping")
             try:
@@ -1023,8 +1106,15 @@ class HaloService:
                 self._request_account_repair()
             return self.status()
 
-    async def _logout(self) -> dict[str, Any]:
+    def _check_owner_epoch(self, expected_epoch: str | None):
+        if expected_epoch is not None and expected_epoch != (
+            f"{self._owner_boot_id}:{self._owner_activity.epoch}"
+        ):
+            raise AdminProtocolError("account_changed", "The observed Ring account changed")
+
+    async def _logout(self, *, expected_epoch: str | None = None) -> dict[str, Any]:
         async with self._session_change_lock:
+            self._check_owner_epoch(expected_epoch)
             self._invalidate_media_access()
             self._accept_events = False
             self._listener_generation += 1
@@ -1205,6 +1295,13 @@ class HaloService:
     ) -> None:
         if generation != self._listener_generation or not self._account_authority_current():
             return
+        if self._event_state != state:
+            self._owner_activity.record(
+                "connection",
+                "ring_events",
+                str(state),
+                expected_scope=self._current_account_scope(),
+            )
         self._event_state = state
         self._notify_homekit_inventory()
 
@@ -1227,6 +1324,14 @@ class HaloService:
     def _process_event(
         self, event: NormalizedRingEvent, *, source_received_at: float | None = None
     ) -> None:
+        if event.type in {RingEventType.MOTION, RingEventType.DOORBELL} and not event.is_update:
+            self._owner_activity.record(
+                "event",
+                str(event.type),
+                "received",
+                camera_id=event.camera_id,
+                expected_scope=self._current_account_scope(),
+            )
         self._recent_events.append(
             {
                 "event_id": event.event_id,

@@ -21,6 +21,7 @@ from halo_server.media.manager import owned_thread, settle_owned
 class OwnerAdministration:
     methods = frozenset(
         {
+            "owner_state",
             "configuration_get",
             "configuration_set",
             "camera_control_list",
@@ -49,6 +50,11 @@ class OwnerAdministration:
         self.stream_capture = OwnerCapture(self)
 
     async def handle(self, method, params):
+        if method == "owner_state":
+            _only(params, set())
+            from halo_server.owner_state import project_owner_state
+
+            return project_owner_state(self.service)
         if method.startswith("stream_capture_"):
             return await self.stream_capture.handle(method, params)
         if method.startswith("configuration_"):

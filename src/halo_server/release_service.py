@@ -16,6 +16,7 @@ from halo_server.release_activation import ActivationError, ReleaseReference
 from halo_server.release_legacy import capture_owner, verify_stopped
 
 UNIT_NAME = "halo-server.service"
+WEB_UNIT_NAME = "halo-server-web.service"
 COMMAND_SECONDS = 55.0
 HEALTH_SECONDS = 25.0
 
@@ -64,14 +65,26 @@ WantedBy=default.target
 """
 
 
-async def _systemctl(*arguments):
+def render_web_unit(prefix, *, state_directory=None):
+    """A companion which survives a stopped daemon; no implicit dependency start."""
+    return (
+        render_user_unit(prefix, state_directory=state_directory)
+        .replace("Description=Halo Server\n", "Description=Halo Server Web Administration\n")
+        .replace(" daemon\n", " web\n")
+    )
+
+
+async def _systemctl(*arguments, unit=UNIT_NAME):
+    if unit not in {UNIT_NAME, WEB_UNIT_NAME}:
+        raise ActivationError("Unknown managed user unit", code="bad_parameters")
+
     async def run():
         process = await asyncio.create_subprocess_exec(
             "/usr/bin/systemctl",
             "--user",
             "--no-ask-password",
             *arguments,
-            *(() if arguments == ("daemon-reload",) else (UNIT_NAME,)),
+            *(() if arguments == ("daemon-reload",) else (unit,)),
             stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
@@ -85,7 +98,10 @@ async def _systemctl(*arguments):
                     if not chunk:
                         break
                     output.extend(chunk)
-                if len(output) > 4096 or await process.wait() != 0:
+                # A missing unit can produce status 4 while still returning a
+                # complete, useful show response. Its parser must validate it.
+                allowed = {0, 1, 4} if arguments and arguments[0] == "show" else {0}
+                if len(output) > 4096 or await process.wait() not in allowed:
                     raise ActivationError("User service operation failed", code="service_failed")
                 return bytes(output)
         finally:
@@ -103,7 +119,7 @@ async def _systemctl(*arguments):
         raise
 
 
-def _unit_directory(path):
+def _unit_directory(path, *, create=True):
     absolute = Path(os.path.abspath(path))
     descriptor = os.open(absolute.anchor, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
@@ -113,6 +129,8 @@ def _unit_directory(path):
                     part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=descriptor
                 )
             except FileNotFoundError:
+                if not create:
+                    raise
                 with contextlib.suppress(FileExistsError):
                     os.mkdir(part, 0o700, dir_fd=descriptor)
                 child = os.open(
@@ -150,8 +168,11 @@ def _unit_metadata(descriptor):
     return metadata
 
 
-def _prepare_unit(config_directory, prefix, state_directory=None):
-    body = render_user_unit(prefix, state_directory=state_directory).encode()
+def _prepare_unit(config_directory, prefix, state_directory=None, *, unit=UNIT_NAME):
+    if unit not in {UNIT_NAME, WEB_UNIT_NAME}:
+        raise ActivationError("Unknown managed user unit", code="bad_parameters")
+    render = render_user_unit if unit == UNIT_NAME else render_web_unit
+    body = render(prefix, state_directory=state_directory).encode()
     directory = _unit_directory(Path(config_directory) / "systemd" / "user")
     lock = temporary = -1
     temporary_name = None
@@ -159,19 +180,17 @@ def _prepare_unit(config_directory, prefix, state_directory=None):
     try:
         flags = os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
         try:
-            lock = os.open(
-                ".halo-server.service.lock", flags | os.O_CREAT | os.O_EXCL, 0o600, dir_fd=directory
-            )
+            lock = os.open(f".{unit}.lock", flags | os.O_CREAT | os.O_EXCL, 0o600, dir_fd=directory)
             os.fchmod(lock, 0o600)
         except FileExistsError:
-            lock = os.open(".halo-server.service.lock", flags, dir_fd=directory)
+            lock = os.open(f".{unit}.lock", flags, dir_fd=directory)
         metadata = _unit_metadata(lock)
         if metadata.st_size != 0:
             raise ActivationError("User unit lock is invalid")
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         try:
             existing = os.open(
-                UNIT_NAME,
+                unit,
                 os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
                 dir_fd=directory,
             )
@@ -199,7 +218,7 @@ def _prepare_unit(config_directory, prefix, state_directory=None):
                 return False
             finally:
                 os.close(existing)
-        temporary_name = f".halo-server.service.{secrets.token_hex(12)}.tmp"
+        temporary_name = f".{unit}.{secrets.token_hex(12)}.tmp"
         temporary = os.open(
             temporary_name,
             os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
@@ -220,7 +239,7 @@ def _prepare_unit(config_directory, prefix, state_directory=None):
         # Atomic no-replace publication: never overwrite a concurrent edit.
         os.link(
             temporary_name,
-            UNIT_NAME,
+            unit,
             src_dir_fd=directory,
             dst_dir_fd=directory,
             follow_symlinks=False,

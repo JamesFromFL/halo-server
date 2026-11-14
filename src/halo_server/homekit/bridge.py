@@ -990,6 +990,55 @@ class HomeKitBridge:
                 raise HomeKitOperationError("stale_scope", possibly_sent=changed)
             return self._recording_settings
 
+    def owner_summary(self) -> dict:
+        """Read cached authority/publication facts without media or storage probes."""
+        inventory = self._backend.inventory()
+        runtime = self._runtime
+        ready = runtime is not None and runtime.state == "ready"
+        publication = None
+        if self._config_signature is not None and self._publication_status is not None:
+            notice_boot, notice = self._publication_status
+            expected_scope, revision, entries, media = self._config_signature
+            scope = (
+                {
+                    "profile_id": inventory.profile_id,
+                    "account_generation": inventory.account_generation,
+                }
+                if inventory.profile_id is not None
+                else None
+            )
+            if (
+                ready
+                and notice_boot == runtime.boot_id == self._broker.boot_id
+                and notice["scope"] == expected_scope == scope
+                and notice["revision"] == revision == self._registry.revision
+                and notice["generation"] == self._config_generation
+                and self._publication_enabled
+                and media
+            ):
+                publication = notice
+        selected = len(self._registry.selected(inventory.profile_id)) if inventory.profile_id else 0
+        published = publication["published"] if publication is not None else None
+        return {
+            "enabled": True,
+            "adapter_boot_id": runtime.boot_id if runtime else None,
+            "state": (
+                "published"
+                if publication is not None
+                and publication["configured"]
+                == publication["published"]
+                == publication["advertised"]
+                == selected
+                else "ready"
+                if ready
+                else self.state
+            ),
+            "registry_revision": self._registry.revision,
+            "selected_count": selected,
+            "published_count": published,
+            "recording_revision": self._recording_settings.revision,
+        }
+
     def status(self) -> dict:
         runtime = self._runtime
         bulk = getattr(runtime, "bulk_channel", None) if runtime is not None else None

@@ -299,6 +299,7 @@ async def test_owner_admin_optin_is_persistent_power_checked_and_never_starts_ca
     )
     page = await service.handle_admin("homekit_recording_list", {})
     assert not page["cameras"][0]["owner_warm"] and page["cameras"][0]["mains_confirmed"]
+    assert page["warm_budget"] == {"capacity": 2, "reserved": 0}
     parameters = {
         "profile_id": page["profile_id"],
         "account_generation": page["account_generation"],
@@ -309,6 +310,10 @@ async def test_owner_admin_optin_is_persistent_power_checked_and_never_starts_ca
     result = await service.handle_admin("homekit_recording_warm", parameters)
     assert result["saved"] and service._homekit_bridge._recording_store.load().entries[0].owner_warm
     assert not service._media_sessions and client.submissions == 0
+    assert (await service.handle_admin("homekit_recording_list", {}))["warm_budget"] == {
+        "capacity": 2,
+        "reserved": 0,
+    }
     with pytest.raises(AdminProtocolError) as stale:
         await service.handle_admin("homekit_recording_warm", parameters)
     assert stale.value.code == "configuration_conflict"

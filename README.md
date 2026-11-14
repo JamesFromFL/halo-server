@@ -2,7 +2,7 @@
 
 Halo Server is the headless Ring event and media backend for Halo integrations. Its daemon
 owns the Ring account session and real-time event listener. A separate Textual client
-administers it through an owner-only Unix socket.
+and a GTK-style HTTPS web console administer it through an owner-only Unix socket.
 
 ## Current Status
 
@@ -16,6 +16,8 @@ packaging, explicit user-service installation and controlled upgrades are implem
 The plugin/RTSP path remains available as optional compatibility mode. See the
 [owner administration guide](docs/owner-administration.md) for setup and commands, and
 [direct HomeKit engineering status](docs/direct-homekit-status.md) for validation boundaries.
+The [web interface guide](docs/web-interface.md) covers the browser console, local owner
+enrollment, certificate trust, managed companion service, and recovery.
 
 Implemented:
 
@@ -40,6 +42,8 @@ Implemented:
 - explicit HomeKit selection, scoped setup reveal/reset and warm-recording owner opt-in
 - verified owner light/siren actions and sanitized diagnostics/support exports
 - Textual status, login, two-factor, logout, pairing, camera, and recent-event views
+- independent HTTPS owner console with camera management, HomeKit pairing, diagnostics,
+  bounded recent activity, session management, and saved/applied settings
 - the proven Halo Ring WebRTC video and audio compatibility layer
 
 Not implemented yet:

@@ -52,8 +52,16 @@ jobs:
           npm run check
           npm run build
           npm test
-      - run: .venv/bin/ruff check --no-cache src tests
-      - run: .venv/bin/ruff format --check --no-cache src tests
+      - name: Verify and build the browser interface
+        working-directory: web-ui
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm run format:check
+          npm run check
+          npm test
+          npm run build
+      - run: .venv/bin/ruff check --no-cache src tests scripts/check_web_browser.py
+      - run: .venv/bin/ruff format --check --no-cache src tests scripts/check_web_browser.py
       - run: .venv/bin/pytest -q -p pytest_asyncio.plugin -p no:cacheprovider
       - name: Audit locked runtime and tooling separately
         run: |
@@ -137,6 +145,20 @@ jobs:
             "from importlib.resources import files; root = files('halo_server.api'); assert all(root.joinpath(f'protocol/{version}/schema.json').is_file() for version in ('v2', 'v3'))"
           .artifact-venv/bin/python -c \
             "from importlib.resources import files; root = files('halo_server.homekit'); assert all(root.joinpath(f'protocol/v1/{name}.json').is_file() for name in ('schema', 'fixtures'))"
+          .artifact-venv/bin/python -c \
+            "from importlib.resources import files; from halo_server.web_assets import validate_bundle; validate_bundle(files('halo_server.web').joinpath('static'))"
+      - name: Install pinned browser test runtime
+        working-directory: web-ui
+        run: npm exec -- playwright install --with-deps chromium
+      - name: Exercise installed HTTPS console with synthetic cameras
+        run: .artifact-venv/bin/python scripts/check_web_browser.py --installed --output browser-evidence
+      - name: Preserve synthetic browser verification
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: browser-verification
+          path: browser-evidence/
+          retention-days: 14
       - name: Verify artifact identity
         run: |
           printf 'commit=%s\n' "$GITHUB_SHA" > dist/BUILD-INFO

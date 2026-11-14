@@ -111,6 +111,15 @@ class RecordingPolicyOwner:
         self._closed = False
 
     @property
+    def warm_budget(self):
+        """Read reserved slots without starting capture or probing its history.
+
+        Acquisitions and retained cleanup own capacity too; this count is not
+        the number of active streams or of owner preferences switched on.
+        """
+        return {"capacity": MAX_WARM, "reserved": len(self._entries)}
+
+    @property
     def pending_resources(self):
         return len(self._entries) + int(
             self._retiring_boot is not None and self._maintenance is not None

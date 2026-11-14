@@ -1,4 +1,18 @@
-# HomeKit stream engineering
+# Halo Server engineering
+
+[Non-camera Halo Bridge research and implementation plan](noncamera-bridge-plan-2026-11-14.md)
+records the pair-once bridge topology, standalone camera preservation, device
+capability matrix, Python provider reuse, isolated feasibility results, and eight
+implementation slices. It is a researched plan, not deployed device support.
+
+[Cross-project Ring comparison](ring-project-comparison-2026-11-14.md) records the
+Scrypted, Homebridge, Home Assistant and ring-mqtt implementation/configuration
+review and the resulting acceptance requirements.
+[Subscription-free Alarm feasibility](ring-alarm-subscription-feasibility-2026-11-14.md)
+separates current US restrictions, regional/legacy eligibility and an independent
+local Z-Wave alarm alternative.
+
+## HomeKit stream engineering
 
 The [repair plan](halo-server-live-stream-repair-plan-2026-10-28.md) records the
 research baseline and seven-slice implementation proposal approved by the owner

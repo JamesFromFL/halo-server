@@ -12,7 +12,7 @@ from pathlib import Path
 
 from halo_server.paths import ServerPaths
 from halo_server.release_activation import ActivationError, ReleaseActivator, ReleaseReference
-from halo_server.release_service import UserServiceController, render_user_unit
+from halo_server.release_service import render_user_unit, render_web_unit
 
 
 def parser():
@@ -31,6 +31,11 @@ def parser():
     )
     activate.add_argument("--release-id", required=True)
     activate.add_argument(
+        "--install-web-unit",
+        action="store_true",
+        help="Install the exact web companion unit too; do not enable or start inactive services",
+    )
+    activate.add_argument(
         "--initial-mode",
         choices=("homekit",),
         help="Initialize homekit mode only when configuration is absent; preserve saved settings",
@@ -46,6 +51,9 @@ def parser():
     )
     uninstall.add_argument("--expected-revision", required=True, type=_revision)
     commands.add_parser("unit", help="Print the single user unit; do not install or start it")
+    commands.add_parser(
+        "web-unit", help="Print the independent web unit; do not install or start it"
+    )
     return result
 
 
@@ -110,16 +118,22 @@ def _drop_operator_guard(paths):
 
 async def _run(arguments, paths, *, factory=ReleaseActivator, service=None):
     if service is None:
+        from halo_server.release_services import ManagedServicesController
         from halo_server.tui.client import AdminClient
 
-        service = UserServiceController(
-            AdminClient(paths.admin_socket), state_directory=paths.state_directory
+        service = ManagedServicesController(
+            AdminClient(paths.admin_socket),
+            AdminClient(paths.runtime_directory / "web-admin.sock"),
+            _prefix(arguments.prefix),
+            paths,
+            install_web=getattr(arguments, "install_web_unit", False),
         )
     operation = factory(
         _prefix(arguments.prefix),
         paths.state_directory,
         service,
-        prepare_unit=getattr(arguments, "install_unit", False),
+        prepare_unit=getattr(arguments, "install_unit", False)
+        or getattr(arguments, "install_web_unit", False),
         initial_mode=getattr(arguments, "initial_mode", None),
     )
     if arguments.command == "activate":
@@ -143,8 +157,9 @@ def main(argv=None):
             if not arguments.state_directory.is_absolute():
                 raise ActivationError("State directory must be absolute", code="bad_parameters")
             paths = ServerPaths(arguments.state_directory, paths.runtime_directory)
-        if arguments.command == "unit":
-            sys.stdout.write(render_user_unit(prefix, state_directory=paths.state_directory))
+        if arguments.command in {"unit", "web-unit"}:
+            render = render_user_unit if arguments.command == "unit" else render_web_unit
+            sys.stdout.write(render(prefix, state_directory=paths.state_directory))
             return 0
         _drop_operator_guard(paths)
         result = asyncio.run(_run(arguments, paths))
