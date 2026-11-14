@@ -270,9 +270,18 @@ class PairingAdministration:
                 "pairing_reveal_request", data, expected="pairing_reveal_result"
             )
             if not result["accepted"]:
-                raise AdminProtocolError(
-                    "configuration_conflict", "Pairing state changed; reload metadata"
-                )
+                if result["code"] == "policy-denied":
+                    # The child withholds setup credentials once paired, and
+                    # also when no setup PIN is available. Neither condition
+                    # is a stale revision or permission to reset the accessory.
+                    raise AdminProtocolError(
+                        "pairing_not_available", "Pairing code is unavailable for this camera"
+                    )
+                if result["code"] == "conflict":
+                    raise AdminProtocolError(
+                        "configuration_conflict", "Pairing state changed; reload metadata"
+                    )
+                raise AdminProtocolError("unavailable", "HomeKit pairing is not ready")
             # A pairing/account/selection update while the request awaited must
             # not disclose an obsolete secret to the owner UI.
             try:

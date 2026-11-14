@@ -97,6 +97,54 @@ try {
   await page.getByLabel('Repeat password', { exact: true }).fill(password);
   await page.getByRole('button', { name: 'Create web access', exact: true }).click();
   await page.getByRole('heading', { name: 'Your Halo Server' }).waitFor();
+  for (const [id, heading, paired] of [
+    ['fixture-camera-paired', 'Fixture paired camera', true],
+    ['fixture-camera-unknown', 'Fixture unknown camera', false],
+  ]) {
+    await page.evaluate((id) => {
+      location.hash = `/devices/${id}`;
+    }, id);
+    await page.getByRole('heading', { name: heading, exact: true }).waitFor();
+    if (paired) {
+      await page.getByText('Already paired', { exact: true }).waitFor();
+      assert.equal(await reveal.count(), 0, 'paired camera does not offer a setup code');
+      assert.equal(
+        await page.getByRole('button', { name: 'Reset…', exact: true }).isEnabled(),
+        true,
+        'explicit reset stays available for an already-paired camera',
+      );
+    } else {
+      await page
+        .getByText('Pairing status is unknown. Refresh this device before requesting a code.', {
+          exact: true,
+        })
+        .waitFor();
+      assert.equal(await reveal.isDisabled(), true, 'unknown camera pairing cannot reveal');
+      await page.getByRole('button', { name: 'Refresh pairing status', exact: true }).click();
+      await page.waitForFunction(
+        () =>
+          ![...document.querySelectorAll('button')].find(
+            (button) => button.textContent.trim() === 'Refresh pairing status',
+          )?.disabled,
+      );
+      assert.equal(await reveal.isDisabled(), true);
+    }
+    assert.equal(await page.getByRole('dialog').count(), 0);
+    assert.equal(await visibleCode.count(), 0);
+  }
+  assert.equal(
+    requests.filter(
+      (request) =>
+        request.path.endsWith('/reauth') ||
+        request.path.endsWith('/pairing/reveal') ||
+        request.path.endsWith('/pairing/reset'),
+    ).length,
+    0,
+    'paired/unknown metadata does not prompt, reveal, or reset automatically',
+  );
+  checks.push(
+    'already-paired camera explains existing Home association without a reveal prompt; unknown pairing stays disabled; explicit reset remains separate',
+  );
   await navigate();
   const oldCookie = (await context.cookies()).find(
     (cookie) => cookie.name === '__Host-HaloSession',

@@ -159,7 +159,13 @@ Release rollback never restores an older password or other mutable state.
 - **Settings** separates saved and applied configuration. Saving never restarts
   Halo automatically, and conflicts preserve the owner's draft.
 
-Pairing codes require explicit reveal and recent web authentication. They are
+Pairing codes are available only for a camera or Halo Bridge confirmed to be
+unpaired. Already-paired accessories show **Already paired** instead of prompting
+for a password; an unknown pairing status requires a refresh. A setup code is not
+needed to keep using the current Apple Home. To move an accessory to another Home,
+remove it from its current Apple Home first, and explicitly reset its Halo pairing
+only if it remains paired. The interface never resets a pairing automatically.
+Available pairing codes require explicit reveal and recent web authentication. They are
 hidden after one minute, navigation, logout, or a relevant authority change.
 Hiding a code does not rotate it. Reset affects one explicitly named camera and
 may temporarily interrupt the HomeKit adapter. Resume an existing pending reset
@@ -167,8 +173,15 @@ by its original operation ID rather than starting another reset.
 
 Camera light and siren responses distinguish accepted, rejected, and unknown outcomes.
 An accepted command is not proof of the physical device state. The existing
-30-second siren bound remains in force. Recording controls distinguish Halo's
-warm-source opt-in from Apple Home's recording and audio preferences.
+30-second siren bound remains in force. In a camera’s **Recording** section,
+**Enable HomeKit Secure Video support** opts into Halo’s recording capability and
+pre-event source capture. Enable it for a selected, supported mains-only camera,
+then choose that camera’s recording and audio options in Apple Home. The Halo
+switch does not grant Apple Home’s recording permission. Battery-capable models
+remain ineligible even when wired or solar-assisted. The shared source budget is
+reported by the server (currently two slots); starting sources and pending cleanup
+also reserve slots. Installing the interface never enables capture. Eligibility
+and budget information describe the last device refresh, not verified clip delivery.
 
 ## Scope
 

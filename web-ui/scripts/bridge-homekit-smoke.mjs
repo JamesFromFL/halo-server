@@ -24,6 +24,7 @@ let releaseReveal;
 let unknownPublication = false;
 let operationStatus = 'completed';
 let pairingDigest = 'a'.repeat(64);
+let pairingState = 'unpaired';
 let backendFixture = null;
 const runtime = {
   state: 'disabled',
@@ -140,9 +141,9 @@ const pairing = () =>
     boot_id: runtime.boot_id,
     available: runtime.state === 'ready',
     published: runtime.published,
-    paired_known: runtime.state === 'ready',
-    paired: false,
-    paired_clients: 0,
+    paired_known: runtime.state === 'ready' && pairingState !== 'unknown',
+    paired: pairingState === 'paired',
+    paired_clients: pairingState === 'paired' ? 1 : 0,
     pairing_revision: runtime.published || runtime.reset_pending ? pairingDigest : null,
     pending_reset: runtime.reset_pending,
     reset_operation_id: runtime.reset_operation_id,
@@ -324,6 +325,40 @@ try {
   );
   assert.equal(publicationWrites.length, 1);
   checks.push('prepared bridge never publishes automatically; one explicit scoped publication');
+  pairingState = 'paired';
+  await page.getByRole('button', { name: 'Refresh bridge', exact: true }).click();
+  await page.getByText('Already paired', { exact: true }).waitFor();
+  assert.equal(await reveal.count(), 0, 'already-paired bridge does not offer a setup code');
+  assert.equal(
+    await page.getByRole('button', { name: 'Reset bridge…', exact: true }).isEnabled(),
+    true,
+    'paired bridge still permits an explicit reset',
+  );
+  await page.getByRole('button', { name: 'Reset bridge…', exact: true }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Cancel', exact: true }).click();
+  pairingState = 'unknown';
+  await page.getByRole('button', { name: 'Refresh bridge', exact: true }).click();
+  await page
+    .getByText('Pairing status is unknown. Refresh the bridge before requesting a code.', {
+      exact: true,
+    })
+    .waitFor();
+  assert.equal(await reveal.isDisabled(), true, 'unknown bridge pairing cannot reveal');
+  assert.equal(reauths, 0);
+  assert.equal(reveals.length, 0);
+  assert.equal(resetWrites.length, 0, 'pairing inspection/canceling does not reset the bridge');
+  pairingState = 'unpaired';
+  await page.getByRole('button', { name: 'Refresh bridge', exact: true }).click();
+  await page.waitForFunction(
+    () =>
+      [...document.querySelectorAll('button')].find((button) =>
+        button.textContent.includes('Show bridge pairing code'),
+      )?.disabled === false,
+  );
+  checks.push(
+    'paired bridge explains its existing Home without a reveal prompt; unknown pairing blocks reveal; canceled explicit reset preserves pairing',
+  );
+
   await reveal.click();
   await page.getByRole('dialog').getByRole('button', { name: 'Cancel', exact: true }).click();
   assert.equal(reveals.length, 0);

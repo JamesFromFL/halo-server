@@ -87,6 +87,12 @@
       !!currentPairing.pairing_revision &&
       !currentPairing.pending_reset,
   );
+  const alreadyPaired = $derived(
+    fresh && currentPairing?.paired_known === true && currentPairing.paired === true,
+  );
+  const canReveal = $derived(
+    canPair && currentPairing?.paired_known === true && currentPairing.paired === false,
+  );
   const canResume = $derived(
     canResumeBridgeReset(
       currentPairing,
@@ -121,6 +127,9 @@
       secret = null;
       confirmation = false;
     }
+  });
+  $effect(() => {
+    if (!canReveal) secret = null;
   });
   onMount(() => {
     const hide = () => {
@@ -205,12 +214,19 @@
   }
 
   async function reveal() {
-    if (disabled || unsettled || !canPair || !currentPairing) return;
+    if (disabled || unsettled || !canReveal || !currentPairing) return;
     const target = currentPairing;
     const expected = view;
     const request = serial;
     secret = null;
-    if (!(await reauthenticate()) || destroyed || expected !== view || request !== serial || !fresh)
+    if (
+      !(await reauthenticate()) ||
+      destroyed ||
+      expected !== view ||
+      request !== serial ||
+      !fresh ||
+      !canReveal
+    )
       return;
     busy = true;
     error = '';
@@ -219,7 +235,15 @@
         'devices/bridge/pairing/reveal',
         bridgePairingIdentity(target),
       );
-      if (destroyed || expected !== view || request !== serial || !fresh || document.hidden) return;
+      if (
+        destroyed ||
+        expected !== view ||
+        request !== serial ||
+        !fresh ||
+        !canReveal ||
+        document.hidden
+      )
+        return;
       if (!validBridgePairingSecret(result, target))
         throw new Error('Halo returned invalid or changed bridge pairing information.');
       secret = result;
@@ -304,10 +328,18 @@
       ><span>{fresh && bridge ? `${bridge.selected_count} of ${bridge.capacity}` : 'Unknown'}</span
       ></Row
     >
-    <Row title="Pairing code" subtitle="Confirm your Halo password to show the code briefly.">
-      <button disabled={disabled || unsettled || !canPair} onclick={reveal}
-        >Show bridge pairing code</button
-      >
+    <Row
+      title="Pairing code"
+      subtitle={alreadyPaired
+        ? 'No code is needed for this Home. To move to another Home, remove Halo Bridge from its current Apple Home first; reset here only if pairing remains.'
+        : !fresh || currentPairing?.paired_known !== true
+          ? 'Pairing status is unknown. Refresh the bridge before requesting a code.'
+          : 'Confirm your Halo password to show the code briefly.'}
+    >
+      {#if alreadyPaired}<span>Already paired</span>
+      {:else}<button disabled={disabled || unsettled || !canReveal} onclick={reveal}
+          >Show bridge pairing code</button
+        >{/if}
     </Row>
     <Row
       title="Reset bridge pairing"

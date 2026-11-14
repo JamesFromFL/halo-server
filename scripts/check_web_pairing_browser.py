@@ -48,7 +48,9 @@ class PairingOwner:
                 "homekit": {
                     "selected": True,
                     "published": True,
-                    "paired": False,
+                    "paired": None
+                    if key == "fixture-camera-unknown"
+                    else key == "fixture-camera-paired",
                     "owner_warm": False,
                     "recording_active": False,
                     "recording_audio_active": False,
@@ -57,6 +59,8 @@ class PairingOwner:
             for key, name in (
                 ("fixture-camera-a", "Fixture front door"),
                 ("fixture-camera-b", "Fixture garden"),
+                ("fixture-camera-paired", "Fixture paired camera"),
+                ("fixture-camera-unknown", "Fixture unknown camera"),
             )
         ]
 
@@ -83,8 +87,8 @@ class PairingOwner:
                 "adapter_boot_id": self.identity["boot_id"],
                 "registry_revision": 1,
                 "state": "published",
-                "selected_count": 2,
-                "published_count": 2,
+                "selected_count": len(self.cameras),
+                "published_count": len(self.cameras),
                 "recording_revision": 1,
             },
             "devices": copy.deepcopy(self.cameras),
@@ -101,7 +105,7 @@ class PairingOwner:
     async def homekit_pairing_list(self):
         return self.identity | {
             "revision": 1,
-            "total": 2,
+            "total": len(self.cameras),
             "cameras": [
                 {
                     "camera_id": camera["camera_id"],
@@ -110,8 +114,8 @@ class PairingOwner:
                     "selected": True,
                     "available": True,
                     "published": True,
-                    "paired_known": True,
-                    "paired": False,
+                    "paired_known": camera["homekit"]["paired"] is not None,
+                    "paired": camera["homekit"]["paired"] is True,
                     "pairing_revision": 1,
                     "pending_reset": False,
                 }
@@ -120,6 +124,7 @@ class PairingOwner:
         }
 
     async def homekit_pairing_reveal(self, page, camera):
+        assert camera["paired_known"] and not camera["paired"], "Only unpaired cameras can reveal"
         self.reveals += 1
         return {
             "camera_id": camera["camera_id"],

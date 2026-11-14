@@ -243,6 +243,49 @@ async def test_pairing_reveal_scope_revision_and_publication_disable(tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("adapter_code", "owner_code"),
+    [
+        ("policy-denied", "pairing_not_available"),
+        ("conflict", "configuration_conflict"),
+        ("not-ready", "device_bridge_unavailable"),
+    ],
+)
+async def test_bridge_reveal_rejections_preserve_pairing_and_report_actual_reason(
+    tmp_path, monkeypatch, adapter_code, owner_code
+):
+    service, _, _, monitor, _, _ = await ready(tmp_path)
+    publisher = monitor.bridge.publisher
+    page, runtime = await publisher.pairing(), publisher.runtime
+    before = publisher.policy
+
+    async def rejected_reveal(identity, *, admission):
+        assert admission()
+        return {
+            **identity,
+            "accepted": False,
+            "code": adapter_code,
+            "pincode": None,
+            "setup_uri": None,
+            "ttl_ms": 0,
+        }
+
+    monkeypatch.setattr(runtime, "reveal", rejected_reveal)
+    try:
+        with pytest.raises(AdminProtocolError) as error:
+            await service.handle_admin("devices_bridge_pairing_reveal", pairing_request(page))
+        assert error.value.code == owner_code
+        assert publisher.policy == before and publisher.runtime is runtime
+        assert publisher.snapshot()["published"] and not runtime.invalidated
+        if adapter_code == "policy-denied":
+            activity = service._owner_activity.snapshot()["entries"][-1]
+            assert activity["action"] == "devices_bridge_pairing_reveal"
+            assert activity["outcome"] == "rejected"
+    finally:
+        await monitor.close()
+
+
+@pytest.mark.asyncio
 async def test_reset_denies_first_and_leaves_reenable_explicit(tmp_path, monkeypatch):
     service, client, sessions, monitor, providers, row = await ready(tmp_path)
     publisher = monitor.bridge.publisher

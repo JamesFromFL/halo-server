@@ -10,6 +10,7 @@ from uuid import uuid4
 import aiohttp
 import pytest
 import pytest_asyncio
+from aiohttp import web
 from aiohttp.test_utils import TestServer
 
 from halo_server.paths import ServerPaths
@@ -26,6 +27,7 @@ from halo_server.web.settings import (
 )
 
 PASSWORD = "a long private fixture password"
+PAIRING_REVISION = "a" * 64
 
 
 class OwnerFixture:
@@ -51,7 +53,7 @@ class OwnerFixture:
                 {
                     "camera_id": "camera-a",
                     "accessory_id": "accessory-a",
-                    "pairing_revision": 3,
+                    "pairing_revision": PAIRING_REVISION,
                     "pending_reset": False,
                 }
             ],
@@ -76,7 +78,17 @@ class OwnerFixture:
         if self.reveal_entered:
             self.reveal_entered.set()
             await self.reveal_release.wait()
-        return {"pin": "123-45-678", "setup_uri": "X-HM://FIXTURE", "expires_in_ms": 60000}
+        return {
+            key: page[key]
+            for key in ("profile_id", "account_generation", "registry_revision", "boot_id")
+        } | {
+            "camera_id": camera["camera_id"],
+            "accessory_id": camera["accessory_id"],
+            "pairing_revision": camera["pairing_revision"],
+            "pin": "123-45-678",
+            "setup_uri": "X-HM://000000000FIXT",
+            "expires_in_ms": 60000,
+        }
 
     async def homekit_cameras(self):
         self.calls.append("selection")
@@ -222,7 +234,7 @@ def pairing_target(console):
     return {
         key: console.owner.pairing[key]
         for key in ("profile_id", "account_generation", "registry_revision", "boot_id")
-    } | {"camera_id": "camera-a", "pairing_revision": 3}
+    } | {"camera_id": "camera-a", "pairing_revision": PAIRING_REVISION}
 
 
 @pytest.mark.asyncio
@@ -372,6 +384,56 @@ async def test_event_feed_has_bounded_cursor_protocol_and_never_extends_idle_ses
     await console.web.state.get(force=True)
     assert await asyncio.wait_for(response.content.read(), 2) == b""
     response.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["disconnect", "timeout", "cancel", "unexpected"])
+async def test_event_handshake_failures_release_capacity_and_allow_https_reconnect(
+    console, monkeypatch, failure
+):
+    await console.enroll()
+    session = next(row for row in console.web.auth.sessions.values() if row.authenticated)
+    entered = asyncio.Event()
+
+    async def failed_prepare(_response, _request):
+        entered.set()
+        if failure == "cancel":
+            await asyncio.Future()
+        if failure == "disconnect":
+            raise ConnectionResetError("Synthetic disconnect during event response headers")
+        if failure == "timeout":
+            raise TimeoutError("Synthetic event response header timeout")
+        raise RuntimeError("Synthetic unexpected event response failure")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(web.StreamResponse, "prepare", failed_prepare)
+        # More failures than the shared subscriber capacity must not poison the
+        # next connection. Cancel a real task suspended inside the handshake.
+        for _ in range(9):
+            entered.clear()
+            request = asyncio.create_task(console.web.events(SimpleNamespace(headers={})))
+            await asyncio.wait_for(entered.wait(), 2)
+            if failure == "cancel":
+                request.cancel()
+            if failure == "unexpected":
+                with pytest.raises(RuntimeError, match="Synthetic unexpected"):
+                    await request
+            else:
+                await request
+            assert not console.web.state.subscribers
+
+    # Verify recovered capacity through the real authenticated HTTPS endpoint,
+    # including normal feed retirement. Owner state remains synthetic.
+    response = await console.call("GET", "/events")
+    assert response.status == 200 and response.content_type == "text/event-stream"
+    packet = await asyncio.wait_for(response.content.readuntil(b"\n\n"), 2)
+    assert b"event: state" in packet
+    assert len(console.web.state.subscribers) == 1
+    console.web.auth.revoke(session.key)
+    await console.web.state.get(force=True)
+    assert await asyncio.wait_for(response.content.read(), 2) == b""
+    response.close()
+    assert not console.web.state.subscribers
 
 
 @pytest.mark.asyncio

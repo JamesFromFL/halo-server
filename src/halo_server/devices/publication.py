@@ -688,7 +688,17 @@ class DevicePublisher:
                 self._identity(scope, profile) | {"pairing_revision": params["pairing_revision"]},
                 admission=admitted,
             )
-            if not admitted() or reply.get("accepted") is not True:
+            if not admitted():
+                raise AdminProtocolError(
+                    "device_bridge_unavailable", "Bridge pairing is unavailable"
+                )
+            if reply.get("accepted") is not True:
+                if reply.get("code") == "policy-denied":
+                    raise AdminProtocolError(
+                        "pairing_not_available", "Pairing code is unavailable for Halo Bridge"
+                    )
+                if reply.get("code") == "conflict":
+                    raise AdminProtocolError("configuration_conflict", "Bridge pairing changed")
                 raise AdminProtocolError(
                     "device_bridge_unavailable", "Bridge pairing is unavailable"
                 )

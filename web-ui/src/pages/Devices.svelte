@@ -67,9 +67,44 @@
     ),
   );
   const pair = $derived(pairing?.cameras.find((d) => d.camera_id === device?.camera_id));
+  const alreadyPaired = $derived(fresh && pair?.paired_known === true && pair.paired === true);
+  const canReveal = $derived(
+    pair?.paired_known === true &&
+      pair.paired === false &&
+      pair.published === true &&
+      pair.pairing_revision != null &&
+      !pair.pending_reset,
+  );
   const warm = $derived(recording?.cameras.find((d) => d.camera_id === device?.camera_id));
   const warmBudget = $derived(
     recording?.warm_budget as { capacity: number; reserved: number } | undefined,
+  );
+  const recordingEligibility = $derived(
+    !fresh
+      ? {
+          label: 'Unknown',
+          detail: 'Reconnect to Halo to check this camera’s recording eligibility.',
+        }
+      : !device?.homekit.selected
+        ? {
+            label: 'Not selected',
+            detail: 'Expose this camera in Apple Home before enabling recording support.',
+          }
+        : !warm || recording?.available !== true
+          ? {
+              label: 'Unavailable',
+              detail: 'Recording details are unavailable. Refresh this device before continuing.',
+            }
+          : warm.mains_confirmed === true
+            ? {
+                label: 'Mains-only confirmed',
+                detail: 'Halo has confirmed a supported mains-only camera model.',
+              }
+            : {
+                label: 'Not confirmed',
+                detail:
+                  'Halo requires a supported mains-only model. Battery-capable cameras are excluded, including wired or solar-assisted models.',
+              },
   );
   const control = $derived(controls?.cameras.find((d) => d.camera_id === device?.camera_id));
   const unsettled = $derived(operation?.status === 'unknown' || operation?.status === 'pending');
@@ -98,6 +133,9 @@
       secret = null;
       confirmation = null;
     }
+  });
+  $effect(() => {
+    if (!canReveal) secret = null;
   });
   onDestroy(() => {
     destroyed = true;
@@ -160,7 +198,7 @@
     await mutate('selection', selectionBody(device, selection.revision, enabled, id), id);
   }
   async function reveal() {
-    if (!pairing || !pair || disabled) return;
+    if (!pairing || !pair || disabled || !canReveal) return;
     const expected = generation;
     const target = deviceId;
     const requestSerial = serial;
@@ -169,7 +207,8 @@
       !(await reauthenticate()) ||
       destroyed ||
       !samePairingScope(requestedScope, { generation, deviceId, serial }) ||
-      !fresh
+      !fresh ||
+      !canReveal
     )
       return;
     busy = true;
@@ -182,6 +221,7 @@
         value.camera_id === device?.camera_id &&
         !document.hidden &&
         fresh &&
+        canReveal &&
         device?.homekit.selected
       )
         secret = value;
@@ -388,12 +428,21 @@
         no="Not paired"
       /></Row
     >
-    <Row title="Pairing code" subtitle="Hidden until you confirm your Halo password"
-      ><button
-        disabled={disabled || !pair?.published || pair.pairing_revision == null}
-        onclick={reveal}>Reveal code</button
-      ></Row
+    <Row
+      title="Pairing code"
+      subtitle={alreadyPaired
+        ? 'No code is needed for this Home. To move to another Home, remove this camera from its current Apple Home first; reset here only if pairing remains.'
+        : !fresh || pair?.paired_known !== true
+          ? 'Pairing status is unknown. Refresh this device before requesting a code.'
+          : 'Hidden until you confirm your Halo password'}
     >
+      {#if alreadyPaired}<span>Already paired</span>
+      {:else}<button disabled={disabled || !canReveal} onclick={reveal}>Reveal code</button>
+        {#if fresh && pair?.paired_known !== true}<button disabled={busy || loading} onclick={load}
+            >Refresh pairing status</button
+          >{/if}
+      {/if}
+    </Row>
     <Row
       title={pair?.pending_reset ? 'Pending pairing reset' : 'Reset pairing'}
       subtitle="Removes this camera’s HomeKit pairing and briefly interrupts the adapter"
@@ -414,19 +463,43 @@
   <h3>Recording</h3>
   <div class="group">
     <Row
-      title="Shared warm-source budget"
-      subtitle="Reservations include starting sources and cleanup still in progress"
+      title="Shared recording source budget"
+      subtitle="Reported at the last device refresh. Includes starting sources and cleanup still in progress."
       ><span
-        >{warmBudget &&
+        >{fresh &&
+        warmBudget &&
         Number.isInteger(warmBudget.capacity) &&
         Number.isInteger(warmBudget.reserved)
           ? `${warmBudget.reserved} of ${warmBudget.capacity} slots reserved`
           : 'Unavailable'}</span
       ></Row
     >
+    <Row title="Recording eligibility" subtitle={recordingEligibility.detail}
+      ><span>{recordingEligibility.label}</span></Row
+    >
+    <Row
+      title="Enable HomeKit Secure Video support"
+      subtitle="Makes recording available to Apple Home. May keep a continuous Ring source for pre-event footage when recording is requested."
+      ><input
+        type="checkbox"
+        role="switch"
+        aria-label="Enable HomeKit Secure Video support"
+        checked={warm?.owner_warm === true}
+        disabled={disabled ||
+          !warm ||
+          (warm.owner_warm !== true &&
+            (recording?.available !== true ||
+              warm.mains_confirmed !== true ||
+              !device.homekit.selected))}
+        onchange={(event) => {
+          event.currentTarget.checked = warm?.owner_warm === true;
+          void setWarm(warm?.owner_warm !== true);
+        }}
+      /></Row
+    >
     <Row
       title="Apple Home recording"
-      subtitle="Managed in Apple Home; separate from Halo’s warm-source preference"
+      subtitle="Choose recording options in Apple Home after enabling HomeKit Secure Video support here."
       ><span>{fresh ? tri(device.homekit.recording_active, 'Enabled', 'Disabled') : 'Unknown'}</span
       ></Row
     >
@@ -436,25 +509,6 @@
           ? tri(device.homekit.recording_audio_active, 'Enabled', 'Disabled')
           : 'Unknown'}</span
       ></Row
-    >
-    <Row
-      title="Keep recording source warm"
-      subtitle={warm?.mains_confirmed === true
-        ? 'Mains power confirmed. Uses a bounded continuous Ring source while eligible.'
-        : 'Enabling requires confirmed mains power and selected HomeKit access.'}
-      ><input
-        type="checkbox"
-        role="switch"
-        aria-label="Keep recording source warm"
-        checked={warm?.owner_warm === true}
-        disabled={disabled ||
-          !warm ||
-          (warm.owner_warm !== true && (warm.mains_confirmed !== true || !device.homekit.selected))}
-        onchange={(event) => {
-          event.currentTarget.checked = warm?.owner_warm === true;
-          void setWarm(warm?.owner_warm !== true);
-        }}
-      /></Row
     >
   </div>
   {#if control?.has_light === true || control?.has_siren === true}<h3>Camera controls</h3>
@@ -510,17 +564,17 @@
     </div></Confirm
   >
 {:else if confirmation === 'warm'}<Confirm
-    title="Keep this recording source warm?"
+    title="Enable HomeKit Secure Video support?"
     onclose={() => (confirmation = null)}
     ><p>
-      This may keep the mains-powered camera connected to Ring continuously when recording is
-      eligible. It consumes one shared warm-source slot. Apple Home still controls whether
-      recordings are enabled.
+      This makes recording available to Apple Home for this camera. It may keep the camera connected
+      to Ring continuously for pre-event footage when recording is requested, using one shared
+      recording source slot. Choose whether to record and include audio separately in Apple Home.
     </p>
     <div class="actions end">
       <button onclick={() => (confirmation = null)}>Cancel</button><button
         class="primary"
-        onclick={() => setWarm(true)}>Enable warm source</button
+        onclick={() => setWarm(true)}>Enable HKSV support</button
       >
     </div></Confirm
   >{/if}

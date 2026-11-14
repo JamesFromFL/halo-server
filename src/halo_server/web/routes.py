@@ -276,8 +276,10 @@ class WebConsole:
                 "X-Accel-Buffering": "no",
             }
         )
-        await response.prepare(request)
         try:
+            # A disconnect can happen while headers are being written, before
+            # the first event. The subscription belongs to this entire handshake.
+            await response.prepare(request)
             while not self.draining:
                 try:
                     event = await asyncio.wait_for(queue.get(), timeout=15)
@@ -993,8 +995,13 @@ async def security(request, handler):
         return failure(
             WebError(
                 error.code,
-                "Halo could not complete this request; refresh its current state",
-                status=409 if conflict else 503,
+                (
+                    "Pairing code is unavailable. Already paired accessories do not need "
+                    "to be added again."
+                )
+                if error.code == "pairing_not_available"
+                else "Halo could not complete this request; refresh its current state",
+                status=409 if conflict or error.code == "pairing_not_available" else 503,
                 possibly_sent=error.code == "request_failed",
             )
         )

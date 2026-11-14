@@ -2,11 +2,14 @@
 
 import asyncio
 import json
+import ssl
 import threading
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from uuid import uuid4
 
+import aiohttp
 import pytest
+from aiohttp.test_utils import TestServer
 from test_homekit_bridge import ADAPTER, NODE
 from test_homekit_selection import selected_bridge
 
@@ -20,6 +23,10 @@ from halo_server.homekit.pairing_maintenance import (
 from halo_server.homekit.storage_owner import PairingDirectoryOwner
 from halo_server.paths import ensure_private_directory
 from halo_server.tui.client import AdminClient, AdminClientError
+from halo_server.web.auth import issue_setup
+from halo_server.web.defaults import OWNER_USERNAME
+from halo_server.web.routes import PREFIX, WebConsole, create_application
+from halo_server.web.settings import SettingsStore, configure, tls_context, web_directory
 
 
 class Adapter:
@@ -33,6 +40,8 @@ class Adapter:
         self.revision = manifest_revision(self.manifest)
         self.requests = []
         self.reveal_gate = None
+        self.paired = False
+        self.reveal_code = None
 
     @property
     def retirement_pending(self):
@@ -45,14 +54,23 @@ class Adapter:
                 "accepted": True,
                 "code": "ok",
                 "published": True,
-                "paired": False,
-                "paired_clients": 0,
+                "paired": self.paired,
+                "paired_clients": 1 if self.paired else 0,
                 "pairing_revision": self.revision,
                 "pairing_manifest": self.manifest,
             }
         if kind == "pairing_reveal_request":
             if self.reveal_gate is not None:
                 await self.reveal_gate.wait()
+            code = "policy-denied" if self.paired else self.reveal_code
+            if code is not None:
+                return payload | {
+                    "accepted": False,
+                    "code": code,
+                    "pincode": None,
+                    "setup_uri": None,
+                    "ttl_ms": 0,
+                }
             return payload | {
                 "accepted": True,
                 "code": "ok",
@@ -127,6 +145,112 @@ async def test_explicit_reveal_and_reset_through_real_owner_socket_keep_metadata
         owner = PairingDirectoryOwner.acquire(service.paths.homekit_pairing_directory)
         owner.close()
     finally:
+        await service._admin.stop()
+        await bridge.stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("adapter_code", "owner_code"),
+    [
+        ("policy-denied", "pairing_not_available"),
+        ("conflict", "configuration_conflict"),
+        ("not-ready", "unavailable"),
+    ],
+)
+async def test_reveal_rejections_keep_their_meaning_over_real_owner_socket(
+    tmp_path, monkeypatch, adapter_code, owner_code
+):
+    bridge, runtime, _, service, client, starts = await fixture(tmp_path, monkeypatch)
+    try:
+        runtime.reveal_code = adapter_code
+        page = await client.homekit_pairing_list()
+        before = bridge._registry
+        with pytest.raises(AdminClientError) as error:
+            await client.homekit_pairing_reveal(page, page["cameras"][0])
+        assert error.value.code == owner_code
+        assert "192-83-746" not in str(error.value) and "X-HM://" not in str(error.value)
+        assert not starts and bridge._registry == before
+        assert not bridge._pairing_admin.journal.entries
+        assert runtime.state == "ready"
+    finally:
+        await service._admin.stop()
+        await bridge.stop()
+
+
+@pytest.mark.asyncio
+async def test_paired_camera_reveal_denial_crosses_real_owner_ipc_and_https_without_reset(
+    tmp_path, monkeypatch
+):
+    bridge, runtime, _, service, owner, starts = await fixture(tmp_path, monkeypatch)
+    server = None
+    try:
+        runtime.paired = True
+        page = await owner.homekit_pairing_list()
+        camera = page["cameras"][0]
+        assert camera["paired_known"] and camera["paired"]
+        before = bridge._registry
+        configure(service.paths)
+        setup = issue_setup(service.paths)
+        settings = SettingsStore(service.paths).load()
+        application = WebConsole(service.paths, settings)
+        # Use the default real AdminClient against HaloService's Unix socket;
+        # only the Ring camera and adapter are synthetic in this regression.
+        server = TestServer(create_application(application), host="127.0.0.1", scheme="https")
+        await server.start_server(ssl=tls_context(service.paths, settings))
+        application.settings = replace(settings, port=server.port)
+        trust = ssl.create_default_context(
+            cafile=str(web_directory(service.paths) / settings.certificate_file)
+        )
+        async with aiohttp.ClientSession(
+            connector=aiohttp.TCPConnector(ssl=trust), cookie_jar=aiohttp.CookieJar(unsafe=True)
+        ) as browser:
+            session_response = await browser.get(server.make_url(PREFIX + "/session"))
+            session = (await session_response.json())["result"]
+            headers = {
+                "Origin": application.settings.origin,
+                "X-Halo-CSRF": session["csrf_token"],
+            }
+            enrolled = await browser.post(
+                server.make_url(PREFIX + "/setup"),
+                headers=headers,
+                json={
+                    "username": OWNER_USERNAME,
+                    "setup_code": setup["setup_code"],
+                    "password": "long synthetic owner password",
+                },
+            )
+            assert enrolled.status == 200
+            headers["X-Halo-CSRF"] = (await enrolled.json())["result"]["csrf_token"]
+            target = {
+                key: page[key]
+                for key in ("profile_id", "account_generation", "registry_revision", "boot_id")
+            } | {"camera_id": camera["camera_id"], "pairing_revision": camera["pairing_revision"]}
+            revealed = await browser.post(
+                server.make_url(PREFIX + "/pairing/reveal"), headers=headers, json=target
+            )
+            result = await revealed.json()
+            assert revealed.status == 409
+            assert result == {
+                "ok": False,
+                "error": {
+                    "code": "pairing_not_available",
+                    "message": (
+                        "Pairing code is unavailable. Already paired accessories do not need "
+                        "to be added again."
+                    ),
+                    "possibly_sent": False,
+                },
+            }
+            assert "192-83-746" not in json.dumps(result) and "X-HM://" not in json.dumps(result)
+            state = await browser.get(server.make_url(PREFIX + "/state"))
+            assert state.status == 200 and (await state.json())["result"]["daemon"]["available"]
+        assert not starts and bridge._registry == before
+        assert not bridge._pairing_admin.journal.entries
+        assert runtime.state == "ready"
+    finally:
+        if server is not None:
+            await server.close()
         await service._admin.stop()
         await bridge.stop()
 

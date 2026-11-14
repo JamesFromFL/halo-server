@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "source_hash": "d0ac0f7465885848c33019180d3976bfd498098504c681130b3d0719c563261c",
+  "source_hash": "273d4cbc1820f2930ee0f244039ee16419eadb681b520806bf0a4d1d8c2f9f4f",
   "source_files": [
     {
       "path": ".prettierignore",
@@ -40,11 +40,11 @@
     },
     {
       "path": "scripts/bridge-homekit-smoke.mjs",
-      "sha256": "d8df30cb7e301e995968dc3643330d9f177f074baa39155de4aa4eba5d3b1e33"
+      "sha256": "2e5cc6344f91ebcc7882ca6cab958832e3a58aac945dcd2a62218129b6ae8cbd"
     },
     {
       "path": "scripts/browser-smoke.mjs",
-      "sha256": "7663bb942ac6e761731f8c1589fcde6777fbf463f7c7406bc3f835978cf2db2e"
+      "sha256": "e65fabc1a7e6557d648078476310eae2f3a076aa96fcad0b7a7eec8db64fa1d0"
     },
     {
       "path": "scripts/build-manifest.mjs",
@@ -72,7 +72,7 @@
     },
     {
       "path": "scripts/pairing-smoke.mjs",
-      "sha256": "54a38aba6f1f714f38e9b4a403a3fbebe913a9bff5623ab059a6e64e8d3be7ec"
+      "sha256": "74d87523145e7903421ed7dd1b83772cb0cad3dff5925a753d18f25f9e7b0b3b"
     },
     {
       "path": "src/App.svelte",
@@ -84,7 +84,7 @@
     },
     {
       "path": "src/components/BridgeHomeKit.svelte",
-      "sha256": "c594ccf7f2c544ec90ba46d011c90f28f52879e5a6e947fe65adffd8e4c4d53f"
+      "sha256": "a00d4c23314c4c18f1396a7accf0ad08d9e0c84eb9a08ebdd5ef23fa5e5f157d"
     },
     {
       "path": "src/components/BridgePreferences.svelte",
@@ -180,7 +180,7 @@
     },
     {
       "path": "src/pages/Devices.svelte",
-      "sha256": "d9007288848ae13ba5dcf6fd21a80897c9b1b658c7dea2ad2e0cb2a876a367ba"
+      "sha256": "4d5929df4df4609b23d741e099e5a04c6f239fa43efe011409581c9397237e19"
     },
     {
       "path": "src/pages/Diagnostics.svelte",
@@ -265,8 +265,8 @@
       "sha256": "74c07fd75608d0526505de5411debfe75ff1470d48bf57dcd3da8b5e31b92ff0"
     },
     {
-      "path": "assets/index-CMbdgPhR.js",
-      "sha256": "ddff4a1070da126c67f8471efa7094227452663b77fe0b1ff7d6d2fe9a1c90fb"
+      "path": "assets/index-DFQH77T1.js",
+      "sha256": "6b4617eb398fc55fa11aa800f4592e459366ba84e372f4dbd6de91c5cc173888"
     },
     {
       "path": "halo.png",
@@ -274,7 +274,7 @@
     },
     {
       "path": "index.html",
-      "sha256": "be6917d0e549474144e5a97bde8896d3add511c8caedc2bea39b83b50859100f"
+      "sha256": "9f6fa5495887807d9ae83e46b3026cda3defdfda82adfb0419fa4c665fcdb59f"
     }
   ]
 }

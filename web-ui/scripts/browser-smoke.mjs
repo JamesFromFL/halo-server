@@ -189,6 +189,74 @@ try {
   await page.goBack();
   await search.waitFor();
   checks.push('seven devices; long/empty search; details and history Back');
+  const recording = await readApi('recording');
+  const recordingCamera = recording.cameras.find((camera) => camera.mains_confirmed === true);
+  assert.ok(recording.available && recordingCamera, 'fixture supplies recording eligibility');
+  const recordingRoute = `devices/${encodeURIComponent(recordingCamera.camera_id)}`;
+  await navigate(recordingRoute);
+  const hksv = page.getByRole('switch', {
+    name: 'Enable HomeKit Secure Video support',
+    exact: true,
+  });
+  await page.getByText('Mains-only confirmed', { exact: true }).waitFor();
+  assert.equal(await hksv.isChecked(), false, 'viewing a camera does not opt into capture');
+  await page
+    .getByText(
+      `${recording.warm_budget.reserved} of ${recording.warm_budget.capacity} slots reserved`,
+      { exact: true },
+    )
+    .waitFor();
+  await hksv.click();
+  await page.getByRole('dialog', { name: 'Enable HomeKit Secure Video support?' }).waitFor();
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await page.getByRole('dialog').waitFor({ state: 'hidden' });
+  assert.equal(await hksv.isChecked(), false, 'canceled confirmation preserves recording opt-out');
+  assert.equal(
+    requests.filter(
+      (request) => request.method === 'POST' && request.path.endsWith('/recording/warm'),
+    ).length,
+    0,
+    'viewing and canceling never submit a source-enable request',
+  );
+  for (const width of [390, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    assert.ok(
+      await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1),
+      `recording controls fit at ${width}px`,
+    );
+    await page.screenshot({ path: `${output}/recording-${width}.png`, fullPage: true });
+  }
+  for (const [value, explanation] of [
+    [
+      {
+        ...recording,
+        cameras: recording.cameras.map((camera) => ({ ...camera, mains_confirmed: false })),
+      },
+      'Not confirmed',
+    ],
+    [{ ...recording, available: false }, 'Unavailable'],
+  ]) {
+    await page.route('**/api/web/v1/recording', (route) =>
+      route.fulfill({ json: { ok: true, result: value } }),
+    );
+    await navigate('devices');
+    await navigate(recordingRoute);
+    await page
+      .locator('.preference-row')
+      .filter({ hasText: 'Recording eligibility' })
+      .getByText(explanation, { exact: true })
+      .waitFor();
+    assert.equal(
+      await hksv.isDisabled(),
+      true,
+      'unconfirmed or unavailable recording cannot be enabled',
+    );
+    await page.unroute('**/api/web/v1/recording');
+  }
+  checks.push(
+    'HKSV support explains power eligibility and actual budget; viewing/canceling cannot enable capture; unavailable or unconfirmed support stays disabled',
+  );
+
   const controls = await readApi('controls');
   const light = controls.cameras.find((camera) => camera.has_light);
   assert.ok(light, 'fixture supplies reversible light control');

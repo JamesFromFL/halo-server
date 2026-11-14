@@ -610,6 +610,7 @@ class HaloService:
                     "authentication_failed",
                     "two_factor_required",
                     "configuration_conflict",
+                    "pairing_not_available",
                     "homekit_disabled",
                     "unsupported",
                     "managed_mode_unsupported",
