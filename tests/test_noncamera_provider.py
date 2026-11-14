@@ -147,7 +147,9 @@ async def test_discovery_unions_alarm_and_lighting_locations_and_excludes_camera
 @pytest.mark.asyncio
 @pytest.mark.parametrize("bad", [None, True, "", "a" * 129, "bad\nvalue", "unknown-location"])
 async def test_invalid_discovery_never_removes_known_devices(bad):
-    gateway = Gateway({"chimes": [{"id": 1, "location_id": "home", "online": True}]})
+    gateway = Gateway(
+        {"chimes": [{"id": 1, "location_id": "home", "alerts": {"connection": "online"}}]}
+    )
     instance = provider(gateway)
     try:
         await instance.refresh()
@@ -351,7 +353,9 @@ async def test_http_core_and_gateway_deny_writes_and_noninventory_routes():
 async def test_rest_device_connectivity_is_not_inferred_from_successful_http(connected, health):
     from halo_server.devices.catalog import DeviceCatalog
 
-    gateway = Gateway({"chimes": [{"id": 1, "location_id": "home", "online": connected}]})
+    gateway = Gateway(
+        {"chimes": [{"id": 1, "location_id": "home", "alerts": {"connection": health}}]}
+    )
     instance = provider(gateway, clock=lambda: 100.0)
     try:
         await instance.refresh()
@@ -464,7 +468,7 @@ async def test_confirmed_source_removal_is_unavailable_while_other_location_is_o
     gateway = Gateway(
         {
             "base_stations": [{"id": 1, "location_id": "home"}, {"id": 2, "location_id": "other"}],
-            "chimes": [{"id": 3, "location_id": "home", "online": True}],
+            "chimes": [{"id": 3, "location_id": "home", "alerts": {"connection": "online"}}],
         },
         ("home", "other"),
     )
@@ -484,7 +488,7 @@ async def test_confirmed_source_removal_is_unavailable_while_other_location_is_o
         gateway=gateway,
         transport_factory=Isolated,
         clock=lambda: 100.0,
-        on_snapshot=lambda alarms, lights, **snapshot: catalog.apply(**snapshot),
+        on_snapshot=lambda alarms, lights, chimes, **snapshot: catalog.apply(**snapshot),
     )
     try:
         await instance.refresh()

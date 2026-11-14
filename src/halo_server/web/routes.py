@@ -603,6 +603,59 @@ class WebConsole:
             )
         )
 
+    async def device_chime_policy(self, request):
+        from halo_server.devices.chime import POLICY_FIELDS
+        from halo_server.devices.chime_policy import valid_device_id
+
+        value = await body(request, tuple(POLICY_FIELDS) + ("operation_id",))
+        text(value["profile_id"], maximum=36)
+        integer(value["account_generation"], minimum=1)
+        integer(value["expected_revision"])
+        boolean(value["enabled"])
+        boolean(value["sound_tests_enabled"])
+        if not valid_device_id(value["device_id"]) or (
+            value["sound_tests_enabled"] and not value["enabled"]
+        ):
+            raise WebError("bad_request", "Chime preference or identity is invalid")
+        if value["enabled"]:
+            self.auth.recent(request[SESSION])
+        identifier = operation_id(value["operation_id"])
+        params = {key: item for key, item in value.items() if key != "operation_id"}
+        return success(
+            await self.operations.run(
+                identifier,
+                "configuration",
+                {"target": "chime_policy", **value},
+                lambda: self.pool.call(self.client.devices_chime_policy_set, **params),
+            )
+        )
+
+    async def device_chime_set(self, request):
+        from halo_server.devices.chime import SET_FIELDS, valid_action
+        from halo_server.devices.chime_policy import valid_device_id
+
+        value = await body(request, tuple(SET_FIELDS))
+        text(value["profile_id"], maximum=36)
+        for field in ("account_generation", "provider_generation"):
+            integer(value[field], minimum=1)
+        for field in ("expected_epoch", "expected_revision", "expected_policy_revision"):
+            integer(value[field])
+        if not valid_device_id(value["device_id"]) or not valid_action(
+            value["action"], value["value"]
+        ):
+            raise WebError("bad_request", "Chime action or identity is invalid")
+        if value["action"] == "test":
+            self.auth.recent(request[SESSION])
+        identifier = operation_id(value["operation_id"])
+        return success(
+            await self.operations.run(
+                identifier,
+                "control",
+                {"control": "chime", **value},
+                lambda: self.pool.call(self.client.devices_chime_set, **value),
+            )
+        )
+
     async def device_light_policy(self, request):
         from halo_server.devices.light import POLICY_FIELDS
         from halo_server.devices.light_policy import ON_DURATIONS, valid_device_id
@@ -992,6 +1045,8 @@ def create_application(console, *, static_root=None):
         web.post(PREFIX + "/devices/monitoring", console.devices_monitoring),
         web.post(PREFIX + "/devices/light/policy", console.device_light_policy),
         web.post(PREFIX + "/devices/light/set", console.device_light_set),
+        web.post(PREFIX + "/devices/chime/policy", console.device_chime_policy),
+        web.post(PREFIX + "/devices/chime/set", console.device_chime_set),
         web.post(PREFIX + "/devices/alarm/policy", console.device_alarm_policy),
         web.post(PREFIX + "/devices/alarm/mode", console.device_alarm_mode),
         web.post(PREFIX + "/devices/bridge", console.devices_bridge),

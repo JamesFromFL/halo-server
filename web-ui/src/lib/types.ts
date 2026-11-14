@@ -60,6 +60,26 @@ export interface NoncameraDevice {
   unsupported_reason: string | null;
   alarm?: AlarmState;
   light?: LightState;
+  chime?: ChimeState;
+}
+export type ChimeAction = 'volume' | 'test' | 'snooze' | 'nightlight' | 'sound_stopped';
+export interface ChimeState {
+  policy_revision: number;
+  enabled: boolean;
+  sound_tests_enabled: boolean;
+  provider_generation: number;
+  epoch: number;
+  observed_revision: number;
+  authorization: 'allowed' | 'denied' | 'unknown';
+  can_set: boolean;
+  reason: string | null;
+  pending: boolean;
+  outcome_unknown: boolean;
+  requested_action: string | null;
+  volume: number | null;
+  snooze_seconds_left: number | null;
+  automatic_nightlight: boolean | null;
+  sound_active: boolean;
 }
 export type LightDuration = 30 | 60 | 300 | 900;
 export interface LightState {

@@ -205,6 +205,12 @@ class AdminClient:
     async def devices_light_set(self, **params):
         return await self._object("devices_light_set", **params)
 
+    async def devices_chime_policy_set(self, **params):
+        return await self._object("devices_chime_policy_set", **params)
+
+    async def devices_chime_set(self, **params):
+        return await self._object("devices_chime_set", **params)
+
     async def devices_alarm_policy_set(self, **params):
         return await self._object("devices_alarm_policy_set", **params)
 

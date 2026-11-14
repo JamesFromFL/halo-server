@@ -2,6 +2,7 @@ import type { Device, NoncameraDevice, NoncameraState, StateEnvelope } from './t
 import { validBridge } from './bridge.ts';
 import { validAlarm } from './alarm.ts';
 import { validLight } from './light.ts';
+import { validChime } from './chime.ts';
 
 const ROUTE_PREFIX = 'noncamera:';
 const STATES = new Set(['disabled', 'starting', 'ready', 'partial', 'offline', 'error']);
@@ -66,6 +67,7 @@ export function validNoncamera(value: unknown): value is NoncameraState {
           ['unknown', 'online', 'offline', 'stale', 'unavailable'].includes(
             device.source_health,
           )) &&
+        (device.chime === undefined || (device.kind === 'chime' && validChime(device.chime))) &&
         typeof device.stale === 'boolean' &&
         timestamp(device.observed_at) &&
         typeof device.supported === 'boolean' &&

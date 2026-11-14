@@ -192,7 +192,7 @@ async def test_http_errors_close_response_and_never_follow_or_report_body(status
     with pytest.raises(AlarmRestError) as error:
         await RingAlarmRestGateway(auth).request_json(LOCATIONS_ENDPOINT)
     assert error.value.code == str(error.value) == code
-    assert error.value.status == status and error.value.retry_after == 300
+    assert error.value.status == status and error.value.retry_after == 900
     assert response.closed and len(calls) == 1
 
 
@@ -483,7 +483,7 @@ def test_retry_after_is_finite_bounded_and_supports_http_dates():
 
     future = format_datetime(datetime.now(UTC) + timedelta(seconds=30), usegmt=True)
     assert 28 <= rest._retry_after(future) <= 30
-    assert rest._retry_after("900") == 300
+    assert rest._retry_after("900") == 900
     assert rest._retry_after("-10") == 0
     assert rest._retry_after("NaN") is None
     assert rest._retry_after("private invalid server message") is None

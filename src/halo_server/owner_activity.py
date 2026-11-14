@@ -15,6 +15,8 @@ OWNER_ACTIONS = frozenset(
         "devices_monitoring_set",
         "devices_light_policy_set",
         "devices_light_set",
+        "devices_chime_policy_set",
+        "devices_chime_set",
         "devices_alarm_policy_set",
         "devices_alarm_mode_set",
         "devices_bridge_set",

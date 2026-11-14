@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "source_hash": "8c3fd415d06643a5d35fd6d886965a09ba4dc4297a5af182af20748408d8eb8f",
+  "source_hash": "9e34978db62d135f82978f810c538ccbe62997df60d45ce3e04495c67e374336",
   "source_files": [
     {
       "path": ".prettierignore",
@@ -24,7 +24,7 @@
     },
     {
       "path": "package.json",
-      "sha256": "5143768bc99f439d6b2e39aabd095dd5043db6f9cb356b0745fb2f402e2d342f"
+      "sha256": "2916b237120f4b8625fef1512897d18525d24157e18ac266cc41c7ab26a22685"
     },
     {
       "path": "public/THIRD_PARTY_NOTICES.txt",
@@ -49,6 +49,10 @@
     {
       "path": "scripts/build-manifest.mjs",
       "sha256": "45b68e586c795291dd929ca4e4e0a23605fd8769bd3489379ff106d9aadc6d17"
+    },
+    {
+      "path": "scripts/chime-smoke.mjs",
+      "sha256": "dc0ba015b9fd6f720f0fa209a10622637718ec19f02b1651ee0a5d0d8a9071dc"
     },
     {
       "path": "scripts/licenses.mjs",
@@ -79,6 +83,10 @@
       "sha256": "e53b77558cb22b4d738da1f55e5d752d144b7402a6c9b838cdc0b05ccd16df99"
     },
     {
+      "path": "src/components/ChimeControls.svelte",
+      "sha256": "781c20bfd1eab6eb1ed2e5fee87f78b7f20b7c914ffce1c5040469cb13304c6f"
+    },
+    {
       "path": "src/components/Confirm.svelte",
       "sha256": "38ec48daa823352273b8cc1003926ab78ba8662e1056a659dd69e40d1a9f366b"
     },
@@ -92,11 +100,11 @@
     },
     {
       "path": "src/components/NoncameraDevices.svelte",
-      "sha256": "85e028e2a8176b3035f6d7f7a786560451b613848e73eea49ed9b56df76f13b3"
+      "sha256": "e08eaf124c42cd6edf50893d4a0ca00157c50132d1155d9cec2a710c1a7ae65c"
     },
     {
       "path": "src/components/OperationStatus.svelte",
-      "sha256": "f70dc043109e615b7e83ca292e925c8a4ceb5636807e236e47bcc55a6aedc17a"
+      "sha256": "957544a8a10f01e30260adf7025a6ec791bb66746e47993a3d0635ce1f58ee48"
     },
     {
       "path": "src/components/PairingCode.svelte",
@@ -127,6 +135,10 @@
       "sha256": "b816b667a5070ed602b2a277db633bbe7e8358c536d1e824ebbeaedfdd1d3ed8"
     },
     {
+      "path": "src/lib/chime.ts",
+      "sha256": "fc1645d4e2dfd7de7f7a343405314207f4177c01421a59753a1061aa1d58b32e"
+    },
+    {
       "path": "src/lib/light.ts",
       "sha256": "dcc7461f097ac01604aac6d71d108ff96c50f33999affcf7b0301be8968a599f"
     },
@@ -136,7 +148,7 @@
     },
     {
       "path": "src/lib/noncamera.ts",
-      "sha256": "4d5d281c39980d55a33d29f6b624bdcfc3eeecfcc9f0a222a80e69b05acc1eff"
+      "sha256": "2f4b0dfedcef5f06fd63fc38af5c9b4f9336ffd97bc6d2b2087644f8b460d035"
     },
     {
       "path": "src/lib/password.ts",
@@ -144,7 +156,7 @@
     },
     {
       "path": "src/lib/types.ts",
-      "sha256": "b5617a370123c5f12cd40937609d26078eb6e0bc228832d0b15881e1f37e8d8a"
+      "sha256": "7f5cecf99831e267d19112029bbc482832a17ed6bbbb35059c18bc1ece3afd9b"
     },
     {
       "path": "src/main.ts",
@@ -203,6 +215,10 @@
       "sha256": "6bd29cd501453b4409d4056cfcdbbdeaa596431dd131c4564c6092c86d7eb684"
     },
     {
+      "path": "tests/chime.test.ts",
+      "sha256": "864a5e2bddc2748bf9921c0c990ea486f9ffbe691f63020b3534315515288b8c"
+    },
+    {
       "path": "tests/light.test.ts",
       "sha256": "adbf1b77a8276fa8eac8685f669a0778b53084c24f1ecc7cf3d374a174e33945"
     },
@@ -233,12 +249,12 @@
       "sha256": "27b3a540203dab45ee90ade440f4840b513dd2055969a84a9ebccb561fd14799"
     },
     {
-      "path": "assets/index-CmI0CDOp.css",
-      "sha256": "7e2c4e87300cfab9ea67f076cfc39ce94221067a7a5a3fb93c35a32777ecbcc3"
+      "path": "assets/index-B_958Fvz.css",
+      "sha256": "74c07fd75608d0526505de5411debfe75ff1470d48bf57dcd3da8b5e31b92ff0"
     },
     {
-      "path": "assets/index-DxQ5h14g.js",
-      "sha256": "7d104989560c79700bdd433b6300dbe6351cfe13dacd6974145cda661bcffead"
+      "path": "assets/index-CGBlvVQH.js",
+      "sha256": "2fe2cf18959bf155d1b0d497f049ebc9b0166484755625ac96103597fc796832"
     },
     {
       "path": "halo.png",
@@ -246,7 +262,7 @@
     },
     {
       "path": "index.html",
-      "sha256": "6ab285240ddcb94232e7f1d856fc73d9ad36a6e022439f98e6b940846baeb56e"
+      "sha256": "6bf568da6973ae009e4c9b6bb503cd9f9c14f454a4c2a95ce35430e721f87a44"
     }
   ]
 }

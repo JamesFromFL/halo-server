@@ -579,7 +579,7 @@ def _retry_after(value):
             result = (parsedate_to_datetime(value) - datetime.now(UTC)).total_seconds()
         except (TypeError, ValueError, OverflowError):
             return None
-    return min(300.0, max(0.0, result)) if math.isfinite(result) else None
+    return min(3600.0, max(0.0, result)) if math.isfinite(result) else None
 
 
 def _decode_json(data, max_depth, max_nodes):

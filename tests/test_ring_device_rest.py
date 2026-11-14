@@ -284,7 +284,7 @@ async def test_http_status_has_explicit_outcome_and_never_refreshes_or_replays(
     assert len(calls) == 1 and auth.async_refresh_tokens.await_count == 0 and response.closed
     assert "private" not in repr(receipt)
     if not 200 <= status < 300:
-        assert receipt.retry_after == 300
+        assert receipt.retry_after == 900
 
 
 @pytest.mark.asyncio

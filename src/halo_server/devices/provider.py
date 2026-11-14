@@ -16,8 +16,10 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 
 from halo_server.devices.alarm_commands import AlarmCommands
+from halo_server.devices.chime_commands import ChimeCommands, chime_values
 from halo_server.devices.light_commands import BEAMS_TYPES, LightCommands
 from halo_server.devices.models import DeviceIdentity, DeviceObservation, DeviceRecord
+from halo_server.ring.device_rest import RingDeviceRestGateway
 from halo_server.ring.hub.models import (
     AlarmConnectionStatus,
     AlarmDeviceKind,
@@ -113,6 +115,7 @@ class NoncameraProvider:
         ):
             raise ValueError("Provider generations must be positive safe integers")
         self.profile_id = profile_id
+        self._auth = auth
         self.account_generation = account_generation
         self.provider_generation = provider_generation
         self._gateway = (
@@ -148,6 +151,32 @@ class NoncameraProvider:
         self._alarm_commands = AlarmCommands(self, timeout=command_timeout)
         self._beams_owners: dict[tuple[str, str], bool] = {}
         self._light_commands = LightCommands(self, timeout=command_timeout)
+        self._device_gateway = None
+        self._chime_commands = ChimeCommands(self, timeout=command_timeout)
+        self._discovery_retry_at = 0.0
+        self._discovery_sequence = 0
+
+    def _get_device_gateway(self):
+        if self._device_gateway is None:
+            core = getattr(self._gateway, "shared_transport", None)
+            if core is None:
+                return None
+            self._device_gateway = RingDeviceRestGateway(
+                self._auth, transport=core, admission=self._active
+            )
+        return self._device_gateway
+
+    async def set_chime(
+        self, device_id, action, value, *, expected_revision, expected_epoch, admission=None
+    ):
+        return await self._chime_commands.request(
+            device_id,
+            action,
+            value,
+            expected_revision=expected_revision,
+            expected_epoch=expected_epoch,
+            admission=admission,
+        )
 
     async def start(self):
         if self._closed:
@@ -207,13 +236,24 @@ class NoncameraProvider:
     async def _discovery_loop(self):
         while self._active():
             await self.refresh()
+            interval = (
+                min(self._refresh_interval, 20)
+                if any(record.family == "chimes" for record in self._rest_records)
+                else self._refresh_interval
+            )
+            delay = max(interval, self._discovery_retry_at - self._monotonic())
             with contextlib.suppress(TimeoutError):
-                await asyncio.wait_for(self._stop.wait(), timeout=self._refresh_interval)
+                await asyncio.wait_for(self._stop.wait(), timeout=delay)
 
     async def refresh(self):
         async with self._refresh_lock:
             if not self._active():
                 return
+            if self._monotonic() < self._discovery_retry_at:
+                return
+            started = self._monotonic()
+            self._discovery_sequence += 1
+            sequence = self._discovery_sequence
             try:
                 devices, locations = await asyncio.gather(
                     self._gateway.request_json(DEVICES_ENDPOINT),
@@ -230,6 +270,12 @@ class NoncameraProvider:
                 if not self._active():
                     return
                 self._rest_valid = False
+                self._chime_commands.invalidate()
+                retry = getattr(exc, "retry_after", None)
+                if type(retry) in (int, float) and math.isfinite(retry) and retry > 0:
+                    self._discovery_retry_at = self._monotonic() + min(3600, retry)
+                elif getattr(exc, "code", None) == "rate-limited":
+                    self._discovery_retry_at = self._monotonic() + 60
                 self._error = _error_code(exc)
                 self._rest_records = tuple(
                     _stale(record, self._error) for record in self._rest_records
@@ -242,6 +288,8 @@ class NoncameraProvider:
             self._rest_valid = True
             self._rest_records = rows
             self._beams_owners = beams_owners
+            self._discovery_retry_at = 0.0
+            self._chime_commands.observe(devices, started=started, sequence=sequence)
             current = {seed.location_id: seed for seed in seeds}
             rest_keys = {record.key for record in rows}
             # An offline location makes the aggregate inventory partial. Still
@@ -368,14 +416,17 @@ class NoncameraProvider:
                         else None
                     )
                 )
-                observations = (
+                values = chime_values(row) if family == "chimes" else {"connected": connected}
+                connected = values["connected"]
+                observations = tuple(
                     DeviceObservation(
-                        "connected",
-                        connected,
-                        now if connected is not None else None,
-                        status="current" if connected is not None else "unknown",
+                        name,
+                        value,
+                        now if value is not None else None,
+                        status="current" if value is not None else "unknown",
                         source="rest",
-                    ),
+                    )
+                    for name, value in values.items()
                 )
                 records.append(
                     DeviceRecord(
@@ -652,6 +703,7 @@ class NoncameraProvider:
                 observed_at=self._clock(),
                 alarms=alarms,
                 lights=lights,
+                chimes=self._chime_commands.snapshots(),
             )
             if inspect.isawaitable(result):
                 await result
@@ -782,6 +834,9 @@ class NoncameraProvider:
         self._stop.set()
         if self._task is not None:
             self._task.cancel()
+        await self._chime_commands.close()
+        if self._device_gateway is not None:
+            await self._device_gateway.close()
         await asyncio.gather(*(self._stop_runtime(runtime) for runtime in self._runtimes.values()))
         self._runtimes.clear()
         await self._gateway.close()
