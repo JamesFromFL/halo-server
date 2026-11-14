@@ -514,6 +514,19 @@ class ChimeCoordinator:
                         "code": "account-changed",
                         "possibly_sent": result.get("possibly_sent", True),
                     }
+                uncertain = self._uncertain.get(key)
+                if (
+                    action == "sound_stopped"
+                    and result.get("status") == "confirmed"
+                    and result.get("code") == "sound-stop-acknowledged"
+                    and result.get("possibly_sent") is False
+                    and uncertain
+                    and uncertain[1] == "test"
+                ):
+                    # This local owner acknowledgement resolves a lost sound
+                    # result without waiting for an unrelated settings poll.
+                    # It cannot establish the outcome of any setting write.
+                    self._uncertain.pop(key, None)
                 return result
             except (Exception, asyncio.CancelledError):
                 # This owned task is shielded from its caller. Cancellation of

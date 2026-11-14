@@ -246,3 +246,60 @@ async def test_bad_source_revokes_captured_admission_and_cancel_is_uncertain(tmp
     finally:
         release.set()
         await monitor.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "uncertain_action,status,code,sent,cleared",
+    [
+        ("test", "confirmed", "sound-stop-acknowledged", False, True),
+        ("volume", "confirmed", "sound-stop-acknowledged", False, False),
+        ("snooze", "confirmed", "sound-stop-acknowledged", False, False),
+        ("nightlight", "confirmed", "sound-stop-acknowledged", False, False),
+        ("test", "uncertain", "result-unavailable", False, False),
+        ("test", "accepted", "sound-stop-acknowledged", False, False),
+        ("test", "confirmed", "state-confirmed", False, False),
+        ("test", "confirmed", "sound-stop-acknowledged", True, False),
+    ],
+)
+async def test_local_sound_ack_resolves_only_lost_sound_result_without_settings_readback(
+    tmp_path, uncertain_action, status, code, sent, cleared
+):
+    _, _, sessions, monitor, provider, row = await ready(tmp_path)
+    key = (monitor._binding.scope, row.key)
+    try:
+        await monitor.chime.configure(**policy_request(sessions, monitor, row))
+        monitor.chime.receive(
+            monitor._binding,
+            (
+                source(
+                    row,
+                    sound_active=True,
+                    can_set=False,
+                    outcome_unknown=True,
+                    reason="sound-active",
+                ),
+            ),
+        )
+        # This is the coordinator fallback after a lost Ring-loop result. The
+        # provider's later local acknowledgement does not advance readback.
+        monitor.chime._uncertain[key] = (1, uncertain_action, "ding")
+
+        async def acknowledge(_device, action, value, **_params):
+            assert action == "sound_stopped" and value is None
+            monitor.chime.receive(
+                monitor._binding,
+                (source(row, revision=5, readback_revision=1, sound_active=False),),
+            )
+            return {"status": status, "code": code, "possibly_sent": sent}
+
+        provider.set_chime = acknowledge
+        await monitor.chime.set_chime(
+            **command(sessions, monitor, row, action="sound_stopped", value=None)
+        )
+        assert (key not in monitor.chime._uncertain) is cleared
+        view = monitor.snapshot()["devices"][0]["chime"]
+        assert view["outcome_unknown"] is not cleared
+        assert view["can_set"] is cleared
+    finally:
+        await monitor.close()

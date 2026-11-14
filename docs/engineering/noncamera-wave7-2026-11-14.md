@@ -73,6 +73,13 @@ A 900-second server delay is now preserved instead of truncated to 300 seconds.
 Ruff and diff whitespace checks pass. Existing pinned SDK deprecation warnings
 remain; none of these tests contacted Ring or published HomeKit accessories.
 
+A post-commit composed review found that an explicitly acknowledged stopped sound
+could leave the coordinator's separate lost-result barrier behind until the next
+poll. The follow-up clears only a prior sound-test barrier on the exact confirmed
+local acknowledgement receipt. Setting uncertainty and failed/ambiguous receipts
+remain blocked. Eight regression cases cover that distinction; the combined
+Chime coordinator, web and provider suite passed **74 tests** after this correction.
+
 References: [project comparison](ring-project-comparison-2026-11-14.md), the pinned
 Homebridge `ring-chime.ts` contract, Halo GTK's Chime modules, and the independently
 qualified [shared REST boundary](noncamera-wave6-2026-11-14.md). Fixture/browser
