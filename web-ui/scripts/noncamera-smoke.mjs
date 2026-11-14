@@ -347,7 +347,7 @@ try {
     await page.getByRole('link', { name: 'Manage Halo Bridge', exact: true }).count(),
     1,
   );
-  await page.getByRole('switch', { name: 'Automatically include supported sensors' }).click();
+  await page.getByRole('switch', { name: 'Automatically include supported devices' }).click();
   await page.getByText('0 of 149 selected', { exact: true }).waitFor();
   assert.equal(bridge.auto_import, false);
   await page.locator('.device-link').filter({ hasText: 'Front door' }).click();
@@ -385,10 +385,10 @@ try {
     true,
   );
   await page.getByRole('link', { name: 'Back to devices', exact: true }).click();
-  await page.getByRole('switch', { name: 'Automatically include supported sensors' }).waitFor();
+  await page.getByRole('switch', { name: 'Automatically include supported devices' }).waitFor();
   uncertainBridgeSave = true;
   const bridgeSavesBefore = bridgeMutations.length;
-  await page.getByRole('switch', { name: 'Automatically include supported sensors' }).click();
+  await page.getByRole('switch', { name: 'Automatically include supported devices' }).click();
   await page.getByRole('button', { name: 'Check outcome' }).waitFor();
   assert.equal(
     await page.getByRole('switch', { name: 'Prepare Halo Bridge', exact: true }).isDisabled(),
@@ -396,7 +396,7 @@ try {
   );
   assert.equal(
     await page
-      .getByRole('switch', { name: 'Automatically include supported sensors' })
+      .getByRole('switch', { name: 'Automatically include supported devices' })
       .isDisabled(),
     true,
   );

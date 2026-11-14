@@ -53,10 +53,30 @@ export interface NoncameraDevice {
   capabilities: string[];
   observed: Record<string, Json>;
   available: boolean | null;
+  source_health?: 'unknown' | 'online' | 'offline' | 'stale' | 'unavailable';
   stale: boolean;
   observed_at: number | null;
   supported: boolean;
   unsupported_reason: string | null;
+  alarm?: AlarmState;
+}
+export type AlarmMode = 'disarmed' | 'home' | 'away';
+export interface AlarmState {
+  policy_revision: number;
+  enabled: boolean;
+  provider_generation: number;
+  epoch: number;
+  observed_revision: number;
+  mode: AlarmMode | null;
+  phase: string | null;
+  signal: string | null;
+  authorization: 'allowed' | 'denied' | 'unknown';
+  can_set_mode: boolean;
+  allowed_targets: AlarmMode[];
+  reason: string | null;
+  pending: boolean;
+  outcome_unknown: boolean;
+  requested_mode: AlarmMode | null;
 }
 export interface BridgePreferences {
   enabled: boolean;
@@ -138,7 +158,7 @@ export interface NoncameraState {
   observed_at: number | null;
   devices: NoncameraDevice[];
   safety: {
-    read_only: true;
+    read_only: boolean;
     panic_enabled: false;
     emergency_dispatch_enabled: false;
   };

@@ -13,6 +13,8 @@ OWNER_ACTIONS = frozenset(
         "logout",
         "configuration_set",
         "devices_monitoring_set",
+        "devices_alarm_policy_set",
+        "devices_alarm_mode_set",
         "devices_bridge_set",
         "devices_bridge_publication_set",
         "devices_bridge_pairing_reveal",

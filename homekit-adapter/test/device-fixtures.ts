@@ -2,6 +2,7 @@ import { AccessoryEventTypes, type Bridge } from "@homebridge/hap-nodejs";
 import {
   DeviceBridgeManager,
   type DevicePublisher,
+  type DeviceBridgeOptions,
 } from "../src/device-bridge.js";
 import type {
   DeviceChild,
@@ -22,6 +23,7 @@ export function deviceChild(
     model: "Fixture Sensor",
     mappings,
     available: true,
+    alarm: null,
     values: {
       contact: null,
       motion: null,
@@ -68,7 +70,7 @@ export class DeviceFakePublisher implements DevicePublisher {
     this.unpublished.push(bridge);
   }
 }
-export function deviceHarness() {
+export function deviceHarness(onAlarmSet?: DeviceBridgeOptions["onAlarmSet"]) {
   let now = 1,
     closes = 0,
     preflights = 0;
@@ -85,6 +87,7 @@ export function deviceHarness() {
     publisher,
     store,
     monotonicNow: () => now,
+    ...(onAlarmSet ? { onAlarmSet } : {}),
   });
   return {
     manager,

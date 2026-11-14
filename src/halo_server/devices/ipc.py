@@ -1,7 +1,8 @@
 """Versioned metadata-only protocol for the isolated non-camera HAP child.
 
-No Ring command, credential, camera session or media bytes can be expressed by
-this protocol. Cumulative snapshots are bounded to one HomeKit bridge capacity.
+Only explicitly enabled, scope-bound alarm modes can be requested. Panic, bypass,
+credentials, camera sessions and media bytes cannot be expressed. Cumulative
+snapshots are bounded to one HomeKit bridge capacity.
 """
 
 from __future__ import annotations
@@ -20,6 +21,8 @@ MAX_CONTROL_BYTES = 256 * 1024
 MAX_CHILDREN = 149
 IO_TIMEOUT_SECONDS = 5.0
 MAPPINGS = frozenset({"contact", "motion", "leak", "smoke", "carbon_monoxide"})
+DEVICE_SERVICE_MAPPINGS = MAPPINGS | {"security_system"}
+ALARM_MODES = frozenset({"disarmed", "home", "away"})
 CODES = frozenset(
     {
         "ok",
@@ -31,6 +34,7 @@ CODES = frozenset(
         "invalid-request",
         "busy",
         "policy-denied",
+        "uncertain",
     }
 )
 REPLIES = {
@@ -107,18 +111,49 @@ def _identity(value):
 def _child(value):
     if not _fields(
         value,
-        {"device_id", "accessory_uuid", "name", "model", "mappings", "available", "values"},
+        {
+            "device_id",
+            "accessory_uuid",
+            "name",
+            "model",
+            "mappings",
+            "available",
+            "values",
+            "alarm",
+        },
     ):
         return False
     mappings, values = value["mappings"], value["values"]
+    alarm = value["alarm"]
+    if isinstance(mappings, list) and "security_system" in mappings:
+        if mappings != ["security_system"] or not _fields(
+            alarm, {"mode", "triggered", "control_enabled"}
+        ):
+            return False
+        if (
+            alarm["mode"] is not None
+            and (not isinstance(alarm["mode"], str) or alarm["mode"] not in ALARM_MODES)
+            or alarm["triggered"] is not None
+            and type(alarm["triggered"]) is not bool
+            or type(alarm["control_enabled"]) is not bool
+            or not value["available"]
+            and (
+                alarm["mode"] is not None
+                or alarm["triggered"] is not None
+                or alarm["control_enabled"]
+            )
+        ):
+            return False
+    elif alarm is not None:
+        return False
     return (
         _hash(value["device_id"])
         and _uuid4(value["accessory_uuid"])
         and literal_text(value["name"], 64, empty=False)
         and literal_text(value["model"], 64)
         and isinstance(mappings, list)
-        and 1 <= len(mappings) <= len(MAPPINGS)
-        and all(isinstance(item, str) and item in MAPPINGS for item in mappings)
+        and 1 <= len(mappings) <= len(DEVICE_SERVICE_MAPPINGS)
+        and all(isinstance(item, str) and item in DEVICE_SERVICE_MAPPINGS for item in mappings)
         and sorted(set(mappings)) == mappings
         and type(value["available"]) is bool
         and _fields(values, MAPPINGS)
@@ -194,9 +229,28 @@ def _manifest(value, revision):
     return revision == pairing_manifest_revision(value)
 
 
+ALARM_FIELDS = {"scope", "registry_revision", "sequence", "accessory_uuid", "device_id", "target"}
+
+
+def _alarm(value, result=False):
+    return (
+        _fields(value, ALARM_FIELDS | ({"accepted", "code"} if result else set()))
+        and _scope(value["scope"])
+        and _integer(value["registry_revision"])
+        and _integer(value["sequence"], 1)
+        and _uuid4(value["accessory_uuid"])
+        and _hash(value["device_id"])
+        and isinstance(value["target"], str)
+        and value["target"] in ALARM_MODES
+        and (not result or _accepted(value))
+    )
+
+
 def _payload(kind, value):
     if not isinstance(value, dict):
         return False
+    if kind in {"alarm_set", "alarm_set_result"}:
+        return _alarm(value, kind == "alarm_set_result")
     if kind in {"ping", "pong", "shutdown", "shutdown_ack"}:
         return not value
     if kind in {"hello", "hello_ack"}:
@@ -271,7 +325,9 @@ def validate_envelope(value, *, role=None):
     ):
         raise DeviceBridgeProtocolError("Invalid device bridge control message")
     if role is not None and value["kind"] not in (
-        REPLIES if role == "python" else REPLIES.values()
+        set(REPLIES) | {"alarm_set_result"}
+        if role == "python"
+        else set(REPLIES.values()) | {"alarm_set"}
     ):
         raise DeviceBridgeProtocolError("Invalid device bridge message direction")
     return value

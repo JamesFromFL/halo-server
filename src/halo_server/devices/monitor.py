@@ -1,4 +1,4 @@
-"""Daemon ownership of opt-in, read-only non-camera observations.
+"""Daemon ownership of opt-in non-camera observations and guarded alarm control.
 
 All public state lives on the daemon loop. Ring I/O stays on the existing client's
 loop; callbacks are fenced by account, client, and provider generation.
@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 
 from halo_server.account_scope import AccountScope
 from halo_server.api.admin import AdminProtocolError
+from halo_server.devices.alarm import AlarmCoordinator
 from halo_server.devices.bridge import DeviceBridge
 from halo_server.devices.catalog import CatalogError, DeviceCatalog
 from halo_server.devices.policy import (
@@ -49,6 +50,7 @@ class DeviceMonitor:
         self._catalog = None
         self._generation = 0
         self._state = "disabled"
+        self.alarm = AlarmCoordinator(self)
 
     def _context(self):
         client = self.service._sessions.active_client
@@ -70,9 +72,11 @@ class DeviceMonitor:
         """Fence queued callbacks immediately; async retirement follows separately."""
         if self._binding is not None:
             self._binding.active.clear()
+        self.alarm.invalidate()
         self.bridge.invalidate()
 
     async def reconcile(self):
+        await self.alarm.load()
         await self.bridge.reconcile()
         async with self._lock:
             try:
@@ -139,12 +143,18 @@ class DeviceMonitor:
     def _receive(self, binding, batch):
         if not self._current(binding):
             return
+        if type(batch.get("revision")) is int and 0 < batch["revision"] <= self._catalog.revision:
+            return
         try:
+            alarms = batch.pop("alarms", ())
             self._catalog.apply(**batch)
         except (CatalogError, TypeError, ValueError):
             self._state = "error"
+            self.alarm.receive(binding, ())
+            self.bridge.publisher.notify()
             return
         self._state = "ready" if batch["complete"] else "partial"
+        self.alarm.receive(binding, alarms)
         self.bridge.observe(binding.scope, self._catalog.records(present_only=True))
 
     async def _retire(self):
@@ -152,6 +162,7 @@ class DeviceMonitor:
         if binding is None:
             return
         binding.active.clear()
+        self.alarm.invalidate()
         self._catalog = None
         self.bridge.invalidate()
 
@@ -173,6 +184,7 @@ class DeviceMonitor:
                 await self._retire()
                 self._state = "disabled" if not self.policy.enabled else "offline"
         finally:
+            await self.alarm.close()
             await self.bridge.close()
 
     async def set_enabled(self, *, profile_id, account_generation, expected_revision, enabled):
@@ -193,11 +205,16 @@ class DeviceMonitor:
                 raise AdminProtocolError("account_changed", "The Ring account changed")
             if self.service._stop_requested.is_set():
                 raise AdminProtocolError("service_stopping", "Halo Server is stopping")
+            if not enabled:
+                # Monitoring now owns actuators. Revoke queued sends before the
+                # first disk await, not only after the disabled value is saved.
+                self.invalidate()
             try:
                 self.policy = await owned_thread(
                     self.store.set_enabled, enabled, expected_revision=expected_revision
                 )
                 self._loaded = True
+                await self.alarm.load()
             except DevicePolicyConflictError as error:
                 try:
                     self.policy = await owned_thread(self.store.load)
@@ -252,6 +269,10 @@ class DeviceMonitor:
             state = "disabled" if not self.policy.enabled else "offline"
         truncated = len(inventory["devices"]) > 256
         inventory["devices"] = inventory["devices"][:256]
+        for row in inventory["devices"]:
+            alarm = self.alarm.view(row)
+            if alarm is not None:
+                row["alarm"] = alarm
         if truncated:
             inventory["complete"] = False
         return {
@@ -265,6 +286,11 @@ class DeviceMonitor:
                 "profile_id": scope.profile_id if scope else None,
                 "account_generation": scope.generation if scope else None,
             },
-            "safety": safety_snapshot(),
+            "safety": safety_snapshot()
+            | {
+                "read_only": not any(
+                    row.get("alarm", {}).get("enabled") for row in inventory["devices"]
+                )
+            },
             "bridge": self.bridge.snapshot(),
         }

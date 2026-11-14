@@ -591,6 +591,11 @@ class HaloService:
                 outcome = (
                     result.get("status", "accepted") if isinstance(result, dict) else "accepted"
                 )
+                outcome = {
+                    "confirmed": "completed",
+                    "uncertain": "unknown",
+                    "busy": "rejected",
+                }.get(outcome, outcome)
                 if outcome not in {"accepted", "rejected", "unknown", "pending", "completed"}:
                     outcome = "accepted"
                 return result

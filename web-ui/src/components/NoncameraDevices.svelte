@@ -17,6 +17,7 @@
   import Row from './Row.svelte';
   import OperationStatus from './OperationStatus.svelte';
   import BridgePreferences from './BridgePreferences.svelte';
+  import AlarmControls from './AlarmControls.svelte';
 
   let {
     monitoring,
@@ -24,6 +25,7 @@
     search = '',
     fresh,
     generation,
+    reauthenticate,
     notify,
     refresh,
   }: {
@@ -32,6 +34,7 @@
     search?: string;
     fresh: boolean;
     generation: string;
+    reauthenticate: () => Promise<boolean>;
     notify: (message: string) => void;
     refresh: () => Promise<void>;
   } = $props();
@@ -55,9 +58,21 @@
     (monitoring?.devices ?? []).filter((item) => deviceMatches(item, search, location, kind)),
   );
   const unsettled = $derived(operation?.status === 'pending' || operation?.status === 'unknown');
-  const observations = $derived(device ? deviceObservations(device) : []);
+  const observations = $derived(
+    device
+      ? deviceObservations(device).filter(
+          (item) =>
+            !device.alarm || !['alarm_mode', 'alarm_state', 'alarm_signal'].includes(item.key),
+        )
+      : [],
+  );
   const current = $derived(
-    fresh && !!monitoring?.enabled && !!device && !device.stale && device.available === true,
+    fresh &&
+      !!monitoring?.enabled &&
+      !!device &&
+      (device.alarm
+        ? device.source_health === 'online'
+        : !device.stale && device.available === true),
   );
   $effect(() => {
     if (requestedScope !== identity) {
@@ -120,25 +135,40 @@
     >
     <Row title="Last observation"><span>{when(device.observed_at)}</span></Row>
     <Row title="Support"
-      ><span>{device.supported ? 'Read-only monitoring' : 'Not yet supported'}</span></Row
+      ><span
+        >{device.alarm
+          ? 'Alarm monitoring and guarded controls'
+          : device.supported
+            ? 'Read-only monitoring'
+            : 'Not yet supported'}</span
+      ></Row
     >
   </div>
   {#if !device.supported && device.unsupported_reason}<p class="inline-note">
       {deviceKind(device.unsupported_reason)}
     </p>{/if}
-  <h3>Observations</h3>
-  <div class="group">
-    {#each observations as observation (observation.key)}
-      <Row
-        title={observation.title}
-        subtitle={current ? 'Latest source observation' : 'No current authoritative observation'}
-      >
-        <span>{current ? observation.value : 'Unknown'}</span>
-      </Row>
-    {:else}<div class="empty">
-        No qualified observations are available for this device yet.
-      </div>{/each}
-  </div>
+  {#if monitoring && device.alarm}<AlarmControls
+      {monitoring}
+      {device}
+      {fresh}
+      {generation}
+      {reauthenticate}
+      {notify}
+      {refresh}
+    />{/if}
+  {#if observations.length || !device.alarm}<h3>Observations</h3>
+    <div class="group">
+      {#each observations as observation (observation.key)}
+        <Row
+          title={observation.title}
+          subtitle={current ? 'Latest source observation' : 'No current authoritative observation'}
+        >
+          <span>{current ? observation.value : 'Unknown'}</span>
+        </Row>
+      {:else}<div class="empty">
+          No qualified observations are available for this device yet.
+        </div>{/each}
+    </div>{/if}
   {#if monitoring?.bridge}
     <BridgePreferences {monitoring} {device} {fresh} {generation} {notify} {refresh} />
   {:else}
@@ -146,15 +176,15 @@
     <div class="group">
       <Row
         title="Halo Bridge"
-        subtitle="HomeKit publication for these devices is planned for a later update."
-        ><span>Not available yet</span></Row
+        subtitle="Halo Bridge information is unavailable in this server response."
+        ><span>Unavailable</span></Row
       >
     </div>
   {/if}
-  <p class="inline-note">
-    This device is read-only in Halo. Device commands, panic actions, and emergency dispatch are
-    blocked by the server.
-  </p>
+  {#if !device.alarm}<p class="inline-note">
+      This device is read-only in Halo. Device commands, panic actions, and emergency dispatch are
+      blocked by the server.
+    </p>{/if}
 {:else}
   <div class="section-head">
     <h3>Other Ring devices</h3>
@@ -191,8 +221,11 @@
     >
     <Row
       title="Alarm protections"
-      subtitle="Panic actions, emergency dispatch, and other device commands are blocked by the server."
-      icon="shield"><span class="badge">Read-only</span></Row
+      subtitle="Normal alarm controls require a separate opt-in for each location. Panic actions and emergency dispatch remain blocked."
+      icon="shield"
+      ><span class="badge"
+        >{monitoring?.safety.read_only === false ? 'Guarded controls' : 'Read-only'}</span
+      ></Row
     >
   </div>
   {#if error}<p class="notice error" role="alert">{error}</p>{/if}
@@ -248,8 +281,9 @@
             ></span
           >
           <span class="device-status"
-            ><span class="badge">{item.supported ? 'Read-only' : 'Unsupported'}</span><span
-              class="status">{noncameraHealth(item, fresh && !!monitoring?.enabled)}</span
+            ><span class="badge"
+              >{item.alarm ? 'Alarm' : item.supported ? 'Read-only' : 'Unsupported'}</span
+            ><span class="status">{noncameraHealth(item, fresh && !!monitoring?.enabled)}</span
             ></span
           ><Icon name="next" size={16} />
         </a>
@@ -263,8 +297,8 @@
           : 'Enable monitoring to discover sensors, alarms, chimes, lighting, and other Ring devices.'}
     </div>{/if}
   <p class="inline-note">
-    HomeKit publication for these devices is not available yet. Existing cameras keep their separate
-    HomeKit accessories.
+    Manage Halo Bridge in <a href="#/integrations">Integrations</a> to share selected devices with Apple
+    Home. Cameras keep their separate HomeKit accessories.
   </p>
 {/if}
 

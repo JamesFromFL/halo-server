@@ -123,9 +123,11 @@ async def test_discovery_unions_alarm_and_lighting_locations_and_excludes_camera
             *(runtime.transport.ready.wait() for runtime in instance._runtimes.values())
         )
         assert set(instance._runtimes) == {"home", "garden"}
-        assert all(
-            runtime.seed.write_authorization is AlarmWriteAuthorization.UNKNOWN
-            for runtime in instance._runtimes.values()
+        assert (
+            instance._runtimes["home"].seed.write_authorization is AlarmWriteAuthorization.ALLOWED
+        )
+        assert (
+            instance._runtimes["garden"].seed.write_authorization is AlarmWriteAuthorization.UNKNOWN
         )
         kinds = records_by_kind(instance)
         assert {"base-station", "lighting-bridge", "chime", "contact-sensor", "unknown"} <= set(
@@ -304,7 +306,8 @@ async def test_clap_low_level_sender_allows_only_inventory_even_if_called_direct
     transport._websocket = SimpleNamespace(closed=False, send_str=send)
     transport._connection_epoch = 1
     transport._assets = (AlarmTicketAsset("asset", "base_station_v1", "online"),)
-    assert not hasattr(transport, "send_mode")
+    # Generic encoded operations remain read-only; normal modes require the
+    # separate typed method and an explicit send-boundary admission guard.
     await transport.request_inventory("asset", epoch=1)
     for kind in ("DeviceInfoSet", "HubDisconnectionEvent", "security-panel.switch-mode"):
         with pytest.raises(AlarmTransportError, match="operation-not-allowed"):
@@ -481,7 +484,7 @@ async def test_confirmed_source_removal_is_unavailable_while_other_location_is_o
         gateway=gateway,
         transport_factory=Isolated,
         clock=lambda: 100.0,
-        on_snapshot=catalog.apply,
+        on_snapshot=lambda alarms, **snapshot: catalog.apply(**snapshot),
     )
     try:
         await instance.refresh()

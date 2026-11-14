@@ -199,6 +199,12 @@ class AdminClient:
     async def devices_bridge_publication_set(self, **params):
         return await self._object("devices_bridge_publication_set", **params)
 
+    async def devices_alarm_policy_set(self, **params):
+        return await self._object("devices_alarm_policy_set", **params)
+
+    async def devices_alarm_mode_set(self, **params):
+        return await self._object("devices_alarm_mode_set", **params)
+
     async def devices_bridge_pairing_get(self):
         return await self._object("devices_bridge_pairing_get")
 

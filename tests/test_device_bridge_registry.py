@@ -76,6 +76,29 @@ def test_pristine_load_and_unconfigured_discovery_do_not_touch_disk(tmp_path):
     assert not seen["devices"][0]["selected"]
 
 
+def test_alarm_mapping_enrichment_preserves_existing_identity_and_filters(tmp_path):
+    store = BridgeRegistryStore(tmp_path / "registry.json")
+    old_panel = record(2, kind="security-panel", capabilities=(), capability_evidence=())
+    old = configure(store, (record(), old_panel))
+    assert not old.entries[1].mappings
+    qualified = replace(
+        old_panel, capabilities=("mode",), capability_evidence=("ring-hub-device-schema",)
+    )
+    updated = store.reconcile(PROFILE, (record(), qualified))
+    assert updated.profiles == old.profiles
+    assert [(entry.device_id, entry.accessory_uuid) for entry in updated.entries] == [
+        (entry.device_id, entry.accessory_uuid) for entry in old.entries
+    ]
+    panel = next(entry for entry in updated.entries if entry.device_id == qualified.key)
+    assert panel.mappings == ("security_system",) and panel.selected
+    # Publication imports observed state. There is no control grant in this store.
+    assert "alarm_controls" not in store.path.read_text()
+    disabled = configure(store, (record(), qualified), excluded_mappings=("security_system",))
+    assert not next(
+        entry for entry in disabled.entries if entry.device_id == qualified.key
+    ).selected
+
+
 def test_explicit_configuration_is_durable_private_and_excludes_live_state(tmp_path):
     store = BridgeRegistryStore(tmp_path / "private" / "registry.json")
     saved = configure(store, (record(),))
@@ -154,7 +177,7 @@ def test_auto_import_off_requires_explicit_per_device_selection_and_cannot_actua
         ("smoke-co-listener", ("smoke", "carbon-monoxide"), ["carbon_monoxide", "smoke"]),
         ("freeze-sensor", ("freeze",), []),
         ("glass-break-sensor", ("glass-break",), []),
-        ("security-panel", ("mode", "siren"), []),
+        ("security-panel", ("mode", "siren"), ["security_system"]),
         ("panic-button", ("siren",), []),
         ("switch", ("switch",), []),
         ("lock", ("lock",), []),

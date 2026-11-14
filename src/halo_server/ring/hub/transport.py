@@ -16,6 +16,7 @@ from urllib.parse import urlencode, urlsplit, urlunsplit
 
 import aiohttp
 
+from halo_server.ring.hub.models import AlarmMode
 from halo_server.ring.hub.protocol import (
     MAX_FRAME_BYTES,
     AlarmProtocolError,
@@ -23,6 +24,7 @@ from halo_server.ring.hub.protocol import (
     HubDisconnection,
     encode_clap_frame,
     encode_device_list_request,
+    encode_mode_command,
     parse_clap_frame,
 )
 from halo_server.ring.hub.provider import (
@@ -247,6 +249,29 @@ class RingAlarmTransport:
             admission=admission,
         )
 
+    async def send_mode(
+        self,
+        asset_id: str,
+        panel_zid: str,
+        mode: AlarmMode,
+        *,
+        epoch: int,
+        admission: Callable[[], AbstractContextManager[None]],
+    ) -> None:
+        """Send an explicitly admitted normal mode command on this exact epoch.
+
+        There is deliberately no generic actuator or bypass argument. The
+        provider must supply a fresh state/identity guard at the socket boundary.
+        """
+        if not callable(admission):
+            raise AlarmTransportError("operation-not-allowed")
+        await self._send_encoded(
+            lambda sequence: encode_mode_command(asset_id, panel_zid, mode, sequence),
+            epoch=epoch,
+            admission=admission,
+            mode_command=(asset_id, panel_zid, mode),
+        )
+
     async def close(self) -> None:
         """Close the socket and its independently owned aiohttp session."""
 
@@ -312,6 +337,7 @@ class RingAlarmTransport:
         *,
         epoch: int,
         admission: Callable[[], AbstractContextManager[None]] | None = None,
+        mode_command: tuple[str, str, AlarmMode] | None = None,
     ) -> None:
         async with self._send_lock:
             websocket = self._websocket
@@ -326,14 +352,30 @@ class RingAlarmTransport:
             sequence = self._sequence
             self._sequence += 1
             payload = encode(sequence)
-            # This wave cannot actuate a device, even through the low-level sender.
             message = payload.get("msg") if isinstance(payload, Mapping) else None
+            # Generic encoded calls remain read-only. Only the typed method
+            # above can opt into the exact normal-mode schema, with admission.
+            allowed = (
+                (
+                    isinstance(message, Mapping)
+                    and set(message) == {"msg", "dst", "seq"}
+                    and message.get("msg") == "DeviceInfoDocGetList"
+                )
+                if mode_command is None
+                else (
+                    callable(admission)
+                    and payload == encode_mode_command(*mode_command, sequence)
+                    and any(
+                        asset.asset_id == mode_command[0] and asset.kind.startswith("base_station")
+                        for asset in self._assets
+                    )
+                )
+            )
             if (
                 not isinstance(message, Mapping)
                 or set(payload) != {"channel", "msg"}
                 or payload["channel"] != "message"
-                or set(message) != {"msg", "dst", "seq"}
-                or message.get("msg") != "DeviceInfoDocGetList"
+                or not allowed
                 or message.get("seq") != sequence
                 or message.get("dst") not in {asset.asset_id for asset in self._assets}
             ):
@@ -343,6 +385,13 @@ class RingAlarmTransport:
             async def send_frame() -> None:
                 # Recheck permission/revision after queueing behind earlier
                 # writes and immediately before starting this socket write.
+                if (
+                    self._closed
+                    or self._admission() is not True
+                    or self._websocket is not websocket
+                    or self._connection_epoch != epoch
+                ):
+                    raise AlarmCommandSupersededError("connection-superseded")
                 with admission() if admission is not None else contextlib.nullcontext():
                     await websocket.send_str(frame)
 

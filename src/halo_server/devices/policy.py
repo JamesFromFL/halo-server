@@ -1,7 +1,8 @@
-"""Private monitoring preference and unconditional first-wave command denial.
+"""Private monitoring preference and denial of generic device commands.
 
-Monitoring is opt-in. It never enables a command; panic/emergency actions have no
-configuration escape hatch. Saved policy cannot grant dispatch authority.
+Monitoring is opt-in. It never enables a command; normal alarm controls use their
+separate, scoped coordinator. Panic/emergency actions have no configuration escape
+hatch. Saved monitoring policy cannot grant dispatch authority.
 """
 
 from __future__ import annotations

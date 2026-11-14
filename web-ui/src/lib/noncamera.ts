@@ -1,5 +1,6 @@
 import type { Device, NoncameraDevice, NoncameraState, StateEnvelope } from './types.ts';
 import { validBridge } from './bridge.ts';
+import { validAlarm } from './alarm.ts';
 
 const ROUTE_PREFIX = 'noncamera:';
 const STATES = new Set(['disabled', 'starting', 'ready', 'partial', 'offline', 'error']);
@@ -25,7 +26,7 @@ export function validNoncamera(value: unknown): value is NoncameraState {
     typeof state.complete === 'boolean' &&
     typeof state.enabled === 'boolean' &&
     timestamp(state.observed_at) &&
-    state.safety?.read_only === true &&
+    typeof state.safety?.read_only === 'boolean' &&
     state.safety.panic_enabled === false &&
     state.safety.emergency_dispatch_enabled === false &&
     Array.isArray(state.devices) &&
@@ -38,6 +39,8 @@ export function validNoncamera(value: unknown): value is NoncameraState {
         device.id.length > 0 &&
         boundedText(device.name) &&
         boundedText(device.kind) &&
+        (device.alarm === undefined ||
+          (device.kind === 'security-panel' && validAlarm(device.alarm))) &&
         boundedText(device.model) &&
         boundedText(device.location_id) &&
         boundedText(device.location_name) &&
@@ -56,6 +59,10 @@ export function validNoncamera(value: unknown): value is NoncameraState {
             boundedText(observation),
         ) &&
         (device.available === null || typeof device.available === 'boolean') &&
+        (device.source_health === undefined ||
+          ['unknown', 'online', 'offline', 'stale', 'unavailable'].includes(
+            device.source_health,
+          )) &&
         typeof device.stale === 'boolean' &&
         timestamp(device.observed_at) &&
         typeof device.supported === 'boolean' &&

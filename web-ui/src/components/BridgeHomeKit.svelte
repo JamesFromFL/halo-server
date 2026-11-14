@@ -257,8 +257,8 @@
     </button>
   </div>
   <p class="inline-note">
-    Add Halo Bridge once to bring its selected sensors into Apple Home. Cameras keep their own
-    pairing codes. Manage sensor selection in <a href="#/devices">Devices</a>.
+    Add Halo Bridge once to bring its selected devices into Apple Home. Cameras keep their own
+    pairing codes. Manage device selection in <a href="#/devices">Devices</a>.
   </p>
   <div class="group">
     <Row
@@ -271,7 +271,7 @@
             ? 'Enable device monitoring in Devices first.'
             : !homekitEnabled
               ? 'Enable HomeKit mode in Settings first.'
-              : 'Publish this bridge and its selected read-only sensors on your local network.'}
+              : 'Publish this bridge and its selected devices on your local network. Alarm controls require a separate location opt-in.'}
       icon="integrations"
     >
       <input
@@ -293,14 +293,14 @@
     <Row title="Bridge connection"
       ><span class="status">{bridgeRuntimeLabel(runtime, fresh)}</span></Row
     >
-    <Row title="HomeKit pairing" subtitle="All selected sensors share this bridge’s pairing.">
+    <Row title="HomeKit pairing" subtitle="All selected devices share this bridge’s pairing.">
       <span
         >{fresh && currentPairing?.paired_known
           ? tri(currentPairing.paired, 'Paired', 'Not paired')
           : 'Unknown'}</span
       >
     </Row>
-    <Row title="Selected sensors"
+    <Row title="Selected devices"
       ><span>{fresh && bridge ? `${bridge.selected_count} of ${bridge.capacity}` : 'Unknown'}</span
       ></Row
     >
@@ -311,7 +311,7 @@
     </Row>
     <Row
       title="Reset bridge pairing"
-      subtitle="Removes this bridge’s HomeKit pairing and resets all of its sensor accessories."
+      subtitle="Removes this bridge’s HomeKit pairing and resets all of its device accessories."
     >
       <button
         class="danger"
@@ -345,7 +345,7 @@
 
 {#if confirmation}<Confirm title="Reset Halo Bridge?" onclose={() => (confirmation = false)}>
     <p>
-      This resets Halo Bridge and every sensor accessory paired through it. Camera pairings stay
+      This resets Halo Bridge and every device accessory paired through it. Camera pairings stay
       unchanged.
     </p>
     <p>

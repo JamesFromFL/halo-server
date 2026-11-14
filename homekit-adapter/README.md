@@ -215,9 +215,9 @@ artifact attestation. Development launch requires an already-built checkout.
 
 Device IPC uses a separate version-1 schema with a 256 KiB frame limit. Each full
 snapshot contains one immutable account generation and bridge UUID/username,
-a monotonic registry revision and sequence, and at most 149 selected sensors.
+a monotonic registry revision and sequence, and at most 149 selected devices.
 Unknown message kinds, duplicate JSON fields, malformed observations and stale
-identities are rejected. There is no command, Ring credential or media channel.
+identities are rejected. No Ring credentials or media cross this channel.
 Python alone owns discovery and provider access. Explicit publication opt-in is
 separate from the saved import selection.
 
@@ -228,6 +228,23 @@ has an absolute monotonic deadline capped to 15 seconds after receipt. Both read
 handlers and a timer enforce expiry independently of heartbeat traffic. Optional
 battery and tamper service graphs are deferred until their presence can be
 persisted reliably; those observations remain visible in Halo.
+
+Ring Alarm panels add a SecuritySystem service with observed current and target
+state. Controls are disabled by default. The standard target characteristic
+descriptor stays stable; its setter and Python independently require explicit
+control opt-in and fresh authority. Only disarmed, home and away are accepted.
+Night, panic, bypass and arbitrary provider commands have no IPC route. Unknown
+alarm state faults instead of reporting disarmed, and startup/identify never
+actuates a device.
+
+The child can request an `alarm_set` using its boot, account, registry revision,
+accepted snapshot sequence and exact child identity. Its correlated result is
+bounded and reflects provider readback, never an optimistic state change.
+Observation updates continue while a command waits. Policy revocation, account
+changes, expiry and authority loss invalidate pending commands; an uncertain
+result cannot be retried automatically. One command per device and four in total
+are admitted. A lost child connection does not cancel or retry a potentially
+sent Ring command: Python retains ownership through bounded retirement.
 
 Stable child UUIDs and service subtypes preserve HAP IDs across rename, reorder,
 restart and explicit removal/re-inclusion. Missing selected children stay in the
@@ -243,9 +260,12 @@ process, `device-pairing-reset.js` reuses the existing exact-namespace,
 manifest-CAS cleanup primitive under the inherited exclusive lock. It never
 resets cameras or another account's bridge.
 
-Network-denied Node tests cover all five service mappings, unknown/stale reads,
+Network-denied Node tests cover sensor and alarm mappings, unknown/stale reads,
 identity and capacity boundaries, AID/IID stability, publication failure,
-pairing/reveal/reset races, framing and bounded output. Python tests additionally
+pairing/reveal/reset races, framing, bounded output and alarm confirmation.
+Python tests exercise command/reply races through an actual private socket,
+including authority revocation, duplicate commands and child-loss retirement.
+Python tests additionally
 exercise the actual reset helper against private synthetic files, checking
 camera/other-account byte preservation, stale-manifest rejection, crash resume,
 lock ownership and retained storage-failure markers. These tests do not claim

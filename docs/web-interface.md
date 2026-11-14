@@ -150,18 +150,19 @@ warm-source opt-in from Apple Home's recording and audio preferences.
 
 ## Scope
 
-This release adds management of the current camera backend. Contact sensors,
-motion sensors, chimes, alarms, and additional ecosystems still require their own
-backend integrations. The interface does not automatically preview or play video,
+The interface manages cameras, non-camera monitoring, Halo Bridge sensor imports,
+and guarded Ring Alarm mode controls. Chime and lighting controls, other device
+families and additional ecosystems are follow-on integrations. It does not automatically preview or play video,
 browse arbitrary files, expose raw logs, or provide browser-driven software updates.
 
-## Halo Bridge for non-camera sensors
+## Halo Bridge for sensors and Ring Alarm
 
 Enable read-only monitoring in Devices, prepare the Halo Bridge import preferences,
 and select supported sensors. Then use **Integrations → Halo Bridge → Connect Halo Bridge to
 Apple Home** to explicitly enable publication. Saved import preferences alone do
-not publish. One bridge pairing brings its selected contact, motion, leak, smoke
-and carbon monoxide sensors into Apple Home; each camera retains its own pairing.
+not publish. One bridge pairing brings its selected contact, motion, leak, smoke,
+carbon monoxide and Ring Alarm services into Apple Home; each camera retains its
+own pairing. Importing an alarm exposes observed state and does not enable control.
 
 Reveal the bridge setup code after confirming the Halo password. The code is
 short-lived and disappears when the page or account changes. Reset pairing only
@@ -172,5 +173,21 @@ operation. After completion, remove the old bridge from Apple Home, explicitly
 reconnect publication and pair again.
 
 Unavailable or stale readings produce a HomeKit fault rather than a fabricated
-closed/dry/clear state. Alarm, panic, bypass and other non-camera controls remain
-disabled in this sensor release. Installed and physical qualification is pending.
+closed/dry/clear/disarmed state. Installed and physical qualification is pending.
+
+Open the security panel in Devices to see its observed mode, entry/exit/alarm phase,
+Ring account authority and pending or uncertain command status. **Allow normal
+alarm controls** is a separate, password-confirmed preference for that account and
+location. It permits Home, Away and Disarmed requests from Halo and the paired
+Apple Home bridge. Disabling remains available without recent password confirmation.
+No mode is changed by enabling the preference, restarting, or importing a device.
+
+Halo requires explicit Ring owner-role evidence and fresh panel state. Ring still
+enforces account and subscription permissions; unknown or shared roles currently
+remain read-only. Web mode changes require confirmation and recent authentication.
+Only a fresh reported target mode confirms success. An uncertain result requires
+checking the observed state; the same operation is never automatically replayed.
+
+Arming cannot bypass open/faulted sensors, and Night mode is not mapped to another
+mode. Panic, emergency dispatch, siren activation and active-alarm cancellation
+remain blocked. Use the Ring app or keypad for an active alarm or a bypass flow.

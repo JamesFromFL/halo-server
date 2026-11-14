@@ -223,12 +223,12 @@ class Operations:
                     )
                 status = (
                     "unknown"
-                    if isinstance(result, dict) and result.get("status") == "unknown"
+                    if isinstance(result, dict) and result.get("status") in {"unknown", "uncertain"}
                     else "completed"
                 )
                 if isinstance(result, dict) and result.get("status") == "pending":
                     status = "pending"
-                if isinstance(result, dict) and result.get("status") == "rejected":
+                if isinstance(result, dict) and result.get("status") in {"rejected", "busy"}:
                     status = "rejected"
                 completed = row | {
                     "status": status,

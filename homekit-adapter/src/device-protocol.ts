@@ -1,4 +1,4 @@
-/** Private read-only bridge protocol, isolated from camera IPC and media. */
+/** Private bridge protocol; typed sensor observations and narrowly scoped alarm modes. */
 import { TextDecoder } from "node:util";
 import {
   ProtocolError,
@@ -16,14 +16,38 @@ export const DEVICE_MAPPINGS = [
   "smoke",
 ] as const;
 export type DeviceMapping = (typeof DEVICE_MAPPINGS)[number];
+export const DEVICE_SERVICE_MAPPINGS = [
+  ...DEVICE_MAPPINGS,
+  "security_system",
+] as const;
+export type AlarmMode = "disarmed" | "home" | "away";
+export interface DeviceAlarmState {
+  mode: AlarmMode | null;
+  triggered: boolean | null;
+  control_enabled: boolean;
+}
+export interface DeviceAlarmRequest {
+  scope: AccountScope;
+  registry_revision: number;
+  sequence: number;
+  accessory_uuid: string;
+  device_id: string;
+  target: AlarmMode;
+}
+export interface DeviceAlarmResult extends DeviceAlarmRequest {
+  accepted: boolean;
+  code: string;
+}
+
 export interface DeviceChild {
   device_id: string;
   accessory_uuid: string;
   name: string;
   model: string;
-  mappings: DeviceMapping[];
+  mappings: (DeviceMapping | "security_system")[];
   available: boolean;
   values: Record<DeviceMapping, boolean | null>;
+  alarm: DeviceAlarmState | null;
 }
 export interface DevicePublication {
   scope: AccountScope;
@@ -56,7 +80,9 @@ export type DeviceKind =
   | "reset_prepare"
   | "reset_prepare_result"
   | "shutdown"
-  | "shutdown_ack";
+  | "shutdown_ack"
+  | "alarm_set"
+  | "alarm_set_result";
 export interface DeviceEnvelope {
   v: 1;
   kind: DeviceKind;
@@ -144,6 +170,7 @@ export function validateDevicePublication(v: unknown): DevicePublication {
       "mappings",
       "available",
       "values",
+      "alarm",
     ]);
     if (
       !hash(child.device_id) ||
@@ -155,12 +182,30 @@ export function validateDevicePublication(v: unknown): DevicePublication {
       typeof child.available !== "boolean" ||
       !Array.isArray(child.mappings) ||
       !child.mappings.length ||
-      child.mappings.length > 5 ||
-      child.mappings.some((x) => !DEVICE_MAPPINGS.includes(x)) ||
+      child.mappings.length > 6 ||
+      child.mappings.some((x) => !DEVICE_SERVICE_MAPPINGS.includes(x)) ||
       new Set(child.mappings).size !== child.mappings.length ||
       child.mappings.join() !== [...child.mappings].sort().join()
     )
       throw new ProtocolError("invalid-device-child");
+    if (child.mappings.includes("security_system")) {
+      if (child.mappings.length !== 1)
+        throw new ProtocolError("invalid-alarm-mapping");
+      exact(child.alarm, ["mode", "triggered", "control_enabled"]);
+      if (
+        (child.alarm.mode !== null &&
+          !["disarmed", "home", "away"].includes(child.alarm.mode as string)) ||
+        (child.alarm.triggered !== null &&
+          typeof child.alarm.triggered !== "boolean") ||
+        typeof child.alarm.control_enabled !== "boolean" ||
+        (!child.available &&
+          (child.alarm.mode !== null ||
+            child.alarm.triggered !== null ||
+            child.alarm.control_enabled))
+      )
+        throw new ProtocolError("invalid-alarm-state");
+    } else if (child.alarm !== null)
+      throw new ProtocolError("invalid-alarm-mapping");
     exact(child.values, DEVICE_MAPPINGS);
     for (const mapping of DEVICE_MAPPINGS) {
       const observed = child.values[mapping];
@@ -176,6 +221,31 @@ export function validateDevicePublication(v: unknown): DevicePublication {
     uuids.add(child.accessory_uuid);
   }
   return v as unknown as DevicePublication;
+}
+export function validateDeviceAlarm(
+  value: unknown,
+  result = false,
+): DeviceAlarmRequest | DeviceAlarmResult {
+  exact(value, [
+    "scope",
+    "registry_revision",
+    "sequence",
+    "accessory_uuid",
+    "device_id",
+    "target",
+    ...(result ? ["accepted", "code"] : []),
+  ]);
+  validateDeviceScope(value.scope);
+  if (
+    !integer(value.registry_revision) ||
+    !integer(value.sequence, 1) ||
+    !uuid4(value.accessory_uuid) ||
+    !hash(value.device_id) ||
+    !["disarmed", "home", "away"].includes(value.target as string)
+  )
+    throw new ProtocolError("invalid-alarm-command");
+  if (result) outcome(value);
+  return value as unknown as DeviceAlarmRequest;
 }
 export function validateDevicePairing(
   v: unknown,
@@ -208,6 +278,7 @@ const codes = [
   "invalid-request",
   "busy",
   "policy-denied",
+  "uncertain",
 ];
 function outcome(v: Record<string, unknown>): void {
   if (
@@ -248,6 +319,7 @@ export function validateDeviceEnvelope(
     "reveal",
     "reset_prepare",
     "shutdown",
+    "alarm_set_result",
   ];
   const replies = [
     "hello_ack",
@@ -257,6 +329,7 @@ export function validateDeviceEnvelope(
     "reveal_result",
     "reset_prepare_result",
     "shutdown_ack",
+    "alarm_set",
   ];
   if (
     !(
@@ -270,6 +343,12 @@ export function validateDeviceEnvelope(
     throw new ProtocolError("invalid-device-kind");
   const p = v.payload as Record<string, unknown>;
   switch (v.kind) {
+    case "alarm_set":
+      validateDeviceAlarm(p);
+      break;
+    case "alarm_set_result":
+      validateDeviceAlarm(p, true);
+      break;
     case "hello":
     case "hello_ack":
       exact(p, [

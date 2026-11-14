@@ -38,6 +38,7 @@ def snapshot():
                 "model": "Ring",
                 "mappings": ["contact"],
                 "available": True,
+                "alarm": None,
                 "values": {**dict.fromkeys(ipc.MAPPINGS), "contact": False},
             }
         ],
@@ -213,7 +214,7 @@ def test_pairing_metadata_validates_exact_manifest_and_never_accepts_partial_sec
     ipc.encode_frame(reveal)
 
 
-def fake_child(tmp_path, *, hello="", ping="", before=""):
+def fake_child(tmp_path, *, hello="", ping="", before="", publish="", alarm_result=""):
     path = tmp_path / "fake.cjs"
     path.write_text(
         """
@@ -254,6 +255,13 @@ control.on('data', chunk => {
       message.payload = {scope:p.scope,registry_revision:p.registry_revision,
         sequence:p.sequence,accepted:true,code:'ok'};
       send(message);
+"""
+        + publish
+        + """
+    } else if (message.kind === 'alarm_set_result') {
+"""
+        + alarm_result
+        + """
     } else if (message.kind === 'shutdown') {
       message.kind = 'shutdown_ack'; send(message); control.end();
     }
@@ -644,6 +652,26 @@ async def test_python_and_node_accept_identical_bounded_protocol_corpus():
                         "paired_clients": count,
                     },
                 )
+            ).encode()
+        )
+    from test_device_alarm_runtime import alarm_snapshot, command
+
+    alarm = alarm_snapshot()
+    cases.append(json.dumps(envelope("publish", alarm)).encode())
+    for change in ({"mode": "night"}, {"mode": []}, {"control_enabled": 1}, {"triggered": None}):
+        changed = copy.deepcopy(alarm)
+        changed["children"][0]["alarm"].update(change)
+        cases.append(json.dumps(envelope("publish", changed)).encode())
+    for target in ("home", "away", "disarmed", "night", "panic", "bypass", None, []):
+        request = envelope("alarm_set", {**command(alarm), "target": target})
+        cases.append(json.dumps(request).encode())
+        cases.append(
+            json.dumps(
+                {
+                    **request,
+                    "kind": "alarm_set_result",
+                    "payload": {**request["payload"], "accepted": False, "code": "uncertain"},
+                }
             ).encode()
         )
     expected = []

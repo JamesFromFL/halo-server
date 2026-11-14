@@ -555,6 +555,54 @@ class WebConsole:
             )
         )
 
+    async def device_alarm_policy(self, request):
+        from halo_server.devices.alarm import POLICY_FIELDS
+        from halo_server.devices.alarm_policy import valid_device_id
+
+        value = await body(request, tuple(POLICY_FIELDS) + ("operation_id",))
+        text(value["profile_id"], maximum=36)
+        integer(value["account_generation"], minimum=1)
+        integer(value["expected_revision"])
+        if not valid_device_id(value["location_id"]):
+            raise WebError("bad_request", "Alarm location identity is invalid")
+        # Disabling always remains available to an authenticated owner.
+        boolean(value["enabled"])
+        if value["enabled"]:
+            self.auth.recent(request[SESSION])
+        identifier = operation_id(value["operation_id"])
+        params = {key: item for key, item in value.items() if key != "operation_id"}
+        return success(
+            await self.operations.run(
+                identifier,
+                "configuration",
+                {"target": "alarm_policy", **value},
+                lambda: self.pool.call(self.client.devices_alarm_policy_set, **params),
+            )
+        )
+
+    async def device_alarm_mode(self, request):
+        from halo_server.devices.alarm import MODE_FIELDS, MODES
+        from halo_server.devices.alarm_policy import valid_device_id
+
+        self.auth.recent(request[SESSION])
+        value = await body(request, tuple(MODE_FIELDS))
+        text(value["profile_id"], maximum=36)
+        for field in ("account_generation", "provider_generation"):
+            integer(value[field], minimum=1)
+        for field in ("expected_epoch", "expected_revision", "expected_policy_revision"):
+            integer(value[field])
+        if not valid_device_id(value["device_id"]) or text(value["target"]) not in MODES:
+            raise WebError("bad_request", "Alarm mode or identity is invalid")
+        identifier = operation_id(value["operation_id"])
+        return success(
+            await self.operations.run(
+                identifier,
+                "control",
+                {"control": "alarm_mode", **value},
+                lambda: self.pool.call(self.client.devices_alarm_mode_set, **value),
+            )
+        )
+
     async def device_bridge_pairing(self, request):
         return success(await self.pool.call(self.client.devices_bridge_pairing_get))
 
@@ -891,6 +939,8 @@ def create_application(console, *, static_root=None):
         web.get(PREFIX + "/state", console.snapshot),
         web.get(PREFIX + "/devices", console.devices),
         web.post(PREFIX + "/devices/monitoring", console.devices_monitoring),
+        web.post(PREFIX + "/devices/alarm/policy", console.device_alarm_policy),
+        web.post(PREFIX + "/devices/alarm/mode", console.device_alarm_mode),
         web.post(PREFIX + "/devices/bridge", console.devices_bridge),
         web.get(PREFIX + "/devices/bridge/pairing", console.device_bridge_pairing),
         web.post(PREFIX + "/devices/bridge/publication", console.device_bridge_publication),

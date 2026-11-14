@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "source_hash": "491de59920fed9605a1b8287630044e25d263b22d926272c79b2af3ea2c0c17f",
+  "source_hash": "370b9eb7cf048fa10d54f31cdf9e63d9af1750bf457de82b131fd9e4fb5fbb5d",
   "source_files": [
     {
       "path": ".prettierignore",
@@ -24,7 +24,7 @@
     },
     {
       "path": "package.json",
-      "sha256": "52a303d019825745ed416c72a48b12475ce5a5bcdd33e861420fa128f3ca5eb5"
+      "sha256": "14a55735d08a66eca60654f609dac0a02da883d1348e93a8d1bba90e791c5136"
     },
     {
       "path": "public/THIRD_PARTY_NOTICES.txt",
@@ -33,6 +33,10 @@
     {
       "path": "public/halo.png",
       "sha256": "36107b698063ceba045c4875dfce5501b5d3cbd38d190ed1eefea7450f4a5cc3"
+    },
+    {
+      "path": "scripts/alarm-smoke.mjs",
+      "sha256": "73aab10db119a007e21d8a04207cf2e52fbd27356ac7e7592e6ac017b83695e0"
     },
     {
       "path": "scripts/bridge-homekit-smoke.mjs",
@@ -52,19 +56,23 @@
     },
     {
       "path": "scripts/noncamera-smoke.mjs",
-      "sha256": "c50e324aaf50aeb96ed379efdf6e388353dad9beb97436a8f929bd2f63651545"
+      "sha256": "52a7626b259386a1985d4af0207ad028ae10b05bef05d233786950d17247a180"
     },
     {
       "path": "src/App.svelte",
       "sha256": "16cb23d99c0bf7b9280daf2e6d7d15ba3e4b7530cc83e1a5818fa066a3db9aca"
     },
     {
+      "path": "src/components/AlarmControls.svelte",
+      "sha256": "c31f017abcae6731ff4860da45760fe1c3f349d3c1f1b9ab26aaa096e3404d86"
+    },
+    {
       "path": "src/components/BridgeHomeKit.svelte",
-      "sha256": "0ebc2334cfe0d1367a123f5c9051c6caf10dfc23e8a1bcaf0fcf0fab7dce8c24"
+      "sha256": "37ec5f8a18044277f84603869da47d7b358dac35485c8c5a16a1f29427b6cd44"
     },
     {
       "path": "src/components/BridgePreferences.svelte",
-      "sha256": "4a4774610323215409a6b7c20d76f5afa59256ad05acbac0e9bd63de5fa285a6"
+      "sha256": "c12e4710e32aa4c0125deee589567ee6a5b14fbc595f61be5ed8a812cb0d3907"
     },
     {
       "path": "src/components/Confirm.svelte",
@@ -76,11 +84,11 @@
     },
     {
       "path": "src/components/NoncameraDevices.svelte",
-      "sha256": "09edbcdc463cdc7224798bf9a0832ffa40b923dcb225dbfa23d4a7e7c88a206c"
+      "sha256": "2e96ba44b4b4da17d077b8d11be0320035c60b84f73b0985da5b3908e43cf7c1"
     },
     {
       "path": "src/components/OperationStatus.svelte",
-      "sha256": "54916f85b58dbae444820c8b636d37fe11bb69ae5f8688a1f66a2ac77cba7660"
+      "sha256": "2832ae3aa031d0e7301adf81fd04e19feee9cbc847689d0bb6112e1a26c10adc"
     },
     {
       "path": "src/components/PairingCode.svelte",
@@ -95,6 +103,10 @@
       "sha256": "c799c0bae3d01254ddf1740513e752b42508c1e7f21c7fbf973255fd0c6f00c2"
     },
     {
+      "path": "src/lib/alarm.ts",
+      "sha256": "0bf49ea204101c2db00851cdd2cea115ea596f157edb34fd26991ec85e92bf6c"
+    },
+    {
       "path": "src/lib/api.ts",
       "sha256": "d3d1a7fddf35905277b5ded70ed3078cc0be1ae4b70629795f9ba673f3a157a8"
     },
@@ -104,7 +116,7 @@
     },
     {
       "path": "src/lib/bridge.ts",
-      "sha256": "214ce6b7ed0995ae55247348773ade4720f34b86343869b074c24077d6e5d5d1"
+      "sha256": "ad1e8002eac75e31d8598aed1c63818c7fbf6dc1eeb92e05be5569c269e724b0"
     },
     {
       "path": "src/lib/model.ts",
@@ -112,7 +124,7 @@
     },
     {
       "path": "src/lib/noncamera.ts",
-      "sha256": "d7ca324416c13e043746d64c82eb492ead41f19de8ecae782b8f0c1f4ad8eec5"
+      "sha256": "d94029253a10125b83558706569c8284892f2a0385cb8b588d6b0efe393396b1"
     },
     {
       "path": "src/lib/password.ts",
@@ -120,7 +132,7 @@
     },
     {
       "path": "src/lib/types.ts",
-      "sha256": "9e43d9b2ce73d901dca8af3594e5192c86cac8c026a2cef5195e835ab1418a39"
+      "sha256": "f67f5e745796648c94ea7cc6bee85ba4f485a37af37b24e918912962af771a61"
     },
     {
       "path": "src/main.ts",
@@ -132,7 +144,7 @@
     },
     {
       "path": "src/pages/Devices.svelte",
-      "sha256": "6aaf0f66fa77a4c3e158558e217a8675637f910072559f42c97197602b1e6950"
+      "sha256": "d9007288848ae13ba5dcf6fd21a80897c9b1b658c7dea2ad2e0cb2a876a367ba"
     },
     {
       "path": "src/pages/Diagnostics.svelte",
@@ -163,6 +175,10 @@
       "sha256": "3c328d509de22605aa7d1bcfd4a34941b99c2ecaea7026dde935785d8b6661e4"
     },
     {
+      "path": "tests/alarm.test.ts",
+      "sha256": "6584217943c7e5bccd93857cb5e2719edef31d013293d3d8676c81a30d150a42"
+    },
+    {
       "path": "tests/api.test.ts",
       "sha256": "7af2e423e61a6fd330b063d3dd3f4c6b2b831cdcf82ddf487b29f72d6ae69842"
     },
@@ -180,7 +196,7 @@
     },
     {
       "path": "tests/noncamera.test.ts",
-      "sha256": "8aa13734338b795ed7dded99fc6fd40e0dff4ab650cc9cafb22fb407611ab773"
+      "sha256": "9c5fcb8e6b35472cae15f46fccce009eaa4575ff7160dc29557434a1e339c7cf"
     },
     {
       "path": "tests/password.test.ts",
@@ -201,12 +217,12 @@
       "sha256": "27b3a540203dab45ee90ade440f4840b513dd2055969a84a9ebccb561fd14799"
     },
     {
-      "path": "assets/index-Co6tdB5G.css",
-      "sha256": "8e65e49d96e27b135a2103b9609166a547e1fa4e81dc655e920f84f99346931a"
+      "path": "assets/index-CPzicLH6.js",
+      "sha256": "d8bcaca8451e79586cd1295185ed7d8fbe6d6c5a13af410f244792ed8f3290a7"
     },
     {
-      "path": "assets/index-DeA5G0O7.js",
-      "sha256": "a894d2e2bce7c73f202e1e4a8c80d25110774fd36da326ecc148f915892ad2fe"
+      "path": "assets/index-l1HE-UYa.css",
+      "sha256": "3bba76a1b6060af365a006bd77153f0c125a3f690a1ac89bdbfcfbad3ea6c545"
     },
     {
       "path": "halo.png",
@@ -214,7 +230,7 @@
     },
     {
       "path": "index.html",
-      "sha256": "2b73b2d388201b05df7d0bd48827b757aaee850e648432165c7aec53c3b99be7"
+      "sha256": "be1a3ca76b58ff0dc89cb2f8a581df2d1b05ee8ee7c673620b4b3e67d6d11174"
     }
   ]
 }

@@ -176,7 +176,7 @@ test('additive state remains compatible and rejects unsafe or malformed device p
     { ...monitoring, policy_revision: -1 },
     { ...monitoring, safety: { ...monitoring.safety, panic_enabled: true } },
     { ...monitoring, safety: { ...monitoring.safety, emergency_dispatch_enabled: true } },
-    { ...monitoring, safety: { ...monitoring.safety, read_only: false } },
+    { ...monitoring, safety: { ...monitoring.safety, read_only: 'false' } },
     { ...monitoring, devices: [sensor, sensor] },
     { ...monitoring, devices: [{ ...sensor, observed: { nested: { raw: true } } }] },
     { ...monitoring, devices: [{ ...sensor, stale: undefined }] },

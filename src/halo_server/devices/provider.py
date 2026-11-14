@@ -1,4 +1,4 @@
-"""Read-only Ring inventory and per-location hub monitoring.
+"""Ring inventory, per-location hub monitoring, and guarded normal Alarm modes.
 
 The authenticated SDK session remains owned by RingClient. This provider owns
 only bounded GET requests and ticket sockets; it never opens a second login.
@@ -15,6 +15,7 @@ import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 
+from halo_server.devices.alarm_commands import AlarmCommands
 from halo_server.devices.models import DeviceIdentity, DeviceObservation, DeviceRecord
 from halo_server.ring.hub.models import (
     AlarmConnectionStatus,
@@ -93,8 +94,9 @@ class NoncameraProvider:
         clock=time.time,
         monotonic_clock=time.monotonic,
         health_interval: float = 60.0,
+        command_timeout: float = 10.0,
     ):
-        for value in (refresh_interval, health_interval):
+        for value in (refresh_interval, health_interval, command_timeout):
             if (
                 isinstance(value, bool)
                 or not isinstance(value, (int, float))
@@ -142,6 +144,7 @@ class NoncameraProvider:
         self._task: asyncio.Task | None = None
         self._close_task: asyncio.Task | None = None
         self._error: str | None = None
+        self._alarm_commands = AlarmCommands(self, timeout=command_timeout)
 
     async def start(self):
         if self._closed:
@@ -162,6 +165,18 @@ class NoncameraProvider:
 
     async def execute(self, *_args, **_kwargs):
         raise ReadOnlyDeviceError()
+
+    async def set_alarm_mode(
+        self, device_id, target, *, expected_revision, expected_epoch, admission=None
+    ):
+        """Apply an explicitly admitted normal mode; all other controls stay disabled."""
+        return await self._alarm_commands.request(
+            device_id,
+            target,
+            expected_revision=expected_revision,
+            expected_epoch=expected_epoch,
+            admission=admission,
+        )
 
     def _active(self):
         return not self._closed and self._admission() is True
@@ -228,6 +243,7 @@ class NoncameraProvider:
                     # another location's callback cannot revive this source.
                     self._runtimes.pop(location_id, None)
                     self._store.remove_location(location_id)
+                    self._alarm_commands.invalidate(location_id)
                     await self._stop_runtime(runtime)
                     self._observation_times = {
                         key: value
@@ -237,7 +253,9 @@ class NoncameraProvider:
             for seed in seeds:
                 runtime = self._runtimes.get(seed.location_id)
                 if runtime is None:
-                    self._store.register_location(seed.location_id, seed.name)
+                    self._store.register_location(
+                        seed.location_id, seed.name, write_authorization=seed.write_authorization
+                    )
                     runtime = _LocationRuntime(seed, self._transport_factory(self._gateway, seed))
                     self._runtimes[seed.location_id] = runtime
                     runtime.task = asyncio.create_task(
@@ -255,6 +273,7 @@ class NoncameraProvider:
                         ((asset.asset_id, asset.kind) for asset in location.assets)
                         if location
                         else (),
+                        write_authorization=seed.write_authorization,
                     )
             await self._publish()
 
@@ -274,6 +293,7 @@ class NoncameraProvider:
             names[location] = _text(row.get("name"), 256)
         records = []
         hub_rows = []
+        alarm_ownership: dict[str, list[bool]] = {}
         seen = set()
         count = 0
         now = self._clock()
@@ -359,16 +379,30 @@ class NoncameraProvider:
                 )
                 if family in _HUB_FAMILIES:
                     hub_rows.append(row)
+                if family == "base_stations":
+                    alarm_ownership.setdefault(location, []).append(row.get("owned") is True)
         seeds = location_seeds_from_base_stations(hub_rows, raw_locations=location_rows)
-        # Monitoring never treats ownership as authority to arm or actuate.
+        # Explicit owner role is documented authority for ordinary Alarm modes.
+        # It does not prove subscription entitlement. Ring enforces entitlement
+        # on each admitted request; shared/unknown roles remain read-only.
         return tuple(records), tuple(
-            replace(seed, write_authorization=AlarmWriteAuthorization.UNKNOWN) for seed in seeds
+            replace(
+                seed,
+                write_authorization=(
+                    AlarmWriteAuthorization.ALLOWED
+                    if alarm_ownership.get(seed.location_id)
+                    and all(alarm_ownership[seed.location_id])
+                    else AlarmWriteAuthorization.UNKNOWN
+                ),
+            )
+            for seed in seeds
         )
 
     async def _supervise(self, runtime):
         backoff = 1.0
         while self._active() and self._runtimes.get(runtime.seed.location_id) is runtime:
             runtime.epoch = self._store.begin_epoch(runtime.seed.location_id)
+            self._alarm_commands.invalidate(runtime.seed.location_id)
             epoch = runtime.epoch
             began = self._monotonic()
             await self._publish()
@@ -388,6 +422,7 @@ class NoncameraProvider:
                 return
             runtime.error = _error_code(error)
             self._store.mark_location_stale(runtime.seed.location_id, epoch)
+            self._alarm_commands.invalidate(runtime.seed.location_id)
             await self._publish()
             if self._monotonic() - began >= 60:
                 backoff = 1.0
@@ -424,6 +459,7 @@ class NoncameraProvider:
             runtime.seed.location_id,
             runtime.seed.name,
             ((asset.asset_id, asset.kind) for asset in assets),
+            write_authorization=runtime.seed.write_authorization,
         )
         sessions = tuple(
             AssetSessionInfo(
@@ -477,6 +513,7 @@ class NoncameraProvider:
         self._store.apply_message(runtime.seed.location_id, message, epoch)
         if isinstance(message, (DeviceInfoDocList, DeviceInfoDocUpdate)):
             self._record_receipts(runtime.seed.location_id, message)
+        self._alarm_commands.observe(runtime, epoch, message)
         if isinstance(message, SessionInfo):
             for session in message.sessions:
                 asset = previous.find_asset(session.asset_id) if previous else None
@@ -568,12 +605,14 @@ class NoncameraProvider:
             self._error = "device-limit-exceeded"
         self._records = tuple(records)
         self._revision += 1
+        alarms = self._alarm_commands.snapshots()
         if self._callback is not None:
             result = self._callback(
                 records=self._records,
                 complete=bool(complete),
                 revision=self._revision,
                 observed_at=self._clock(),
+                alarms=alarms,
             )
             if inspect.isawaitable(result):
                 await result
@@ -694,6 +733,8 @@ class NoncameraProvider:
     async def close(self):
         if self._close_task is None:
             self._closed = True
+            for location_id in self._runtimes:
+                self._alarm_commands.invalidate(location_id)
             self._close_task = asyncio.create_task(self._close_impl(), name="ring-device-close")
         await asyncio.shield(self._close_task)
 

@@ -8,6 +8,7 @@ import {
   HapStatusError,
   Service,
 } from "@homebridge/hap-nodejs";
+import { DeviceAlarm } from "./device-alarm.js";
 import { ProtocolError, type PairingManifest } from "./protocol.js";
 import { pairingSnapshot } from "./pairing.js";
 import { pairingRevision, type PairingStore } from "./storage.js";
@@ -19,6 +20,9 @@ import {
   type DevicePairingIdentity,
   type DevicePairingRequest,
   type DevicePublication,
+  type AlarmMode,
+  type DeviceAlarmRequest,
+  type DeviceAlarmResult,
 } from "./device-protocol.js";
 
 const sensors = {
@@ -67,6 +71,8 @@ export class DeviceSensor {
       callback(),
     );
     for (const mapping of value.mappings) {
+      if (mapping === "security_system")
+        throw new ProtocolError("invalid-device-child");
       const definition = sensors[mapping],
         service = new definition.service(value.name, `halo:${mapping}`);
       const reading = service.getCharacteristic(definition.characteristic);
@@ -177,6 +183,7 @@ export interface DeviceBridgeOptions {
   store: PairingStore;
   publisher: DevicePublisher;
   monotonicNow?: () => number;
+  onAlarmSet?: (request: DeviceAlarmRequest) => Promise<DeviceAlarmResult>;
 }
 const sameScope = (
   a: DevicePublication["scope"],
@@ -189,11 +196,13 @@ const sameScope = (
 export class DeviceBridgeManager {
   private bridge: Bridge | null = null;
   private publication: DevicePublication | null = null;
-  private readonly children = new Map<string, DeviceSensor>();
+  private readonly children = new Map<string, DeviceSensor | DeviceAlarm>();
   private readonly identities = new Map<
     string,
     { uuid: string; mappings: string }
   >();
+  private readonly pendingAlarms = new Set<string>();
+  private readonly alarmEpochs = new Map<string, number>();
   private expiry: NodeJS.Timeout | null = null;
   private deadline = 0;
   private claimed = false;
@@ -315,6 +324,29 @@ export class DeviceBridgeManager {
         this.bridge.removeBridgedAccessory(sensor.accessory);
         this.children.delete(id);
       }
+    const previousChildren = new Map(
+      (previous?.children ?? []).map((child) => [child.device_id, child]),
+    );
+    const currentChildren = new Map(
+      value.children.map((child) => [child.device_id, child]),
+    );
+    for (const id of new Set([
+      ...previousChildren.keys(),
+      ...currentChildren.keys(),
+    ])) {
+      const authority = (child: DeviceChild | undefined): string =>
+        JSON.stringify([
+          child?.accessory_uuid,
+          child?.available,
+          child?.alarm?.control_enabled,
+        ]);
+      if (
+        (previous !== null && this.now() >= this.deadline) ||
+        authority(previousChildren.get(id)) !==
+          authority(currentChildren.get(id))
+      )
+        this.alarmEpochs.set(id, (this.alarmEpochs.get(id) ?? 0) + 1);
+    }
     this.deadline = Math.min(this.now() + 15_000, value.expires_at_ms);
     for (const child of [...value.children].sort((a, b) =>
       a.device_id.localeCompare(b.device_id),
@@ -322,7 +354,13 @@ export class DeviceBridgeManager {
       const sensor = this.children.get(child.device_id);
       if (sensor) sensor.update(child);
       else {
-        const sensor = new DeviceSensor(child, () => this.fresh());
+        const sensor = child.mappings.includes("security_system")
+          ? new DeviceAlarm(
+              child,
+              () => this.fresh(),
+              (target) => this.setAlarm(child.device_id, target),
+            )
+          : new DeviceSensor(child, () => this.fresh());
         this.bridge.addBridgedAccessory(sensor.accessory);
         this.children.set(child.device_id, sensor);
         this.identities.set(child.device_id, {
@@ -352,6 +390,58 @@ export class DeviceBridgeManager {
     } catch (error) {
       this.invalidate();
       throw error;
+    }
+  }
+  async setAlarm(deviceId: string, target: AlarmMode): Promise<void> {
+    const publication = this.publication;
+    const child = publication?.children.find(
+      (item) => item.device_id === deviceId,
+    );
+    if (
+      !publication ||
+      !child ||
+      !this.fresh() ||
+      !this.published ||
+      !child.available ||
+      !child.alarm?.control_enabled ||
+      child.alarm.triggered === null ||
+      child.alarm.mode === null ||
+      !this.options.onAlarmSet ||
+      !["disarmed", "home", "away"].includes(target)
+    )
+      throw unavailable();
+    if (this.pendingAlarms.has(deviceId))
+      throw new HapStatusError(HAPStatus.RESOURCE_BUSY);
+    this.pendingAlarms.add(deviceId);
+    const epoch = this.alarmEpochs.get(deviceId);
+    const request: DeviceAlarmRequest = {
+      scope: structuredClone(publication.scope),
+      registry_revision: publication.registry_revision,
+      sequence: publication.sequence,
+      device_id: child.device_id,
+      accessory_uuid: child.accessory_uuid,
+      target,
+    };
+    try {
+      const result = await this.options.onAlarmSet(request);
+      const current = this.publication,
+        now = current?.children.find((item) => item.device_id === deviceId);
+      if (
+        !result.accepted ||
+        this.alarmEpochs.get(deviceId) !== epoch ||
+        !this.fresh() ||
+        !this.published ||
+        !current ||
+        !sameScope(current.scope, request.scope) ||
+        current.registry_revision !== request.registry_revision ||
+        !now?.available ||
+        now.accessory_uuid !== request.accessory_uuid ||
+        !now.alarm?.control_enabled
+      )
+        throw unavailable();
+      // The parent only accepts after observed readback. CurrentState is never set here.
+    } finally {
+      this.pendingAlarms.delete(deviceId);
     }
   }
   private base(identity: DevicePairingIdentity): PairingBase {

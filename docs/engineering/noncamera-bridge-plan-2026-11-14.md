@@ -1,9 +1,10 @@
 # Halo Bridge: non-camera Ring integration
 
-Date: November 14, 2026. Status: researched design; provider/catalog and durable
-registry waves are implemented locally. Bridge publication and physical-device
-acceptance are pending. See the [wave 1](noncamera-wave1-2026-11-14.md) and
-[wave 2](noncamera-wave2-2026-11-14.md) implementation records.
+Date: November 14, 2026. Status: provider/catalog, durable registry, sensor bridge
+publication and guarded normal Alarm controls are implemented locally. Installed
+and physical-device acceptance remain pending. See the [wave 1](noncamera-wave1-2026-11-14.md),
+[wave 2](noncamera-wave2-2026-11-14.md), [wave 3](noncamera-wave3-2026-11-14.md)
+and [wave 4](noncamera-wave4-2026-11-14.md) implementation records.
 
 The subsequent [Scrypted, Homebridge and Home Assistant comparison](ring-project-comparison-2026-11-14.md)
 is complete. It expands the configuration, provider-recovery and control acceptance
@@ -244,8 +245,10 @@ The current working tree has prior UI/snapshot changes; preserve them throughout
 
 Progress: [wave 3](noncamera-wave3-2026-11-14.md) implements the separate bridge
 runtime and read-only sensor publication in slice 4, with its usable pairing
-interface from slice 6. All changes remain local pending installed and physical
-qualification. Alarm and other control families remain future work.
+interface from slice 6. [Wave 4](noncamera-wave4-2026-11-14.md) adds the Alarm
+family of slice 5, including observed state and separately opted-in normal modes.
+All changes remain local pending installed and physical qualification. Lighting,
+chimes and other control families remain future work.
 
 Each slice should have meaningful regression checks and a reviewable commit.
 Physical acceptance and deployment are distinct from fixture success.

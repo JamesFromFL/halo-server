@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import copy
 import os
 import socket
+import time
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -30,6 +32,9 @@ MAX_PENDING_REQUESTS = 8
 REQUEST_SECONDS = 5.0
 HEARTBEAT_SECONDS = 5.0
 STOP_SECONDS = 5.0
+ALARM_RETIRE_SECONDS = 15.0
+MAX_ALARM_REQUESTS = 4
+MAX_ALARM_HISTORY = 1024
 
 
 class DeviceBridgeRuntimeError(RuntimeError):
@@ -64,8 +69,9 @@ def device_resources():
 class DeviceBridgeRuntime:
     """One owned child, private control socket, and separate pairing lock.
 
-    A failed or ambiguous request retires this process. There are no child
-    requests, Ring credentials, inherited public sockets, or media channels.
+    A failed or ambiguous request retires this process. The child can request
+    only explicitly admitted alarm modes; it receives no Ring credentials,
+    inherited public sockets, or media channels.
     The caller coalesces observations into cumulative bounded snapshots.
     """
 
@@ -79,6 +85,7 @@ class DeviceBridgeRuntime:
         on_ready: Callable[[str], Awaitable[None]] | None = None,
         on_retired: Callable[[str], Awaitable[None]] | None = None,
         max_restarts: int = 3,
+        on_alarm_set: Callable[[dict, Callable[[], bool]], Awaitable[dict]] | None = None,
     ):
         if not node.is_absolute() or not entry.is_absolute():
             raise ValueError("Device bridge executable paths must be absolute")
@@ -94,6 +101,12 @@ class DeviceBridgeRuntime:
         self._pairing_owner: PairingDirectoryOwner | None = None
         self._on_ready, self._on_retired = on_ready, on_retired
         self._max_restarts = max_restarts
+        self._on_alarm_set = on_alarm_set
+        self._publication = None
+        self._alarm_epochs = {}
+        self._alarm_tasks: dict[str, asyncio.Task] = {}
+        self._alarm_seen: set[str] = set()
+        self._alarm_devices: set[str] = set()
         self._supervisor: asyncio.Task | None = None
         self._first_ready: asyncio.Future | None = None
         self._reader_task: asyncio.Task | None = None
@@ -121,7 +134,9 @@ class DeviceBridgeRuntime:
 
     @property
     def retirement_pending(self):
-        return self._boot_id is not None or self._pairing_owner is not None
+        return (
+            self._boot_id is not None or self._pairing_owner is not None or bool(self._alarm_tasks)
+        )
 
     async def start(self):
         if self._supervisor is None:
@@ -313,6 +328,9 @@ class DeviceBridgeRuntime:
             self._pairing_owner = PairingDirectoryOwner.acquire(self._pairing_directory)
         parent, child = socket.socketpair()
         self._boot_id = str(uuid.uuid4())
+        self._publication = None
+        self._alarm_epochs.clear()
+        self._alarm_seen.clear()
         self._handshake_complete = False
         env = {key: os.environ[key] for key in ("LANG", "LC_ALL", "TZ") if key in os.environ}
         env.update(guard_environment)
@@ -369,16 +387,153 @@ class DeviceBridgeRuntime:
                 validate_envelope(message, role="hap")
                 if message["boot_id"] != self._boot_id:
                     raise DeviceBridgeProtocolError("Retired device bridge boot identity")
+                if message["kind"] == "alarm_set":
+                    await self._dispatch_alarm(message)
+                    continue
                 record = self._pending.get(message["request_id"])
                 if record is None or record.future.done():
                     raise DeviceBridgeProtocolError("Unowned or duplicate device bridge response")
                 validate_reply(record.envelope, message)
+                if record.envelope["kind"] == "publish" and message["payload"]["accepted"]:
+                    self._accept_publication(record.envelope["payload"])
                 record.future.set_result(message)
         except asyncio.CancelledError:
             raise
         except Exception:
             self._fail_pending("Device bridge channel closed")
             await self._terminate()
+
+    def _accept_publication(self, publication):
+        expired = bool(
+            self._publication and self._publication["expires_at_ms"] <= time.monotonic() * 1000
+        )
+        previous = (
+            {row["device_id"]: row for row in self._publication["children"]}
+            if self._publication
+            else {}
+        )
+        current = {row["device_id"]: row for row in publication["children"]}
+        for device in set(previous) | set(current):
+
+            def authority(row):
+                return (
+                    (
+                        row.get("accessory_uuid"),
+                        row.get("available"),
+                        row.get("alarm", {}).get("control_enabled") if row.get("alarm") else False,
+                    )
+                    if row
+                    else None
+                )
+
+            if expired or authority(previous.get(device)) != authority(current.get(device)):
+                self._alarm_epochs[device] = self._alarm_epochs.get(device, 0) + 1
+        self._publication = publication
+
+    def _alarm_current(self, payload, boot, *, initial=False, epoch=None):
+        publication = self._publication
+        if (
+            not self._handshake_complete
+            or self._stopping.is_set()
+            or boot != self._boot_id
+            or self._writer is None
+            or publication is None
+            or publication["expires_at_ms"] <= time.monotonic() * 1000
+            or publication["scope"] != payload["scope"]
+            or publication["registry_revision"] != payload["registry_revision"]
+            or initial
+            and publication["sequence"] != payload["sequence"]
+            or epoch is not None
+            and self._alarm_epochs.get(payload["device_id"]) != epoch
+        ):
+            return False
+        child = next(
+            (row for row in publication["children"] if row["device_id"] == payload["device_id"]),
+            None,
+        )
+        alarm = child.get("alarm") if child else None
+        return bool(
+            child
+            and child["accessory_uuid"] == payload["accessory_uuid"]
+            and child["mappings"] == ["security_system"]
+            and child["available"]
+            and alarm
+            and alarm["control_enabled"]
+            and alarm["mode"] is not None
+            and alarm["triggered"] is not None
+        )
+
+    async def _send_alarm_result(self, message, result):
+        envelope = {
+            **message,
+            "kind": "alarm_set_result",
+            "payload": {**message["payload"], **result},
+        }
+        validate_envelope(envelope, role="python")
+        frame = encode_frame(envelope)
+        async with asyncio.timeout(REQUEST_SECONDS), self._write_lock:
+            if (
+                message["boot_id"] != self._boot_id
+                or not self._handshake_complete
+                or self._stopping.is_set()
+                or self._writer is None
+            ):
+                return
+            self._writer.write(frame)
+            await self._writer.drain()
+
+    async def _dispatch_alarm(self, message):
+        request_id, payload, boot = message["request_id"], message["payload"], message["boot_id"]
+        if (
+            not self._handshake_complete
+            or request_id in self._alarm_seen
+            or request_id in self._pending
+            or len(self._alarm_seen) >= MAX_ALARM_HISTORY
+        ):
+            raise DeviceBridgeProtocolError("Duplicate or unowned alarm command")
+        self._alarm_seen.add(request_id)
+        if not self._alarm_current(payload, boot, initial=True) or self._on_alarm_set is None:
+            await self._send_alarm_result(message, {"accepted": False, "code": "policy-denied"})
+            return
+        if (
+            len(self._alarm_tasks) >= MAX_ALARM_REQUESTS
+            or payload["device_id"] in self._alarm_devices
+        ):
+            await self._send_alarm_result(message, {"accepted": False, "code": "busy"})
+            return
+        epoch = self._alarm_epochs.get(payload["device_id"])
+        self._alarm_devices.add(payload["device_id"])
+
+        async def execute():
+            def admitted():
+                return self._alarm_current(payload, boot, epoch=epoch)
+
+            result = {"accepted": False, "code": "not-ready"}
+            try:
+                if admitted():
+                    # The caller cannot mutate the envelope that owns correlation.
+                    result = await self._on_alarm_set(copy.deepcopy(payload), admitted)
+                    if not admitted():
+                        result = {"accepted": False, "code": "uncertain"}
+                if (
+                    isinstance(result, dict)
+                    and set(result) == {"accepted"}
+                    and result["accepted"] is True
+                ):
+                    result = {"accepted": True, "code": "ok"}
+                if not isinstance(result, dict) or set(result) != {"accepted", "code"}:
+                    raise DeviceBridgeProtocolError("Invalid alarm handler result")
+                await self._send_alarm_result(message, result)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                with contextlib.suppress(Exception):
+                    await self._send_alarm_result(message, {"accepted": False, "code": "uncertain"})
+            finally:
+                self._alarm_tasks.pop(request_id, None)
+                self._alarm_devices.discard(payload["device_id"])
+
+        self._alarm_tasks[request_id] = asyncio.create_task(execute(), name="device-alarm-command")
 
     async def _heartbeat(self):
         try:
@@ -410,6 +565,7 @@ class DeviceBridgeRuntime:
                 pending.future.set_exception(DeviceBridgeRuntimeError(reason))
 
     async def _cleanup(self):
+        self._handshake_complete = False
         await self._terminate()
         for task in (self._reader_task, self._heartbeat_task):
             if task is not None:
@@ -424,6 +580,14 @@ class DeviceBridgeRuntime:
             with contextlib.suppress(Exception):
                 await asyncio.wait_for(self._writer.wait_closed(), 1)
             self._writer = None
+        # A lost HAP socket is not permission to cancel an already owned Ring
+        # command. Its callback remains charged until observed/uncertain completion.
+        if self._alarm_tasks:
+            _done, remaining = await asyncio.wait(
+                tuple(self._alarm_tasks.values()), timeout=ALARM_RETIRE_SECONDS
+            )
+            if remaining:
+                raise DeviceBridgeRuntimeError("Alarm command retirement is still owned")
         if self._boot_id is not None and self._on_retired is not None:
             async with asyncio.timeout(REQUEST_SECONDS):
                 await self._on_retired(self._boot_id)
@@ -431,6 +595,7 @@ class DeviceBridgeRuntime:
             self._pairing_owner.close()
             self._pairing_owner = None
         self._boot_id = None
+        self._publication = None
         self._process = None
 
 

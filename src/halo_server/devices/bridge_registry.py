@@ -1,7 +1,7 @@
 """Account-bound identities and import preferences for the non-camera bridge.
 
 This registry cannot publish HomeKit accessories or issue Ring commands. Its v1
-mapping allowlist covers read-only sensors. Camera identities and HAP secrets
+mapping allowlist covers sensors and alarm state. Camera identities and HAP secrets
 remain in their separate stores. Missing devices never lose their identities.
 """
 
@@ -24,12 +24,13 @@ MAX_RETAINED_DEVICES = 1024
 MAX_BRIDGE_CHILDREN = 149
 MAX_DEVICE_PREFERENCES = 512
 MAX_REGISTRY_BYTES = 1024 * 1024
-MAPPINGS = frozenset({"contact", "motion", "leak", "smoke", "carbon_monoxide"})
+MAPPINGS = frozenset({"contact", "motion", "leak", "smoke", "carbon_monoxide", "security_system"})
 _HASH = re.compile(r"[0-9a-f]{64}\Z")
 _KIND = re.compile(r"[a-z][a-z0-9-]{0,63}\Z")
 _USERNAME = re.compile(r"(?:[0-9A-F]{2}:){5}[0-9A-F]{2}\Z")
 _MARKER = b"halo-device-bridge-registry-v1\n"
 _KIND_MAPPINGS = {
+    "security-panel": (("mode",), ("security_system",)),
     "contact-sensor": (("contact",), ("contact",)),
     "retrofit-zone": (("contact",), ("contact",)),
     "motion-sensor": (("motion",), ("motion",)),
@@ -108,7 +109,7 @@ class BridgeProfile:
             ("excluded_devices", MAX_DEVICE_PREFERENCES, _hash),
             ("excluded_locations", 128, _hash),
             ("excluded_kinds", 64, _kind),
-            ("excluded_mappings", 5, lambda value: isinstance(value, str) and value in MAPPINGS),
+            ("excluded_mappings", 6, lambda value: isinstance(value, str) and value in MAPPINGS),
         ):
             if not _tuple(getattr(self, name), limit, check):
                 raise BridgeRegistryError("Bridge selection filters are invalid")
@@ -156,7 +157,7 @@ class BridgeDevice:
         if self.mappings and (
             self.provider != "ring-hub" or allowed is None or self.mappings != allowed[1]
         ):
-            raise BridgeRegistryError("Bridge device mapping is outside the read-only allowlist")
+            raise BridgeRegistryError("Bridge device mapping is outside the qualified allowlist")
         if (
             type(self.selected) is not bool
             or type(self.qualified) is not bool

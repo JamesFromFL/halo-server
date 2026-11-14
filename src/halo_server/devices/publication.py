@@ -1,4 +1,4 @@
-"""Account-fenced read-only sensor publication and explicit bridge pairing lifecycle."""
+"""Account-fenced sensor/alarm publication and explicit bridge pairing lifecycle."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import re
 import time
+from uuid import uuid4
 
 from halo_server.account_scope import AccountScope, valid_profile_id
 from halo_server.api.admin import AdminProtocolError
@@ -70,6 +71,7 @@ class DevicePublisher:
         self._scope = None
         self._state = "disabled"
         self._reason = None
+        self._last_snapshot = None
 
     def notify(self):
         self._wake.set()
@@ -88,6 +90,7 @@ class DevicePublisher:
     def invalidate(self):
         self._token += 1
         self._published_boot = None
+        self._last_snapshot = None
         if self.runtime is not None:
             self.runtime.invalidate()
         self._state, self._reason = "offline", "account-or-policy-changed"
@@ -190,6 +193,7 @@ class DevicePublisher:
                 pairing_directory=self.service.paths.homekit_device_pairing_directory,
                 on_ready=changed,
                 on_retired=changed,
+                on_alarm_set=self._alarm_set,
             )
             self._runtime_token, self._scope = token, scope
             self._state = "starting"
@@ -217,6 +221,8 @@ class DevicePublisher:
         snapshot = self._snapshot(scope, profile, self._sequence)
         try:
             result = await runtime.publish(snapshot, admission=admitted)
+            if result.get("accepted") is True and admitted():
+                self._last_snapshot = snapshot
             status = (
                 await runtime.status(self._identity(scope, profile), admission=admitted)
                 if result.get("accepted") is True and admitted()
@@ -284,6 +290,34 @@ class DevicePublisher:
                 for key, source in SOURCES.items()
             }
             values = {key: value if type(value) is bool else None for key, value in values.items()}
+            alarm = None
+            if entry["mappings"] == ["security_system"]:
+                state = monitor.alarm.view(row) if row else None
+                mode = state.get("mode") if state and available else None
+                signal = state.get("signal") if state and available else None
+                phase = state.get("phase") if state and available else None
+                triggered = (
+                    True
+                    if phase == "alarming" or signal not in {None, "none"}
+                    else False
+                    if phase in {"idle", "entry-delay", "exit-delay"} and signal == "none"
+                    else None
+                )
+                alarm = {
+                    "mode": mode,
+                    "triggered": triggered,
+                    # This is authority, not transient readiness. Publishing
+                    # pending/busy as a revoked grant would invalidate the very
+                    # request whose readback is currently being awaited.
+                    "control_enabled": bool(
+                        state
+                        and state["enabled"]
+                        and state["authorization"] == "allowed"
+                        and mode is not None
+                        and triggered is not None
+                        and available
+                    ),
+                }
             children.append(
                 {
                     "device_id": entry["id"],
@@ -293,6 +327,7 @@ class DevicePublisher:
                     "mappings": sorted(entry["mappings"]),
                     "available": available,
                     "values": values,
+                    "alarm": alarm,
                 }
             )
         return {
@@ -306,6 +341,70 @@ class DevicePublisher:
                 "name": "Halo Bridge",
             },
             "children": children,
+        }
+
+    async def _alarm_set(self, payload, admission):
+        """A HAP request has no Ring authority until the daemon admits it."""
+        scope, profile = self._profile()
+        runtime, token = self.runtime, self._token
+        boot = runtime.boot_id if runtime else None
+        revision = self.bridge.registry.revision
+        snapshot = self._last_snapshot
+        if (
+            scope is None
+            or profile is None
+            or runtime is None
+            or snapshot is None
+            or not admission()
+            or not self._admitted(scope, revision, runtime, token, boot)
+            or self._published_boot != boot
+            or payload["scope"] != snapshot["scope"]
+            or payload["registry_revision"] != revision
+            or payload["sequence"] != snapshot["sequence"]
+            or snapshot["expires_at_ms"] <= time.monotonic() * 1000
+        ):
+            return {"accepted": False, "code": "conflict"}
+        child = next(
+            (
+                row
+                for row in snapshot["children"]
+                if row["device_id"] == payload["device_id"]
+                and row["accessory_uuid"] == payload["accessory_uuid"]
+            ),
+            None,
+        )
+        if not child or not child.get("alarm") or not child["alarm"]["control_enabled"]:
+            return {"accepted": False, "code": "policy-denied"}
+        monitor = self.service._device_monitor
+        row = monitor.alarm._row(payload["device_id"])
+        state = monitor.alarm.view(row) if row else None
+        if not state or not state["can_set_mode"]:
+            return {"accepted": False, "code": "policy-denied"}
+
+        def current():
+            # Observation sequence may advance while waiting for readback.
+            return admission() and self._admitted(scope, revision, runtime, token, boot)
+
+        try:
+            result = await monitor.alarm.set_mode(
+                profile_id=scope.profile_id,
+                account_generation=scope.generation,
+                device_id=payload["device_id"],
+                provider_generation=state["provider_generation"],
+                expected_epoch=state["epoch"],
+                expected_revision=state["observed_revision"],
+                expected_policy_revision=state["policy_revision"],
+                target=payload["target"],
+                operation_id=str(uuid4()),
+                admission=current,
+            )
+        except AdminProtocolError as error:
+            return {"accepted": False, "code": "busy" if error.code == "busy" else "conflict"}
+        if result.get("status") == "confirmed" and current():
+            return {"accepted": True}
+        return {
+            "accepted": False,
+            "code": "uncertain" if result.get("possibly_sent") else "policy-denied",
         }
 
     def snapshot(self):

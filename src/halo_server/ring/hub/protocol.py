@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, TypeAlias
 
-from halo_server.ring.hub.models import AlarmConnectionStatus
+from halo_server.ring.hub.models import AlarmConnectionStatus, AlarmMode
 
 MAX_FRAME_BYTES = 1_048_576
 MAX_JSON_DEPTH = 32
@@ -380,6 +380,41 @@ def encode_device_list_request(asset_id: str, sequence: int) -> dict[str, Any]:
         "msg": {
             "msg": "DeviceInfoDocGetList",
             "dst": asset_id,
+            "seq": sequence,
+        },
+    }
+
+
+def encode_mode_command(
+    asset_id: str, panel_zid: str, mode: AlarmMode, sequence: int
+) -> dict[str, Any]:
+    """Encode only an ordinary alarm mode change, without sensor bypass."""
+
+    asset_id = _validate_outbound_identifier(asset_id, "asset_id")
+    panel_zid = _validate_outbound_identifier(panel_zid, "panel_zid")
+    _validate_outbound_sequence(sequence)
+    modes = {AlarmMode.DISARMED: "none", AlarmMode.HOME: "some", AlarmMode.AWAY: "all"}
+    if not isinstance(mode, AlarmMode) or mode not in modes:
+        raise ValueError("unsupported alarm mode")
+    return {
+        "channel": "message",
+        "msg": {
+            "msg": "DeviceInfoSet",
+            "datatype": "DeviceInfoSetType",
+            "dst": asset_id,
+            "body": [
+                {
+                    "zid": panel_zid,
+                    "command": {
+                        "v1": [
+                            {
+                                "commandType": "security-panel.switch-mode",
+                                "data": {"mode": modes[mode]},
+                            }
+                        ]
+                    },
+                }
+            ],
             "seq": sequence,
         },
     }

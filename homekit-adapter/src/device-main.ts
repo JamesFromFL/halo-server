@@ -7,6 +7,7 @@ import { ProtocolError } from "./protocol.js";
 import { PairingStore, STORAGE_RECOVERY_REQUIRED } from "./storage.js";
 import { enablePairingDurability } from "./storage-boundary.js";
 import { verifyPublicApi } from "./public-api.js";
+import { DeviceAlarmRequests } from "./device-alarm.js";
 import { DeviceControlChannel } from "./device-ipc.js";
 import { DeviceBridgeManager, deviceHapPublisher } from "./device-bridge.js";
 import {
@@ -70,11 +71,16 @@ async function run(): Promise<number> {
   const descriptors = deviceDescriptors(process.env, process.ppid);
   verifyPublicApi();
   let manager: DeviceBridgeManager | null = null;
+  let alarms: DeviceAlarmRequests | null = null;
   enablePairingDurability(() => manager?.invalidate());
   const store = new PairingStore(descriptors.pairing);
   manager = new DeviceBridgeManager({
     store,
     publisher: deviceHapPublisher(store),
+    onAlarmSet: (request) =>
+      alarms
+        ? alarms.request(request)
+        : Promise.reject(new ProtocolError("not-ready")),
   });
   const channel = new DeviceControlChannel(
     new Socket({ fd: descriptors.control, readable: true, writable: true }),
@@ -90,9 +96,15 @@ async function run(): Promise<number> {
     failed = true;
     ending = true;
     manager!.invalidate();
+    alarms?.close();
     process.stderr.write(`Halo device bridge: ${code}\n`);
     channel.close();
   };
+  alarms = new DeviceAlarmRequests({
+    boot: () => boot,
+    send: (message) => channel.send(message),
+    fail,
+  });
   const handshake = setTimeout(() => fail("handshake-timeout"), 5000);
   const parentWatch = setInterval(() => {
     if (process.ppid !== descriptors.parent) fail("parent-retired");
@@ -125,6 +137,9 @@ async function run(): Promise<number> {
     if (message.boot_id !== boot) throw new ProtocolError("stale-boot");
     renew();
     switch (message.kind) {
+      case "alarm_set_result":
+        alarms!.receive(message);
+        break;
       case "ping":
         await reply(message, "pong");
         break;
@@ -221,6 +236,7 @@ async function run(): Promise<number> {
   process.once("SIGINT", signal);
   await new Promise<void>((resolve) => channel.once("closed", resolve));
   ending = true;
+  alarms.close();
   manager.invalidate();
   clearTimeout(handshake);
   clearInterval(parentWatch);

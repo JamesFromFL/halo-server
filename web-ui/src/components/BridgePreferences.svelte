@@ -115,7 +115,7 @@
     <div class="group">
       <Row
         title="Import status"
-        subtitle="Saved preferences determine which sensor capabilities this bridge shares."
+        subtitle="Saved preferences determine which device capabilities this bridge shares."
       >
         <span class="status"
           >{fresh && bridge.status === 'ready'
@@ -129,7 +129,7 @@
           ? 'All eligible sensor capabilities are excluded. Change capability preferences in Devices first.'
           : broaderExclusion
             ? 'Excluded by a location or device-type preference. Change that preference in Devices first.'
-            : 'Only qualified read-only sensor capabilities are eligible.'}
+            : 'Only qualified device capabilities are eligible. Alarm controls require their own location opt-in.'}
       >
         <input
           type="checkbox"
@@ -146,7 +146,7 @@
       </Row>
       <Row
         title="HomeKit publication"
-        subtitle="This sensor shares Halo Bridge’s pairing and has no individual setup code."
+        subtitle="This device shares Halo Bridge’s pairing and has no individual setup code."
         ><a href="#/integrations">Manage Halo Bridge</a></Row
       >
     </div>
@@ -175,13 +175,13 @@
         />
       </Row>
       <Row
-        title="Automatically include supported sensors"
-        subtitle="Includes qualified read-only sensors as they are discovered. Your exclusions always take priority."
+        title="Automatically include supported devices"
+        subtitle="Includes qualified devices as they are discovered. Exclusions take priority; alarm controls remain a separate opt-in."
       >
         <input
           type="checkbox"
           role="switch"
-          aria-label="Automatically include supported sensors"
+          aria-label="Automatically include supported devices"
           checked={bridge.auto_import}
           disabled={disabled || !bridge.configured}
           onchange={(event) => {

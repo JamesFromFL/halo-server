@@ -300,13 +300,22 @@
     Historical HomeKit accessories remain in <a href="#/integrations">Integrations</a> if a source device
     is temporarily missing.
   </p>
-  <NoncameraDevices monitoring={noncamera} {search} {fresh} {generation} {notify} {refresh} />
+  <NoncameraDevices
+    monitoring={noncamera}
+    {search}
+    {fresh}
+    {generation}
+    {reauthenticate}
+    {notify}
+    {refresh}
+  />
 {:else if otherDevice}
   <NoncameraDevices
     monitoring={noncamera}
     device={otherDevice}
     {fresh}
     {generation}
+    {reauthenticate}
     {notify}
     {refresh}
   />
