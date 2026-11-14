@@ -16,7 +16,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from halo_server.account_scope import valid_profile_id
-from halo_server.devices.light_policy import qualified_light
+from halo_server.devices.light_policy import qualified_group, qualified_light
 from halo_server.devices.models import DeviceIdentity, DeviceObservation, DeviceRecord
 from halo_server.private_json import MAX_REVISION, PrivateJsonError, PrivateJsonStore
 
@@ -34,6 +34,7 @@ _USERNAME = re.compile(r"(?:[0-9A-F]{2}:){5}[0-9A-F]{2}\Z")
 _MARKER = b"halo-device-bridge-registry-v1\n"
 _KIND_MAPPINGS = {
     "beams-light": (("switch",), ("lightbulb",)),
+    "light-group": (("switch",), ("lightbulb",)),
     "security-panel": (("mode",), ("security_system",)),
     "contact-sensor": (("contact",), ("contact",)),
     "retrofit-zone": (("contact",), ("contact",)),
@@ -158,8 +159,9 @@ class BridgeDevice:
         if not _tuple(self.mappings, 5, lambda value: isinstance(value, str) and value in MAPPINGS):
             raise BridgeRegistryError("Bridge device mappings are invalid")
         allowed = _KIND_MAPPINGS.get(self.kind)
+        expected_provider = "ring-light-group" if self.kind == "light-group" else "ring-hub"
         if self.mappings and (
-            self.provider != "ring-hub" or allowed is None or self.mappings != allowed[1]
+            self.provider != expected_provider or allowed is None or self.mappings != allowed[1]
         ):
             raise BridgeRegistryError("Bridge device mapping is outside the qualified allowlist")
         if (
@@ -307,6 +309,8 @@ def _records(profile_id: str, records: tuple[DeviceRecord, ...]) -> tuple[Device
 
 
 def _mapping(record: DeviceRecord) -> tuple[str, ...]:
+    if record.kind == "light-group":
+        return ("lightbulb",) if qualified_group(record) else ()
     allowed = _KIND_MAPPINGS.get(record.kind)
     if (
         allowed is None
@@ -340,7 +344,11 @@ def _wanted(profile: BridgeProfile, entry: BridgeDevice) -> bool:
     return (
         bool(entry.mappings)
         and _exclusion(profile, entry) is None
-        and (profile.auto_import or entry.device_id in profile.included_devices)
+        and (
+            profile.auto_import
+            and entry.kind != "light-group"
+            or entry.device_id in profile.included_devices
+        )
     )
 
 
@@ -697,6 +705,7 @@ def bridge_projection(
     devices = []
     for device_id in sorted(entries.keys() | discovered.keys()):
         entry, record = entries.get(device_id), discovered.get(device_id)
+        kind = entry.kind if entry is not None else record.kind
         mappings = entry.mappings if entry is not None else _mapping(record)
         eligible = bool(mappings) and (entry is None or _eligible(entry, record))
         excluded = _exclusion(profile, entry) if profile is not None and entry is not None else None
@@ -717,6 +726,8 @@ def bridge_projection(
             reason = excluded
         elif not eligible:
             reason = "unsupported-device" if not mappings else "capability-mismatch"
+        elif kind == "light-group" and device_id not in profile.included_devices:
+            reason = "explicit-selection-required"
         elif not (profile.auto_import or device_id in profile.included_devices):
             reason = "not-selected"
         elif entry is None:

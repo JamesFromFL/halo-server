@@ -8,6 +8,8 @@ import time
 from dataclasses import dataclass
 from enum import StrEnum, unique
 
+from halo_server.homekit.text import literal_text
+
 
 @unique
 class AlarmMode(StrEnum):
@@ -238,6 +240,7 @@ class AlarmDeviceSnapshot:
     raw_type: str = ""
     category_id: int | None = None
     parent_zid: str | None = None
+    group_id: str | None = None
     capabilities: frozenset[AlarmCapability] = frozenset()
     connection: AlarmConnectionStatus = AlarmConnectionStatus.UNKNOWN
     asset_connection: AlarmConnectionStatus = AlarmConnectionStatus.UNKNOWN
@@ -281,6 +284,8 @@ class AlarmDeviceSnapshot:
             raise ValueError("name must be a string")
         if self.room is not None and not isinstance(self.room, str):
             raise ValueError("room must be a string or None")
+        if self.group_id is not None and not literal_text(self.group_id, 128, empty=False):
+            raise ValueError("group_id must be bounded literal text or None")
         if self.battery_level is not None:
             if isinstance(self.battery_level, bool) or not isinstance(self.battery_level, int):
                 raise ValueError("battery_level must be an integer or None")

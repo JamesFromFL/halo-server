@@ -27,6 +27,7 @@ from halo_server.devices.policy import (
     safety_snapshot,
 )
 from halo_server.media.manager import owned_thread
+from halo_server.ring.lighting import client_lighting
 
 
 @dataclass
@@ -135,6 +136,7 @@ class DeviceMonitor:
                 provider_generation=binding.generation,
                 on_snapshot=receive,
                 admission=lambda: self._current(binding),
+                lighting_reservation=client_lighting(client),
             )
             binding.provider = provider
             client.register_session_resource(provider)

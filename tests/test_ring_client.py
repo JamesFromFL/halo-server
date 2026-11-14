@@ -1104,3 +1104,44 @@ def test_delayed_worker_cannot_admit_account_operation_after_stop(tmp_path, oper
     assert not created
     assert errors and isinstance(errors[0], SessionSupersededError)
     assert manager.active_context is None
+
+
+@pytest.mark.asyncio
+async def test_inventory_receipt_preserves_pre_get_lighting_revision_across_cache_and_failure():
+    client = RingClient()
+    client._ring = SimpleNamespace(devices=lambda: _FakeDevices([]))
+    entered, release = asyncio.Event(), asyncio.Event()
+    calls = []
+
+    async def update(_ring):
+        calls.append(True)
+        entered.set()
+        await release.wait()
+
+    client._async_update_inventory = update
+    refreshing = asyncio.create_task(client._async_refresh_devices(None, -1))
+    await entered.wait()
+    reservation = client.lighting_reservation
+    token = reservation.try_acquire()
+    assert reservation.mark_sent(token)
+    reservation.release(token)
+    release.set()
+    await refreshing
+    first = client._last_device_update_receipt
+    assert first == (client._last_device_update_at, 0)
+    assert reservation.revision == 1
+    await client._async_refresh_devices(None, 8)
+    assert len(calls) == 1 and client._last_device_update_receipt is first
+    await client._async_refresh_devices(None, -1)
+    second = client._last_device_update_receipt
+    assert second == (client._last_device_update_at, 1) and len(calls) == 2
+
+    async def failing(_ring):
+        raise RuntimeError("synthetic inventory failure")
+
+    client._async_update_inventory = failing
+    with pytest.raises(RuntimeError):
+        await client._async_refresh_devices(None, -1)
+    assert client._last_device_update_receipt is second
+    client._detach_session()
+    assert client._last_device_update_receipt is None

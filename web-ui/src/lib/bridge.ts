@@ -3,6 +3,7 @@ import type {
   BridgePreferences,
   BridgeRuntime,
   BridgeState,
+  NoncameraDevice,
   NoncameraState,
 } from './types.ts';
 
@@ -140,6 +141,17 @@ export function bridgeDevicePreference(bridge: BridgeState, id: string, include:
   };
 }
 
+export function bridgeDevicePreferred(
+  bridge: BridgePreferences,
+  device: Pick<NoncameraDevice, 'id' | 'kind'>,
+): boolean {
+  return (
+    !bridge.excluded_devices.includes(device.id) &&
+    (bridge.included_devices.includes(device.id) ||
+      (bridge.auto_import && device.kind !== 'light-group'))
+  );
+}
+
 export function bridgeDeviceStatus(device: BridgeDevice | undefined): string {
   if (!device) return 'Import information unavailable';
   const reasons: Record<string, string> = {
@@ -149,6 +161,7 @@ export function bridgeDeviceStatus(device: BridgeDevice | undefined): string {
     'kind-excluded': 'Device type excluded',
     'mappings-excluded': 'All eligible capabilities excluded',
     'capability-mismatch': 'Capabilities need verification',
+    'explicit-selection-required': 'Choose to include this group',
     'registry-capacity': 'Device identity capacity reached',
     'bridge-capacity': 'Bridge capacity reached',
     'bridge-disabled': 'Bridge preparation disabled',

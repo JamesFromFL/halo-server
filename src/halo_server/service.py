@@ -7,6 +7,7 @@ import concurrent.futures
 import contextlib
 import logging
 import math
+import threading
 import time
 import uuid
 from collections import deque
@@ -66,6 +67,7 @@ from halo_server.ring.events import (
     NormalizedRingEvent,
     RingEventType,
 )
+from halo_server.ring.lighting import client_lighting
 
 _log = logging.getLogger(__name__)
 
@@ -227,6 +229,7 @@ class HaloService:
         self._camera_control_locks: dict[str, asyncio.Lock] = {}
         self._media_epoch = 0
         self._control_observations = None
+        self._control_lighting_revision = None
         self._listener: EventListener | None = None
         self._listener_generation = 0
         self._accept_events = False
@@ -1428,6 +1431,20 @@ class HaloService:
                 _log.exception("Ring camera inventory refresh failed")
             return
 
+        receipt = getattr(client, "_last_device_update_receipt", None)
+        if (
+            type(receipt) is tuple
+            and len(receipt) == 2
+            and type(receipt[1]) is int
+            and receipt[1] >= 0
+        ):
+            refreshed_at, lighting_revision = receipt
+        else:
+            # Injected/older clients cannot prove when their cached rows were
+            # read relative to a mutation. Keep light state unknown.
+            refreshed_at = getattr(client, "_last_device_update_at", None)
+            lighting_revision = -1
+
         async with self._session_change_lock:
             if (
                 epoch != self._media_epoch
@@ -1441,7 +1458,9 @@ class HaloService:
                 await self._reconcile_refreshed_media(camera_ids)
                 await self.homekit.reconcile()
                 self._remember_control_observations(
-                    client, refreshed_at=getattr(client, "_last_device_update_at", time.monotonic())
+                    client,
+                    refreshed_at=refreshed_at,
+                    lighting_revision=lighting_revision,
                 )
                 self._notify_homekit_inventory()
             except asyncio.CancelledError:
@@ -2011,7 +2030,19 @@ class HaloService:
                 self._intercom_leases.pop(camera_id, None)
             _log.info("Halo intercom service lease released camera_id=%s", camera_id)
 
-    def _remember_control_observations(self, client, *, refreshed_at=None):
+    def _remember_control_observations(self, client, *, refreshed_at=None, lighting_revision=None):
+        # Preserve the read's provenance through copying. Ring-loop mutations
+        # may race this daemon-loop code; never stamp old rows with a new revision.
+        if lighting_revision is None:
+            receipt = getattr(client, "_last_device_update_receipt", None)
+            if type(receipt) is tuple and len(receipt) == 2:
+                lighting_revision = receipt[1]
+                if refreshed_at is None:
+                    refreshed_at = receipt[0]
+            else:
+                lighting_revision = -1
+        if type(lighting_revision) is not int or lighting_revision < 0:
+            lighting_revision = -1
         if client is not self._media_client or not self._account_authority_current():
             self._control_observations = None
             return
@@ -2044,6 +2075,7 @@ class HaloService:
                 refreshed_at,
                 rows,
             )
+            self._control_lighting_revision = lighting_revision
         except Exception:
             self._control_observations = None
 
@@ -2065,7 +2097,10 @@ class HaloService:
             or row[0] is not device
         ):
             return None, None
-        return row[1], row[2]
+        light = (
+            row[1] if self._control_lighting_revision == client_lighting(client).revision else None
+        )
+        return light, row[2]
 
     async def _set_plugin_camera_control(
         self,
@@ -2084,6 +2119,34 @@ class HaloService:
         on: bool,
         *,
         admission: Callable[[], bool] | None = None,
+    ) -> None:
+        if control != "light":
+            return await self._set_camera_control_owned(camera_id, control, on, admission=admission)
+        async with self._session_change_lock:
+            client, _ = self._active_ring_camera(camera_id)
+            reservation = client_lighting(client)
+            token = reservation.try_acquire()
+            if token is None:
+                raise PluginCameraOperationError(
+                    "lighting_busy", "Another lighting operation is in progress", status=409
+                )
+        started = threading.Event()
+        try:
+            return await self._set_camera_control_owned(
+                camera_id,
+                control,
+                on,
+                admission=admission,
+                lighting=(client, reservation, token, started),
+            )
+        finally:
+            # Once entered, the Ring-loop operation owns release through actual
+            # SDK cleanup. Caller timeout/cancellation must not free its slot.
+            if not started.is_set():
+                reservation.release(token)
+
+    async def _set_camera_control_owned(
+        self, camera_id, control, on, *, admission=None, lighting=None
     ) -> None:
         async with self._camera_control_lock(camera_id):
             async with self._session_change_lock:
@@ -2109,16 +2172,27 @@ class HaloService:
                 _require_plugin_admission(admission)
 
                 async def guarded_control():
-                    _require_plugin_admission(
-                        lambda: (
-                            epoch == self._media_epoch
-                            and self._media_client is client
-                            and self._account_authority_current()
-                            and self._find_media_device(camera_id) is device
-                            and (admission is None or admission())
+                    if lighting is not None:
+                        lighting[3].set()
+                    try:
+                        _require_plugin_admission(
+                            lambda: (
+                                epoch == self._media_epoch
+                                and self._media_client is client
+                                and self._account_authority_current()
+                                and self._find_media_device(camera_id) is device
+                                and (admission is None or admission())
+                                and (
+                                    lighting is None
+                                    or lighting[0] is client
+                                    and lighting[1].mark_sent(lighting[2])
+                                )
+                            )
                         )
-                    )
-                    return await setter(value)
+                        return await setter(value)
+                    finally:
+                        if lighting is not None:
+                            lighting[1].release(lighting[2])
 
                 try:
                     future = _submit_ring_coroutine(client, guarded_control())

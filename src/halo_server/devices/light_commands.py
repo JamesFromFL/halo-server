@@ -14,6 +14,7 @@ from halo_server.devices.models import DeviceIdentity, valid_generation
 from halo_server.ring.hub.models import AlarmConnectionStatus, AlarmInventoryStatus, TriState
 from halo_server.ring.hub.protocol import DeviceInfoDocList, DeviceInfoDocUpdate
 from halo_server.ring.hub.provider import AlarmCommandSupersededError
+from halo_server.ring.lighting import LightingReservation
 
 BEAMS_TYPES = frozenset({"switch.beams", "switch.multilevel.beams", "switch.transformer.beams"})
 ON_DURATIONS = frozenset({30, 60, 300, 900})
@@ -30,6 +31,8 @@ class _Pending:
     admission: object
     admitted: bool = False
     receipt: int = 0
+    source_lighting_revision: int | None = None
+    own_lighting_revision: int | None = None
 
 
 class LightCommands:
@@ -44,8 +47,10 @@ class LightCommands:
         self._next_token = 0
         self._receipt = 0
         self._field_receipts: dict[tuple[str, str, str], dict[str, float]] = {}
+        self._on_revisions: dict[tuple[str, str, str], tuple[int, int]] = {}
         self._readback_counter = 0
         self._readbacks: dict[str, tuple[int, int]] = {}
+        self.reservation = getattr(provider, "_lighting_reservation", None) or LightingReservation()
 
     def _identity(self, light):
         return DeviceIdentity(
@@ -88,6 +93,30 @@ class LightCommands:
             self._tokens[identity] = (fingerprint, self._next_token)
         return self._tokens[identity][1]
 
+    def evidence_current(self, light, *, allow_pending=True):
+        """Whether an explicit lamp reading survives other lighting writes.
+
+        Group reports never establish individual lamp state. Keep an admitted
+        command's own previous observation while it waits, without allowing
+        that exception to confirm the command or survive its completion.
+        """
+        location = self.provider._store.snapshot.find_location(light.location_id)
+        if location is None:
+            return False
+        revision = self.reservation.revision
+        observed = self._on_revisions.get((light.location_id, light.asset_id, light.zid))
+        if observed == (location.epoch, revision):
+            return True
+        pending = self._pending.get(self._identity(light).key)
+        return bool(
+            allow_pending
+            and pending is not None
+            and pending.admitted
+            and pending.epoch == location.epoch
+            and pending.own_lighting_revision == revision
+            and observed == (location.epoch, pending.source_lighting_revision)
+        )
+
     def _fresh(self, location, light):
         asset = location.find_asset(light.asset_id)
         fields = self._field_receipts.get((location.location_id, light.asset_id, light.zid), {})
@@ -103,6 +132,7 @@ class LightCommands:
             and not light.stale
             and light.connection is AlarmConnectionStatus.ONLINE
             and light.switch_on is not TriState.UNKNOWN
+            and self.evidence_current(light)
             and all(
                 name in fields and 0 <= now - fields[name] <= 120 for name in ("on", "commStatus")
             )
@@ -156,7 +186,7 @@ class LightCommands:
                         "revision": self._revision(location, light),
                         "readback_revision": readback if epoch == location.epoch else 0,
                         "on": None
-                        if light.switch_on is TriState.UNKNOWN
+                        if light.switch_on is TriState.UNKNOWN or not self.evidence_current(light)
                         else light.switch_on is TriState.ACTIVE,
                         "authorization": self._authorization(location, light),
                         "can_set": reason is None,
@@ -170,6 +200,9 @@ class LightCommands:
         self._readbacks = {key: value for key, value in self._readbacks.items() if key in present}
         self._field_receipts = {
             key: value for key, value in self._field_receipts.items() if key in source_keys
+        }
+        self._on_revisions = {
+            key: value for key, value in self._on_revisions.items() if key in source_keys
         }
         self._uncertain = {
             key: value
@@ -192,6 +225,7 @@ class LightCommands:
             or not self.provider._valid_runtime(runtime, location.epoch)
             or not runtime.transport.connected
             or not self._fresh(location, light)
+            or not self.evidence_current(light, allow_pending=False)
         ):
             return None
         return light.switch_on is TriState.ACTIVE
@@ -250,6 +284,9 @@ class LightCommands:
         reason = check()
         if reason:
             return finish("rejected", reason)
+        token = self.reservation.try_acquire()
+        if token is None:
+            return finish("busy", "lighting-busy")
         pending = _Pending(
             runtime,
             expected_epoch,
@@ -267,10 +304,13 @@ class LightCommands:
         @contextlib.contextmanager
         def guard():
             reason = check()
-            if reason:
-                raise AlarmCommandSupersededError(reason)
+            source_revision = self.reservation.revision
+            if reason or not self.reservation.mark_sent(token):
+                raise AlarmCommandSupersededError(reason or "lighting-retired")
             pending.admitted = True
             pending.receipt = self._receipt
+            pending.source_lighting_revision = source_revision
+            pending.own_lighting_revision = self.reservation.revision
             yield
 
         try:
@@ -335,6 +375,7 @@ class LightCommands:
                 pending.future.cancel()
             if self._pending.get(device_id) is pending:
                 self._pending.pop(device_id)
+            self.reservation.release(token)
             await self.provider._publish()
 
     async def _refresh(self, runtime, asset_id, epoch, deadline):
@@ -349,7 +390,11 @@ class LightCommands:
                     runtime.transport.request_inventory(asset_id, epoch=epoch), remaining
                 )
 
-    def observe(self, runtime, epoch, message):
+    def observe(self, runtime, epoch, message, *, lighting_revision=None):
+        # The provider captures this at packet receipt, before applying the
+        # document, so a write on the camera loop cannot relabel old evidence.
+        if lighting_revision is None:
+            lighting_revision = self.reservation.revision
         self._receipt += 1
         location_id = runtime.seed.location_id
         if not isinstance(message, (DeviceInfoDocList, DeviceInfoDocUpdate)):
@@ -364,12 +409,22 @@ class LightCommands:
                 for key, value in self._field_receipts.items()
                 if key[:2] != (location_id, message.asset_id)
             }
+            self._on_revisions = {
+                key: value
+                for key, value in self._on_revisions.items()
+                if key[:2] != (location_id, message.asset_id)
+            }
         for document in message.devices:
             key = (location_id, message.asset_id, document.zid)
             fields = self._field_receipts.setdefault(key, {})
             for name in ("on", "commStatus"):
                 if name in document.data:
                     fields[name] = self.provider._monotonic()
+            if "on" in document.data:
+                if type(document.data["on"]) is bool:
+                    self._on_revisions[key] = (epoch, lighting_revision)
+                else:
+                    self._on_revisions.pop(key, None)
         for light in location.devices:
             if light.raw_type not in BEAMS_TYPES or light.asset_id != message.asset_id:
                 continue
@@ -379,6 +434,7 @@ class LightCommands:
                 document is None
                 or type(document.data.get("on")) is not bool
                 or not self._fresh(location, light)
+                or not self.evidence_current(light, allow_pending=False)
             ):
                 continue
             if isinstance(message, DeviceInfoDocList):

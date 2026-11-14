@@ -17,8 +17,21 @@ from dataclasses import dataclass, replace
 
 from halo_server.devices.alarm_commands import AlarmCommands
 from halo_server.devices.chime_commands import ChimeCommands, chime_values
+from halo_server.devices.group_commands import GroupCommands
+from halo_server.devices.groups import (
+    MAX_LOCATIONS as MAX_GROUP_LOCATIONS,
+)
+from halo_server.devices.groups import (
+    GroupSchemaError,
+    api_id,
+    require_complete_inventory,
+)
+from halo_server.devices.groups import (
+    identifier as group_identifier,
+)
 from halo_server.devices.light_commands import BEAMS_TYPES, LightCommands
 from halo_server.devices.models import DeviceIdentity, DeviceObservation, DeviceRecord
+from halo_server.homekit.text import literal_text
 from halo_server.ring.device_rest import RingDeviceRestGateway
 from halo_server.ring.hub.models import (
     AlarmConnectionStatus,
@@ -37,6 +50,7 @@ from halo_server.ring.hub.provider import AlarmLocationSeed, location_seeds_from
 from halo_server.ring.hub.rest import DEVICES_ENDPOINT, LOCATIONS_ENDPOINT, RingAlarmRestGateway
 from halo_server.ring.hub.store import AlarmStateStore
 from halo_server.ring.hub.transport import AlarmTransportError, RingAlarmTransport
+from halo_server.ring.lighting import LightingReservation
 
 _CAMERA_FAMILIES = frozenset({"doorbots", "authorized_doorbots", "stickup_cams"})
 _HUB_FAMILIES = frozenset({"base_stations", "beams_bridges"})
@@ -98,6 +112,7 @@ class NoncameraProvider:
         monotonic_clock=time.monotonic,
         health_interval: float = 60.0,
         command_timeout: float = 10.0,
+        lighting_reservation: LightingReservation | None = None,
     ):
         for value in (refresh_interval, health_interval, command_timeout):
             if (
@@ -150,11 +165,21 @@ class NoncameraProvider:
         self._error: str | None = None
         self._alarm_commands = AlarmCommands(self, timeout=command_timeout)
         self._beams_owners: dict[tuple[str, str], bool] = {}
+        self._lighting_reservation = lighting_reservation or LightingReservation()
         self._light_commands = LightCommands(self, timeout=command_timeout)
         self._device_gateway = None
         self._chime_commands = ChimeCommands(self, timeout=command_timeout)
         self._discovery_retry_at = 0.0
         self._discovery_sequence = 0
+        self._command_timeout = command_timeout
+        self._groups: GroupCommands | None = None
+        self._group_task: asyncio.Task | None = None
+        self._group_wake = asyncio.Event()
+        self._group_locations: dict[str, str] = {}
+        self._group_ownership: dict[tuple[str, str, str], bool] = {}
+        self._group_context_valid = False
+        self._group_discovery_at = 0.0
+        self._group_report_at = 0.0
 
     def _get_device_gateway(self):
         if self._device_gateway is None:
@@ -165,6 +190,62 @@ class NoncameraProvider:
                 self._auth, transport=core, admission=self._active
             )
         return self._device_gateway
+
+    def _update_group_context(self, devices=None, locations=None):
+        # Authority must change synchronously, before any transport cleanup or
+        # callback yields. A crossed group GET cannot restore an earlier owner.
+        try:
+            names, ownership = _group_context(devices, locations)
+            valid = self._rest_valid
+        except (ValueError, TypeError):
+            names, ownership, valid = {}, {}, False
+        if names.keys() != self._group_locations.keys() or valid and not self._group_context_valid:
+            self._group_discovery_at = 0.0
+        self._group_locations, self._group_ownership = names, ownership
+        self._group_context_valid = valid
+        if self._groups is None:
+            gateway = self._get_device_gateway()
+            if gateway is not None and all(
+                callable(getattr(gateway, method, None))
+                for method in ("read_light_groups", "read_light_group_report", "set_light_group")
+            ):
+                self._groups = GroupCommands(self, gateway, timeout=self._command_timeout)
+        if self._groups is not None:
+            self._groups.update_ownership(ownership, locations=names, valid=valid)
+        self._group_wake.set()
+
+    async def _refresh_groups(self):
+        if not self._active() or self._groups is None or not self._group_context_valid:
+            return
+        now = self._monotonic()
+        if now >= self._group_discovery_at:
+            self._group_discovery_at = now + 300
+            # Copies fence this poll's location and owner context from a later
+            # REST receipt. The manager additionally checks its context token.
+            await self._groups.refresh(
+                dict(self._group_locations), dict(self._group_ownership), report_limit=4
+            )
+            self._group_report_at = self._monotonic() + 30
+        elif now >= self._group_report_at:
+            self._group_report_at = now + 30
+            await self._groups.refresh_reports(limit=4)
+        await self._publish()
+
+    async def _group_loop(self):
+        while self._active():
+            self._group_wake.clear()
+            try:
+                await self._refresh_groups()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                # Keep the independent monitor alive after an invalid source;
+                # no failure may preserve command authority from an old poll.
+                if self._groups is not None:
+                    self._groups.update_ownership({}, valid=False)
+                await self._publish()
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(self._group_wake.wait(), timeout=30)
 
     async def set_chime(
         self, device_id, action, value, *, expected_revision, expected_epoch, admission=None
@@ -183,6 +264,7 @@ class NoncameraProvider:
             raise RuntimeError("Provider is closed")
         if self._task is None:
             self._task = asyncio.create_task(self._discovery_loop(), name="ring-device-discovery")
+            self._group_task = asyncio.create_task(self._group_loop(), name="ring-light-groups")
 
     def snapshot(self) -> tuple[DeviceRecord, ...]:
         return self._records
@@ -190,7 +272,8 @@ class NoncameraProvider:
     def status(self) -> dict:
         return {
             "read_only": True,
-            "discovery_complete": self._rest_valid,
+            "discovery_complete": self._rest_valid
+            and (self._groups is None or self._groups.complete),
             "locations": len(self._runtimes),
             "error": self._error,
         }
@@ -223,8 +306,14 @@ class NoncameraProvider:
         duration_seconds,
         admission=None,
     ):
-        """Set a qualified physical Beams light with an explicit finite duration."""
-        return await self._light_commands.request(
+        """Dispatch only exact qualified physical-light or canonical group IDs."""
+        commands = (
+            self._groups
+            if self._groups is not None
+            and any(record.key == device_id for record in self._groups.records())
+            else self._light_commands
+        )
+        return await commands.request(
             device_id,
             target,
             expected_revision=expected_revision,
@@ -271,6 +360,7 @@ class NoncameraProvider:
                     return
                 self._rest_valid = False
                 self._chime_commands.invalidate()
+                self._update_group_context()
                 retry = getattr(exc, "retry_after", None)
                 if type(retry) in (int, float) and math.isfinite(retry) and retry > 0:
                     self._discovery_retry_at = self._monotonic() + min(3600, retry)
@@ -288,6 +378,7 @@ class NoncameraProvider:
             self._rest_valid = True
             self._rest_records = rows
             self._beams_owners = beams_owners
+            self._update_group_context(devices, locations)
             self._discovery_retry_at = 0.0
             self._chime_commands.observe(devices, started=started, sequence=sequence)
             current = {seed.location_id: seed for seed in seeds}
@@ -570,6 +661,7 @@ class NoncameraProvider:
     async def _message(self, runtime, epoch, message):
         if not self._valid_runtime(runtime, epoch):
             return
+        lighting_revision = self._lighting_reservation.revision
         if (
             isinstance(message, (DeviceInfoDocList, DeviceInfoDocUpdate))
             and message.asset_id not in runtime.assets
@@ -601,7 +693,7 @@ class NoncameraProvider:
         if isinstance(message, (DeviceInfoDocList, DeviceInfoDocUpdate)):
             self._record_receipts(runtime.seed.location_id, message)
         self._alarm_commands.observe(runtime, epoch, message)
-        self._light_commands.observe(runtime, epoch, message)
+        self._light_commands.observe(runtime, epoch, message, lighting_revision=lighting_revision)
         if isinstance(message, SessionInfo):
             for session in message.sessions:
                 asset = previous.find_asset(session.asset_id) if previous else None
@@ -665,10 +757,32 @@ class NoncameraProvider:
             return
         records = list(self._rest_records)
         complete = self._rest_valid
+        group_records = self._groups.records() if self._groups is not None else ()
+        if self._groups is not None:
+            complete &= self._groups.complete
+            records.extend(group_records)
+        group_keys = {record.key for record in group_records}
+        suppressed = set()
         for location in self._store.snapshot.locations:
             runtime = self._runtimes.get(location.location_id)
             complete &= location.inventory is AlarmInventoryStatus.COMPLETE
             for device in location.devices:
+                if (
+                    self._groups is not None
+                    and device.raw_type == "group.light-group.beams"
+                    and device.group_id is not None
+                    and self._groups.has_group(location.location_id, device.group_id)
+                ):
+                    suppressed.add(
+                        DeviceIdentity(
+                            self.profile_id,
+                            "ring-hub",
+                            device.location_id,
+                            device.asset_id,
+                            device.zid,
+                        ).key
+                    )
+                    continue
                 try:
                     records.append(
                         self._device_record(
@@ -678,6 +792,21 @@ class NoncameraProvider:
                 except ValueError:
                     complete = False
                     self._error = "invalid-device-state"
+        # A healthy group list can prove absence while an unrelated hub is
+        # offline. Emit an unavailable tombstone in that partial batch instead
+        # of letting the catalog retain the removed group's last current value.
+        for previous in self._records:
+            if (
+                previous.identity.provider == "ring-light-group"
+                and previous.key not in group_keys
+                or previous.key in suppressed
+            ):
+                self._retired_records[previous.key] = replace(
+                    _stale(
+                        previous, "group-alias" if previous.key in suppressed else "device-removed"
+                    ),
+                    source_health="unavailable",
+                )
         live_keys = {record.key for record in records}
         self._retired_records = {
             key: record for key, record in self._retired_records.items() if key not in live_keys
@@ -695,6 +824,11 @@ class NoncameraProvider:
         self._revision += 1
         alarms = self._alarm_commands.snapshots()
         lights = self._light_commands.snapshots()
+        if self._groups is not None:
+            lights += self._groups.snapshots()
+        if self._error == "device-limit-exceeded":
+            # No current write capability may escape a rejected inventory.
+            lights = ()
         if self._callback is not None:
             result = self._callback(
                 records=self._records,
@@ -754,7 +888,13 @@ class NoncameraProvider:
                 "unknown"
                 if value is None
                 else "stale"
-                if device.stale or observed is None
+                if device.stale
+                or observed is None
+                or (
+                    name == "light_on"
+                    and device.raw_type in BEAMS_TYPES
+                    and not self._light_commands.evidence_current(device)
+                )
                 else "current"
             )
             observations.append(
@@ -834,6 +974,12 @@ class NoncameraProvider:
         self._stop.set()
         if self._task is not None:
             self._task.cancel()
+        if self._group_task is not None:
+            self._group_task.cancel()
+        if self._groups is not None:
+            await self._groups.close()
+        if self._group_task is not None:
+            await asyncio.gather(self._group_task, return_exceptions=True)
         await self._chime_commands.close()
         if self._device_gateway is not None:
             await self._device_gateway.close()
@@ -842,6 +988,57 @@ class NoncameraProvider:
         await self._gateway.close()
         if self._task is not None:
             await asyncio.gather(self._task, return_exceptions=True)
+
+
+def _group_context(devices, locations):
+    """Exact REST member ownership; never infer it from a location or hub."""
+    if not isinstance(devices, Mapping) or not isinstance(locations, Mapping):
+        raise ValueError("invalid-group-context")
+    rows = locations.get("user_locations")
+    if type(rows) is not list or len(rows) > MAX_GROUP_LOCATIONS:
+        raise ValueError("invalid-group-context")
+    require_complete_inventory(locations, len(rows))
+    names = {}
+    for row in rows:
+        if not isinstance(row, Mapping):
+            raise ValueError("invalid-group-context")
+        location = group_identifier(row.get("location_id", row.get("locationId")))
+        if location in names:
+            raise ValueError("invalid-group-context")
+        names[location] = _text(row.get("name"), 256)
+    candidates, seen, ambiguous = {}, set(), set()
+    count = 0
+    for family, rows in devices.items():
+        if not isinstance(family, str) or not isinstance(rows, (list, dict)):
+            raise ValueError("invalid-group-context")
+        for row in rows.values() if isinstance(rows, dict) else rows:
+            count += 1
+            if count > _MAX_RECORDS or not isinstance(row, Mapping):
+                raise ValueError("invalid-group-context")
+            # Validate cameras too: the noncamera inventory intentionally skips
+            # their projection, but they can still be members of a REST group.
+            location = group_identifier(row.get("location_id", row.get("locationId")))
+            if location not in names:
+                raise ValueError("invalid-group-context")
+            try:
+                raw_id = row.get("id")
+                device_id = api_id(raw_id, report=type(raw_id) is str)
+            except GroupSchemaError:
+                # Reject ambiguous/noncanonical source identity, including
+                # camera rows omitted by the noncamera record projection.
+                raise ValueError("invalid-group-member-context") from None
+            key = (location, device_id)
+            if key in seen:
+                ambiguous.add(key)
+            seen.add(key)
+            kind = row.get("kind")
+            if family in _HUB_FAMILIES or not literal_text(kind, 128, empty=False):
+                continue
+            # Only the exact physical row's authority counts. A contradictory
+            # explicit ownership field cannot be overridden by its role label.
+            owned = row.get("owned") is True or ("owned" not in row and row.get("role") == "owner")
+            candidates[(location, device_id, kind)] = owned
+    return names, {key: value for key, value in candidates.items() if key[:2] not in ambiguous}
 
 
 def _identifier(value):

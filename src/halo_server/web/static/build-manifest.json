@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "source_hash": "9e34978db62d135f82978f810c538ccbe62997df60d45ce3e04495c67e374336",
+  "source_hash": "22fe7266e18e6e736f7497c06714cc6ab3d979b9b3237a6e3f0ac2ce65644883",
   "source_files": [
     {
       "path": ".prettierignore",
@@ -24,7 +24,7 @@
     },
     {
       "path": "package.json",
-      "sha256": "2916b237120f4b8625fef1512897d18525d24157e18ac266cc41c7ab26a22685"
+      "sha256": "909dffef63a6c3fcc0d82fdb5c9bb5d1c7fbaf345ed471676e29117f81cdc196"
     },
     {
       "path": "public/THIRD_PARTY_NOTICES.txt",
@@ -55,12 +55,16 @@
       "sha256": "dc0ba015b9fd6f720f0fa209a10622637718ec19f02b1651ee0a5d0d8a9071dc"
     },
     {
+      "path": "scripts/group-smoke.mjs",
+      "sha256": "b2d3e6055cd306b4a65b8cb78d3cf00ec6cb64735d44fbbd3e60f6a7932163dd"
+    },
+    {
       "path": "scripts/licenses.mjs",
       "sha256": "8ddb7b83a22aeaa6a9ca00cb9abfa075d9db2b04c907bbd81a363d9456915cb2"
     },
     {
       "path": "scripts/light-smoke.mjs",
-      "sha256": "7e5d353767e3576e315c0c8a3e972ae6abdae30ef4132c0c6bb3180e86ceb9cb"
+      "sha256": "802634ac2d849c8bca6b4866bf98794ea02e8c57fb1c750a3df66f9438a11980"
     },
     {
       "path": "scripts/noncamera-smoke.mjs",
@@ -80,7 +84,7 @@
     },
     {
       "path": "src/components/BridgePreferences.svelte",
-      "sha256": "e53b77558cb22b4d738da1f55e5d752d144b7402a6c9b838cdc0b05ccd16df99"
+      "sha256": "cb7b6a763e97675bb76c61ff01bae4097c54a0aecc0e078d90c9bb5def6d449a"
     },
     {
       "path": "src/components/ChimeControls.svelte",
@@ -96,7 +100,7 @@
     },
     {
       "path": "src/components/LightControls.svelte",
-      "sha256": "74e859364f7378f14a14e6541176e2e9ec785aab51df6fc6a2caf05a75f78961"
+      "sha256": "62cd8e77636eee6434bf6cf0ae1551f327e306125348331f3566e7bb5bf153f9"
     },
     {
       "path": "src/components/NoncameraDevices.svelte",
@@ -132,7 +136,7 @@
     },
     {
       "path": "src/lib/bridge.ts",
-      "sha256": "b816b667a5070ed602b2a277db633bbe7e8358c536d1e824ebbeaedfdd1d3ed8"
+      "sha256": "f4e00c76667173833a352028c50d99833fc60d14cf6dbe3c51cdd30bccb489e9"
     },
     {
       "path": "src/lib/chime.ts",
@@ -140,7 +144,7 @@
     },
     {
       "path": "src/lib/light.ts",
-      "sha256": "dcc7461f097ac01604aac6d71d108ff96c50f33999affcf7b0301be8968a599f"
+      "sha256": "ffef0e8ae66e4308a588bebea350b8b9645f626fa3257c4c6824c0fe43bb1d37"
     },
     {
       "path": "src/lib/model.ts",
@@ -148,7 +152,7 @@
     },
     {
       "path": "src/lib/noncamera.ts",
-      "sha256": "2f4b0dfedcef5f06fd63fc38af5c9b4f9336ffd97bc6d2b2087644f8b460d035"
+      "sha256": "2c7c1869f780d8a6441a2081577fa0fa2442af0f24e81693db3e16bf3262da66"
     },
     {
       "path": "src/lib/password.ts",
@@ -156,7 +160,7 @@
     },
     {
       "path": "src/lib/types.ts",
-      "sha256": "7f5cecf99831e267d19112029bbc482832a17ed6bbbb35059c18bc1ece3afd9b"
+      "sha256": "22f8e96d9ad508fe12e3314e4a0276b3625af0c66b0d4660627100688f748747"
     },
     {
       "path": "src/main.ts",
@@ -212,7 +216,7 @@
     },
     {
       "path": "tests/bridge.test.ts",
-      "sha256": "6bd29cd501453b4409d4056cfcdbbdeaa596431dd131c4564c6092c86d7eb684"
+      "sha256": "f13a554989aaa5c384bbb7defa7ae65edbbb74da117c44d4d8905b3d198794a0"
     },
     {
       "path": "tests/chime.test.ts",
@@ -220,7 +224,7 @@
     },
     {
       "path": "tests/light.test.ts",
-      "sha256": "adbf1b77a8276fa8eac8685f669a0778b53084c24f1ecc7cf3d374a174e33945"
+      "sha256": "b143a5cd29affa3179916421b91d26fac2a11afa74e50532a0b2aa99c0ecc5f3"
     },
     {
       "path": "tests/model.test.ts",
@@ -249,12 +253,12 @@
       "sha256": "27b3a540203dab45ee90ade440f4840b513dd2055969a84a9ebccb561fd14799"
     },
     {
-      "path": "assets/index-B_958Fvz.css",
-      "sha256": "74c07fd75608d0526505de5411debfe75ff1470d48bf57dcd3da8b5e31b92ff0"
+      "path": "assets/index-BXC-d3lF.js",
+      "sha256": "79aa3600d1f5b18c61a1df850b86eb292f7a49c6670cdd4bd8c08aa497c70ad6"
     },
     {
-      "path": "assets/index-CGBlvVQH.js",
-      "sha256": "2fe2cf18959bf155d1b0d497f049ebc9b0166484755625ac96103597fc796832"
+      "path": "assets/index-B_958Fvz.css",
+      "sha256": "74c07fd75608d0526505de5411debfe75ff1470d48bf57dcd3da8b5e31b92ff0"
     },
     {
       "path": "halo.png",
@@ -262,7 +266,7 @@
     },
     {
       "path": "index.html",
-      "sha256": "6bf568da6973ae009e4c9b6bb503cd9f9c14f454a4c2a95ce35430e721f87a44"
+      "sha256": "d77b11ca57fae23e51e43f43ddd7ea064566ab276f9191d5db690859b3ab4d64"
     }
   ]
 }

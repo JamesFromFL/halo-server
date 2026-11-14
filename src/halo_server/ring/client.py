@@ -13,6 +13,7 @@ from typing import Any
 
 from halo_server.account_scope import AccountScope, new_profile_id
 from halo_server.ring.credentials import CredentialStore, CredentialStoreError
+from halo_server.ring.lighting import LightingReservation
 from halo_server.ring.snapshots import SnapshotHttpSession, SnapshotReader
 
 _log = logging.getLogger(__name__)
@@ -76,11 +77,13 @@ class RingClient:
         self._loop_thread: threading.Thread | None = None
         self._loop_lock = threading.Lock()
         self._last_device_update_at = 0.0
+        self._last_device_update_receipt: tuple[float, int] | None = None
         self._inventory_refresh_lock = asyncio.Lock()
         self._snapshot_transport: SnapshotHttpSession | None = None
         self._snapshot_reader: SnapshotReader | None = None
         self._session_resources: set[Any] = set()
         self._stopped = False
+        self.lighting_reservation = LightingReservation()
 
     def register_session_resource(self, resource) -> None:
         """Register on the Ring loop; retire before credentials or that loop close."""
@@ -178,6 +181,7 @@ class RingClient:
         failures: list[Exception] = []
         with self._loop_lock:
             self._stopped = True
+            self.lighting_reservation.retire()
             ring = self._detach_session()
             loop = self._loop
             thread = self._loop_thread
@@ -313,9 +317,10 @@ class RingClient:
             if self._pending_auth_token is None:
                 self._capture_auth_token(token)
             ring = Ring(auth)
+            lighting_revision = self.lighting_reservation.revision
             await self._async_update_inventory(ring)
             self._finish_authentication(auth, ring, transport)
-            self._last_device_update_at = time.monotonic()
+            self._record_inventory_receipt(lighting_revision)
         except BaseException:
             self._pending_auth_token = None
             await self._close_auth(auth, transport)
@@ -340,9 +345,10 @@ class RingClient:
 
             install_serialized_auth_refresh(auth)
             ring = Ring(auth)
+            lighting_revision = self.lighting_reservation.revision
             await self._async_update_inventory(ring)
             self._finish_authentication(auth, ring, transport)
-            self._last_device_update_at = time.monotonic()
+            self._record_inventory_receipt(lighting_revision)
         except BaseException:
             self._pending_auth_token = None
             await self._close_auth(auth, transport)
@@ -375,14 +381,22 @@ class RingClient:
             return []
         async with self._inventory_refresh_lock:
             if time.monotonic() - self._last_device_update_at > max_age_seconds:
+                lighting_revision = self.lighting_reservation.revision
                 await self._async_update_inventory(self._ring)
-                self._last_device_update_at = time.monotonic()
+                self._record_inventory_receipt(lighting_revision)
         devices = list(self._ring.devices().all_devices)
         if families is None:
             return devices
         return [
             device for device in devices if (getattr(device, "family", None) or "other") in families
         ]
+
+    def _record_inventory_receipt(self, lighting_revision):
+        now = time.monotonic()
+        self._last_device_update_at = now
+        # One immutable publication pairs the actual GET's receipt time with
+        # its pre-request mutation revision. Cache hits never rewrite either.
+        self._last_device_update_receipt = (now, lighting_revision)
 
     @staticmethod
     async def _async_update_inventory(ring) -> None:
@@ -457,6 +471,7 @@ class RingClient:
         self._ring = None
         self._pending_auth_token = None
         self._token_updater = None
+        self._last_device_update_receipt = None
         return ring
 
     async def _close_ring_auth(self, ring) -> None:

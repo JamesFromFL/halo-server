@@ -4,6 +4,7 @@ import asyncio
 import json
 import time
 from dataclasses import asdict
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
@@ -14,6 +15,7 @@ from test_native_service import Camera, service_fixture
 from halo_server.api.admin import AdminProtocolError
 from halo_server.homekit.controls import CONTROL_STATE_TTL, observed_controls
 from halo_server.homekit.ipc import validate_reply
+from halo_server.ring.lighting import client_lighting
 
 
 def test_missing_or_malformed_sdk_fields_never_invent_off():
@@ -42,7 +44,9 @@ async def test_hap_control_state_exact_policy_and_owner_view_share_freshness(tmp
     camera = client.all_devices[0]
     camera.capabilities.add("siren")
     camera.lights, camera._attrs = "on", {"siren_status": {"seconds_remaining": 0}}
-    service._remember_control_observations(client, refreshed_at=time.monotonic())
+    service._remember_control_observations(
+        client, refreshed_at=time.monotonic(), lighting_revision=client_lighting(client).revision
+    )
     envelope = request(
         boot, "control_state_request", {"scope": asdict(scope), "operation_id": str(uuid4())}
     )
@@ -77,7 +81,9 @@ async def test_replaced_source_does_not_inherit_observed_state_and_set_is_not_op
     service, client, _ = service_fixture(tmp_path)
     camera = client.all_devices[0]
     camera.lights = "on"
-    service._remember_control_observations(client, refreshed_at=time.monotonic())
+    service._remember_control_observations(
+        client, refreshed_at=time.monotonic(), lighting_revision=client_lighting(client).revision
+    )
     page = await service.handle_admin("camera_control_list", {})
     row = page["cameras"][0]
     result = await service.handle_admin(
@@ -93,7 +99,9 @@ async def test_replaced_source_does_not_inherit_observed_state_and_set_is_not_op
         },
     )
     assert result["status"] == "accepted"
-    assert (await service.handle_admin("camera_control_list", {}))["cameras"][0]["light"] is True
+    # An admitted lighting mutation invalidates the earlier read. It does not
+    # fabricate the requested False or retain an observation known to predate it.
+    assert (await service.handle_admin("camera_control_list", {}))["cameras"][0]["light"] is None
     client.all_devices[:] = [Camera()]
     assert (await service.handle_admin("camera_control_list", {}))["cameras"][0]["light"] is None
 
@@ -126,9 +134,11 @@ async def test_listener_repair_does_not_rejuvenate_old_sdk_inventory(tmp_path):
     service, client, _ = service_fixture(tmp_path)
     client.all_devices[0].lights = "on"
     client._last_device_update_at = time.monotonic() - CONTROL_STATE_TTL - 1
+    client._last_device_update_receipt = (client._last_device_update_at, 0)
     service._remember_control_observations(client)
     assert (await service.handle_admin("camera_control_list", {}))["cameras"][0]["light"] is None
     client._last_device_update_at = time.monotonic()
+    client._last_device_update_receipt = (client._last_device_update_at, 0)
     service._remember_control_observations(client)
     assert (await service.handle_admin("camera_control_list", {}))["cameras"][0]["light"] is True
 
@@ -157,3 +167,85 @@ async def test_daemon_diagnostic_probe_concurrency_is_bounded(tmp_path, monkeypa
     finally:
         release.set()
         await probing
+
+
+@pytest.mark.parametrize("explicit_read_revision", [False, True])
+def test_mutation_during_observation_copy_cannot_relabel_old_light_state(
+    tmp_path, monkeypatch, explicit_read_revision
+):
+    import halo_server.service as service_module
+
+    service, client, _ = service_fixture(tmp_path)
+    camera = client.all_devices[0]
+    camera.capabilities.add("siren")
+    camera.lights = "on"
+    camera._attrs = {"siren_status": {"seconds_remaining": 0}}
+    reservation = client_lighting(client)
+    read_revision = reservation.revision
+    client._last_device_update_receipt = (time.monotonic(), read_revision)
+    original = service_module.observed_controls
+
+    def crossed_copy(device):
+        result = original(device)
+        token = reservation.try_acquire()
+        assert token is not None and reservation.mark_sent(token)
+        reservation.release(token)
+        return result
+
+    monkeypatch.setattr(service_module, "observed_controls", crossed_copy)
+    kwargs = {"lighting_revision": read_revision} if explicit_read_revision else {}
+    service._remember_control_observations(client, refreshed_at=time.monotonic(), **kwargs)
+    assert reservation.revision == read_revision + 1
+    assert service._control_lighting_revision == read_revision
+    assert service._observed_camera_controls("42", camera) == (None, False)
+
+
+def test_crossed_lighting_get_retains_independent_siren_observation(tmp_path):
+
+    service, client, _ = service_fixture(tmp_path)
+    camera = client.all_devices[0]
+    camera.capabilities.add("siren")
+    camera.lights = "off"
+    camera._attrs = {"siren_status": {"seconds_remaining": 30}}
+    reservation = client_lighting(client)
+    read_revision = reservation.revision
+    token = reservation.try_acquire()
+    assert reservation.mark_sent(token)
+    reservation.release(token)
+    service._remember_control_observations(
+        client, refreshed_at=time.monotonic(), lighting_revision=read_revision
+    )
+    assert service._observed_camera_controls("42", camera) == (None, True)
+
+
+@pytest.mark.asyncio
+async def test_cached_sdk_inventory_keeps_its_actual_pre_mutation_provenance(tmp_path):
+    service, client, _ = service_fixture(tmp_path)
+    camera = client.all_devices[0]
+    camera.capabilities.add("siren")
+    camera.lights, camera._attrs = "on", {"siren_status": {"seconds_remaining": 0}}
+    reservation = client_lighting(client)
+    client._last_device_update_at = time.monotonic()
+    client._last_device_update_receipt = (client._last_device_update_at, reservation.revision)
+    client.refresh_devices = lambda: list(client.all_devices)
+    service._sync_rtsp_cameras = AsyncMock()
+    service._reconcile_refreshed_media = AsyncMock()
+    service.homekit.reconcile = AsyncMock()
+    token = reservation.try_acquire()
+    assert reservation.mark_sent(token)
+    reservation.release(token)
+    await service._refresh_active_inventory()
+    assert service._observed_camera_controls("42", camera) == (None, False)
+    # Only actual new GET evidence can reestablish the light observation.
+    client._last_device_update_receipt = (time.monotonic(), reservation.revision)
+    await service._refresh_active_inventory()
+    assert service._observed_camera_controls("42", camera) == (True, False)
+
+
+def test_client_without_explicit_get_provenance_cannot_restore_light_state(tmp_path):
+    service, client, _ = service_fixture(tmp_path)
+    camera = client.all_devices[0]
+    camera.capabilities.add("siren")
+    camera.lights, camera._attrs = "on", {"siren_status": {"seconds_remaining": 0}}
+    service._remember_control_observations(client, refreshed_at=time.monotonic())
+    assert service._observed_camera_controls("42", camera) == (None, False)

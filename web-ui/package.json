@@ -18,6 +18,7 @@
     "test:bridge": "node scripts/bridge-homekit-smoke.mjs",
     "test:alarm": "node scripts/alarm-smoke.mjs",
     "test:light": "node scripts/light-smoke.mjs",
+    "test:groups": "node scripts/group-smoke.mjs",
     "test:chime": "node scripts/chime-smoke.mjs",
     "format": "prettier --write .",
     "format:check": "prettier --check ."

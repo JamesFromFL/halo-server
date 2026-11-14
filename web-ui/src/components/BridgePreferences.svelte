@@ -4,6 +4,7 @@
   import {
     bridgeBody,
     bridgeDevicePreference,
+    bridgeDevicePreferred,
     bridgeDeviceStatus,
     changeMembership,
     mappingLabels,
@@ -65,12 +66,7 @@
         legacySwitchExclusion ||
         mappingExclusion),
   );
-  const preferred = $derived(
-    !!device &&
-      !!bridge &&
-      !bridge.excluded_devices.includes(device.id) &&
-      (bridge.auto_import || bridge.included_devices.includes(device.id)),
-  );
+  const preferred = $derived(!!device && !!bridge && bridgeDevicePreferred(bridge, device));
 
   $effect(() => {
     if (requestedScope !== identity) {
@@ -135,7 +131,9 @@
             ? 'Excluded by a saved switch-family preference. Remove that device-type exclusion in Devices to include this light.'
             : broaderExclusion
               ? 'Excluded by a location or device-type preference. Change that preference in Devices first.'
-              : 'Only qualified device capabilities are eligible. Alarm and light controls require their own opt-in.'}
+              : device.kind === 'light-group'
+                ? 'Groups require individual inclusion to avoid duplicate controls for lights already shared separately. Halo controls work without this import.'
+                : 'Only qualified device capabilities are eligible. Alarm and light controls require their own opt-in.'}
       >
         <input
           type="checkbox"
@@ -182,7 +180,7 @@
       </Row>
       <Row
         title="Automatically include supported devices"
-        subtitle="Includes qualified devices as they are discovered. Exclusions take priority; alarm and light controls remain separate opt-ins."
+        subtitle="Includes qualified devices as they are discovered. Lighting groups require individual inclusion to avoid duplicate controls. Exclusions take priority; alarm and light controls remain separate opt-ins."
       >
         <input
           type="checkbox"

@@ -45,12 +45,16 @@
     observedPolicy = '',
     destroyed = false;
   const light = $derived(device.light!);
+  const group = $derived(device.kind === 'light-group');
+  const offAction = $derived(group ? 'Turn off group' : 'Return to automatic');
   const authority = $derived(
     JSON.stringify([
       generation,
       monitoring.scope,
       device.id,
       device.location_id,
+      device.kind,
+      device.provider,
       light.provider_generation,
       light.epoch,
     ]),
@@ -175,11 +179,13 @@
 </script>
 
 <section aria-label="Ring light status and controls">
-  <h3>Light</h3>
+  <h3>{group ? 'Lighting group' : 'Light'}</h3>
   <div class="group">
     <Row
-      title="Observed light"
-      subtitle="Reported by Ring; a request does not replace this observation."
+      title={group ? 'Observed group state' : 'Observed light'}
+      subtitle={group
+        ? 'Ring’s group report does not confirm the state of every member light.'
+        : 'Reported by Ring; a request does not replace this observation.'}
     >
       <span class="status">{current ? lightStateLabel(light.on) : 'Unknown'}</span>
     </Row>
@@ -191,7 +197,7 @@
         <span
           >{light.requested_on
             ? `On for ${lightDurations[light.on_duration_seconds]}`
-            : 'Return to automatic'}</span
+            : offAction}</span
         >
       </Row>
     {/if}
@@ -207,7 +213,9 @@
     </Row>
     <Row
       title="Allow light controls"
-      subtitle="Off by default. Applies to this light in Halo and HomeKit; saving does not switch the light."
+      subtitle={group
+        ? 'Off by default. Applies to this group in Halo and, if included, HomeKit. Saving does not switch any lights.'
+        : 'Off by default. Applies to this light in Halo and HomeKit; saving does not switch the light.'}
       icon="light"
     >
       <input
@@ -274,12 +282,17 @@
     <button disabled={!canSet} onclick={() => setLight(true)}
       >Turn on for {lightDurations[light.on_duration_seconds]}</button
     >
-    <button disabled={!canSet} onclick={() => setLight(false)}>Return to automatic</button>
+    <button disabled={!canSet} onclick={() => setLight(false)}>{offAction}</button>
   </div>
   <p class="inline-note">
-    Return to automatic releases the manual On setting. Ring motion rules, schedules, or another app
-    may turn the light on again. The duration is a request to Ring, not a guaranteed shutoff time.
+    {group
+      ? 'Turn off group requests Off for the group. Ring motion rules, schedules, or another app may turn its lights on again. The duration is a request to Ring, not a guaranteed shutoff time.'
+      : 'Return to automatic releases the manual On setting. Ring motion rules, schedules, or another app may turn the light on again. The duration is a request to Ring, not a guaranteed shutoff time.'}
   </p>
+  {#if group}<p class="inline-note">
+      Group controls work in Halo without HomeKit import. Including this group in Halo Bridge is
+      optional and does not change the separate camera accessories.
+    </p>{/if}
   {#if error}<p class="notice error" role="alert">{error}</p>{/if}
   {#if operation}<OperationStatus
       {operation}

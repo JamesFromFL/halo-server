@@ -332,10 +332,12 @@ async def test_return_to_automatic_cannot_invent_off_or_accept_old_observation()
     try:
         result = await command(instance, False)
         assert result["status"] == "uncertain"
-        assert result["on"] is True
-        assert snapshot(instance)["on"] is True
+        # A handed-off lighting mutation invalidates the old physical reading;
+        # returning automatic cannot invent either on or off without readback.
+        assert result["on"] is None
+        assert snapshot(instance)["on"] is None
         assert snapshot(instance)["outcome_unknown"]
-        assert (await command(instance, False))["code"] == "outcome-unknown"
+        assert not (await command(instance, False))["possibly_sent"]
         marker = snapshot(instance)["readback_revision"]
         await transport.message(
             DeviceInfoDocUpdate(
@@ -474,7 +476,7 @@ async def test_readback_and_command_tokens_do_not_repeat_on_remove_reappear():
 
 
 @pytest.mark.asyncio
-async def test_distinct_lights_are_independent_and_foreign_packets_cannot_confirm():
+async def test_distinct_lights_share_reservation_and_foreign_packets_cannot_confirm():
     instance = await setup(
         configure=lambda t: setattr(t, "initial", (light(zid="one"), light(zid="two")))
     )
@@ -488,12 +490,137 @@ async def test_distinct_lights_are_independent_and_foreign_packets_cannot_confir
         assert not task.done()
         transport.behavior = "confirm"
         result = await command(instance, before=second)
+        assert result["status"] == "rejected"
+        assert result["code"] == "light-stale"
+        # A fresh independent reading restores eligibility, but cannot bypass
+        # the shared reservation still held by the first write.
+        await transport.message(DeviceInfoDocUpdate("asset", (light(False, zid="two"),)))
+        second = instance._light_commands.snapshots()[1]
+        result = await command(instance, before=second)
+        assert result["status"] == "busy"
+        assert result["code"] == "lighting-busy"
+        assert (await task)["status"] == "uncertain"
+        result = await command(instance, before=second)
         assert result["status"] == "confirmed"
         assert (await task)["status"] == "uncertain"
         assert len(transport.sent) == 2
     finally:
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
+        await instance.close()
+
+
+@pytest.mark.asyncio
+async def test_group_or_camera_mutation_requires_explicit_new_physical_light_evidence():
+    instance = await setup(configure=lambda t: setattr(t, "initial", (light(batteryLevel=70),)))
+    transport = instance._runtimes["home"].transport
+    reservation = instance._light_commands.reservation
+    try:
+        before = snapshot(instance)
+        assert before["on"] is False and before["can_set"]
+        token = reservation.try_acquire()
+        assert token is not None and reservation.mark_sent(token)
+        reservation.release(token)
+        await instance._publish()
+
+        assert snapshot(instance)["on"] is None
+        assert snapshot(instance)["reason"] == "light-stale"
+        result = await command(instance, before=before)
+        assert not result["possibly_sent"] and not transport.sent
+        record = next(row for row in instance.snapshot() if row.kind == "beams-light")
+        observed = {item.name: item for item in record.observations}
+        assert observed["light_on"].status == "stale"
+        assert observed["light_on"].value is False
+        assert observed["battery_percent"].status == "current"
+
+        await transport.message(
+            DeviceInfoDocUpdate(
+                "asset",
+                (
+                    DeviceDocument(
+                        "light", {"zid": "light", "batteryLevel": 80, "commStatus": "ok"}
+                    ),
+                ),
+            )
+        )
+        assert snapshot(instance)["on"] is None
+        assert not snapshot(instance)["can_set"]
+        assert snapshot(instance)["readback_revision"] == before["readback_revision"]
+
+        await transport.message(
+            DeviceInfoDocUpdate("asset", (DeviceDocument("light", {"zid": "light", "on": True}),))
+        )
+        assert snapshot(instance)["on"] is True
+        assert snapshot(instance)["can_set"]
+        record = next(row for row in instance.snapshot() if row.kind == "beams-light")
+        observed = {item.name: item for item in record.observations}
+        assert observed["light_on"].status == "current"
+        assert observed["light_on"].value is True
+    finally:
+        await instance.close()
+
+
+@pytest.mark.asyncio
+async def test_pending_own_write_preserves_previous_reading_but_only_new_on_can_confirm():
+    instance = await setup()
+    instance._light_commands.timeout = 0.3
+    transport = instance._runtimes["home"].transport
+    transport.behavior = "silent"
+    task = asyncio.create_task(command(instance))
+    try:
+        await transport.sent_event.wait()
+        assert snapshot(instance)["pending"]
+        assert snapshot(instance)["on"] is False
+        assert instance._light_commands._observed(snapshot(instance)["device_id"]) is None
+        await transport.message(
+            DeviceInfoDocUpdate(
+                "asset", (DeviceDocument("light", {"zid": "light", "batteryLevel": 80}),)
+            )
+        )
+        assert not task.done()
+        assert snapshot(instance)["on"] is False
+        assert not snapshot(instance)["outcome_unknown"]
+        await transport.message(
+            DeviceInfoDocUpdate("asset", (DeviceDocument("light", {"zid": "light", "on": True}),))
+        )
+        result = await task
+        assert result["status"] == "confirmed" and result["on"] is True
+        assert snapshot(instance)["on"] is True
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        await instance.close()
+
+
+@pytest.mark.asyncio
+async def test_full_inventory_or_invalid_on_cannot_retain_old_light_proof():
+    instance = await setup()
+    transport = instance._runtimes["home"].transport
+    try:
+        await transport.message(
+            DeviceInfoDocList(
+                "asset",
+                (
+                    DeviceDocument(
+                        "light", {"zid": "light", "deviceType": "switch.beams", "commStatus": "ok"}
+                    ),
+                ),
+            )
+        )
+        assert not snapshot(instance)["can_set"]
+        assert snapshot(instance)["on"] is None
+        assert not instance._light_commands._on_revisions
+        await transport.message(DeviceInfoDocUpdate("asset", (light(True),)))
+        assert snapshot(instance)["can_set"]
+        await transport.message(
+            DeviceInfoDocUpdate("asset", (DeviceDocument("light", {"zid": "light", "on": 1}),))
+        )
+        assert snapshot(instance)["on"] is None
+        assert not instance._light_commands._on_revisions
+        await transport.message(DeviceInfoDocList("asset", ()))
+        assert not instance._light_commands.snapshots()
+        assert not instance._light_commands._on_revisions
+    finally:
         await instance.close()
 
 

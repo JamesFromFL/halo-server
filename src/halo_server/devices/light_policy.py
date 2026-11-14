@@ -16,6 +16,18 @@ MAX_PREFERENCES = 512
 BEAMS_TYPES = frozenset({"switch.beams", "switch.multilevel.beams", "switch.transformer.beams"})
 
 
+def qualified_group(record):
+    return bool(
+        record.kind == "light-group"
+        and record.family == "lighting-group"
+        and record.supported
+        and record.identity.provider == "ring-light-group"
+        and record.model == "Ring Light Group"
+        and "switch" in record.capabilities
+        and "ring-light-group-schema" in record.capability_evidence
+    )
+
+
 def qualified_light(record):
     return bool(
         record.kind == "beams-light"
@@ -25,7 +37,7 @@ def qualified_light(record):
         and record.model in BEAMS_TYPES
         and "switch" in record.capabilities
         and "ring-hub-device-schema" in record.capability_evidence
-    )
+    ) or qualified_group(record)
 
 
 class LightPolicyError(PrivateJsonError):

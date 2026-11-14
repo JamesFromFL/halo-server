@@ -173,6 +173,7 @@ class DeviceCatalog:
                 {
                     "id": key,
                     "name": record.name,
+                    "provider": record.identity.provider,
                     "family": record.family,
                     "kind": record.kind,
                     "model": record.model,

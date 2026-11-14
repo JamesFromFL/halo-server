@@ -11,11 +11,13 @@ const staticRoot = resolve(
   '../../src/halo_server/web/static',
 );
 const output = process.env.HALO_BROWSER_OUTPUT;
+const groupMode = process.env.HALO_LIGHT_KIND === 'group';
 if (output && !output.startsWith('/')) throw new Error('HALO_BROWSER_OUTPUT must be absolute');
 if (output) await mkdir(output, { recursive: true });
 const subscribers = new Set(),
   requests = [],
   policyWrites = [],
+  bridgeWrites = [],
   commands = [],
   checks = [],
   errors = [];
@@ -44,11 +46,14 @@ const light = {
 const lamp = {
   id: 'light-one',
   name: 'Garden path',
-  kind: 'beams-light',
-  model: 'Beams light',
+  kind: groupMode ? 'light-group' : 'beams-light',
+  model: groupMode ? 'Ring Light Group' : 'Beams light',
+  provider: groupMode ? 'ring-light-group' : 'ring-hub',
+  family: groupMode ? 'lighting-group' : 'hub',
+  capability_evidence: [groupMode ? 'ring-light-group-schema' : 'ring-hub-device-schema'],
   location_id: 'location-one',
   location_name: 'Home',
-  capabilities: ['light'],
+  capabilities: groupMode ? ['switch'] : ['light'],
   observed: {},
   available: true,
   source_health: 'online',
@@ -155,6 +160,25 @@ const server = createServer(async (request, response) => {
     }
     assert.equal(value.profile_id, monitoring.scope.profile_id);
     assert.equal(value.account_generation, monitoring.scope.account_generation);
+    if (path === '/api/web/v1/devices/bridge' && groupMode) {
+      assert.equal(value.expected_revision, monitoring.bridge.revision);
+      assert.equal(value.auto_import, true);
+      assert.deepEqual(value.excluded_locations, ['unlisted-location']);
+      assert.deepEqual(value.excluded_kinds, []);
+      bridgeWrites.push(value);
+      monitoring.bridge.included_devices = value.included_devices;
+      monitoring.bridge.excluded_devices = value.excluded_devices;
+      monitoring.bridge.revision++;
+      const selected = value.included_devices.includes(lamp.id);
+      Object.assign(monitoring.bridge.devices[0], {
+        selected,
+        excluded: !selected,
+        reason: selected ? null : 'device-excluded',
+      });
+      monitoring.bridge.selected_count = selected ? 1 : 0;
+      publish();
+      return send({ operation_id: value.operation_id, status: 'completed', result: {} });
+    }
     assert.equal(value.device_id, lamp.id);
     if (path === '/api/web/v1/devices/light/policy') {
       assert.deepEqual(
@@ -246,6 +270,7 @@ await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
 const timer = setInterval(publish, 1000),
   browser = await chromium.launch({ headless: true });
 const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+page.setDefaultTimeout(30_000);
 page.on('pageerror', (error) => errors.push(error.message));
 async function password() {
   const dialog = page.getByRole('dialog', { name: 'Confirm your Halo password' });
@@ -254,9 +279,9 @@ async function password() {
   await dialog.getByRole('button', { name: 'Confirm', exact: true }).click();
 }
 const observed = () =>
-  page
-    .locator('.preference-row')
-    .filter({ has: page.getByText('Observed light', { exact: true }) });
+  page.locator('.preference-row').filter({
+    has: page.getByText(groupMode ? 'Observed group state' : 'Observed light', { exact: true }),
+  });
 const waitEnabled = async (label, enabled) =>
   page.waitForFunction(
     ({ label, enabled }) =>
@@ -269,9 +294,24 @@ try {
   const toggle = page.getByRole('switch', { name: 'Allow light controls', exact: true });
   const duration = page.getByRole('combobox', { name: 'Light on duration', exact: true });
   const apply = page.getByRole('button', { name: 'Apply light preferences', exact: true });
-  const automatic = page.getByRole('button', { name: 'Return to automatic', exact: true });
+  const automatic = page.getByRole('button', {
+    name: groupMode ? 'Turn off group' : 'Return to automatic',
+    exact: true,
+  });
   const on = () => page.getByRole('button', { name: /^Turn on for / });
   await toggle.waitFor();
+  if (groupMode) {
+    await page
+      .getByText('Ring’s group report does not confirm the state of every member light.', {
+        exact: true,
+      })
+      .waitFor();
+    await page.getByText('Turn off group requests Off for the group.', { exact: false }).waitFor();
+    assert.equal(
+      await page.getByRole('button', { name: 'Return to automatic', exact: true }).count(),
+      0,
+    );
+  }
   assert.equal(await toggle.isChecked(), false);
   assert.equal(await duration.inputValue(), '60');
   assert.equal(await on().isDisabled(), true);
@@ -425,8 +465,8 @@ try {
     overflow_count: 0,
     included_devices: [],
     excluded_devices: [],
-    excluded_locations: [],
-    excluded_kinds: ['switch'],
+    excluded_locations: groupMode ? ['unlisted-location'] : [],
+    excluded_kinds: groupMode ? [] : ['switch'],
     excluded_mappings: [],
     publication: 'not_implemented',
     status: 'ready',
@@ -437,9 +477,9 @@ try {
         accessory_uuid: 'fixture-light',
         mappings: ['lightbulb'],
         selected: false,
-        excluded: true,
+        excluded: !groupMode,
         eligible: true,
-        reason: 'kind-excluded',
+        reason: groupMode ? null : 'kind-excluded',
         present: true,
       },
     ],
@@ -449,23 +489,55 @@ try {
     name: 'Include Garden path in Halo Bridge',
     exact: true,
   });
-  await page.getByText('Excluded by a saved switch-family preference.', { exact: false }).waitFor();
-  assert.equal(await imported.isDisabled(), true);
-  assert.equal(await imported.isChecked(), false);
-  monitoring.bridge.excluded_kinds = [];
-  monitoring.bridge.revision++;
-  monitoring.bridge.selected_count = 1;
-  Object.assign(monitoring.bridge.devices[0], { selected: true, excluded: false, reason: null });
-  publish();
-  await page.waitForFunction(
-    () =>
-      document.querySelector('[aria-label="Include Garden path in Halo Bridge"]').disabled ===
-      false,
-  );
-  assert.equal(await imported.isChecked(), true);
-  checks.push(
-    'legacy switch-family exclusions still block enriched light imports and are never overwritten',
-  );
+  if (groupMode) {
+    await imported.waitFor();
+    await page
+      .getByText('Groups require individual inclusion to avoid duplicate controls', {
+        exact: false,
+      })
+      .waitFor();
+    assert.equal(await imported.isDisabled(), false);
+    assert.equal(await imported.isChecked(), false);
+    await waitEnabled('Turn on for 15 minutes', true);
+    const beforeCommands = commands.length;
+    await imported.click();
+    await page.waitForFunction(
+      () => document.querySelector('[aria-label="Include Garden path in Halo Bridge"]').checked,
+    );
+    assert.equal(bridgeWrites.length, 1);
+    assert.deepEqual(bridgeWrites[0].included_devices, [lamp.id]);
+    await imported.click();
+    await page.waitForFunction(
+      () => !document.querySelector('[aria-label="Include Garden path in Halo Bridge"]').checked,
+    );
+    assert.equal(bridgeWrites.length, 2);
+    assert.deepEqual(bridgeWrites[1].excluded_devices, [lamp.id]);
+    await waitEnabled('Turn on for 15 minutes', true);
+    assert.equal(commands.length, beforeCommands);
+    checks.push(
+      'group import is unchecked under auto-import; explicit include/exclude preserves hidden policy and never grants or actuates Halo controls',
+    );
+  } else {
+    await page
+      .getByText('Excluded by a saved switch-family preference.', { exact: false })
+      .waitFor();
+    assert.equal(await imported.isDisabled(), true);
+    assert.equal(await imported.isChecked(), false);
+    monitoring.bridge.excluded_kinds = [];
+    monitoring.bridge.revision++;
+    monitoring.bridge.selected_count = 1;
+    Object.assign(monitoring.bridge.devices[0], { selected: true, excluded: false, reason: null });
+    publish();
+    await page.waitForFunction(
+      () =>
+        document.querySelector('[aria-label="Include Garden path in Halo Bridge"]').disabled ===
+        false,
+    );
+    assert.equal(await imported.isChecked(), true);
+    checks.push(
+      'legacy switch-family exclusions still block enriched light imports and are never overwritten',
+    );
+  }
 
   await page.locator('.toast').waitFor({ state: 'detached', timeout: 7000 });
   for (const theme of ['light', 'dark']) {
@@ -511,7 +583,9 @@ try {
   );
   if (process.env.HALO_LIGHT_FIXTURE) {
     const backend = JSON.parse(await readFile(process.env.HALO_LIGHT_FIXTURE, 'utf8'));
-    const actual = backend.devices.find((device) => device.light);
+    const actual = backend.devices.find(
+      (device) => device.light && device.kind === (groupMode ? 'light-group' : 'beams-light'),
+    );
     assert.ok(actual);
     state.noncamera = backend;
     state.scope = backend.scope;
@@ -524,16 +598,44 @@ try {
     await toggle.waitFor();
     assert.equal(await toggle.isChecked(), actual.light.enabled);
     assert.equal(await duration.inputValue(), String(actual.light.on_duration_seconds));
+    if (groupMode) {
+      assert.equal(backend.bridge.overflow_count, 0);
+      assert.equal(backend.bridge.devices[0].reason, 'explicit-selection-required');
+      await page.getByText('Choose to include this group', { exact: true }).waitFor();
+      assert.equal(
+        await page
+          .getByRole('switch', { name: `Include ${actual.name} in Halo Bridge`, exact: true })
+          .isChecked(),
+        false,
+      );
+    }
     await page.locator('.toast').waitFor({ state: 'detached', timeout: 7000 });
     if (output)
       await page.screenshot({ path: resolve(output, 'light-backend.png'), fullPage: true });
     checks.push('actual Python light DTO renders without any physical action or preference write');
+    if (groupMode) {
+      assert.equal(actual.provider, 'ring-light-group');
+      actual.provider = 'ring-hub';
+      publish();
+      await page.waitForFunction(
+        () => document.querySelector('[aria-label="Allow light controls"]')?.disabled === true,
+      );
+      await observed().getByText('Unknown', { exact: true }).waitFor();
+      assert.equal(
+        await page.getByRole('button', { name: 'Turn off group', exact: true }).isDisabled(),
+        true,
+      );
+      checks.push(
+        'malformed cross-provider group DTO invalidates freshness and disables controls without reinterpreting it as a physical light',
+      );
+    }
   }
   assert.equal(
     requests.filter(
       (request) =>
         request.path.startsWith('/api/web/v1/devices/') &&
-        !/\/light\/(policy|set)$/.test(request.path),
+        !/\/light\/(policy|set)$/.test(request.path) &&
+        !(groupMode && request.path === '/api/web/v1/devices/bridge'),
     ).length,
     0,
   );
@@ -541,6 +643,7 @@ try {
   const receipt = {
     checks,
     policyWrites: policyWrites.length,
+    bridgeWrites: bridgeWrites.length,
     commands: commands.length,
     reauths,
     pageErrors: errors,

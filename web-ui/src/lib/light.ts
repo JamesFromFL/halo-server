@@ -36,11 +36,28 @@ export function validLight(value: unknown): value is LightState {
   );
 }
 
+/** New groups require their exact provider contract; old Beams DTOs stay readable. */
+export function qualifiedLightDevice(device: NoncameraDevice): boolean {
+  if (device.kind === 'beams-light')
+    return device.provider === undefined || device.provider === 'ring-hub';
+  return (
+    device.kind === 'light-group' &&
+    device.provider === 'ring-light-group' &&
+    device.family === 'lighting-group' &&
+    device.model === 'Ring Light Group' &&
+    device.supported === true &&
+    Array.isArray(device.capabilities) &&
+    device.capabilities.includes('switch') &&
+    Array.isArray(device.capability_evidence) &&
+    device.capability_evidence.includes('ring-light-group-schema')
+  );
+}
+
 function scopedLight(monitoring: NoncameraState, device: NoncameraDevice) {
   if (
     !monitoring.scope.profile_id ||
     monitoring.scope.account_generation === null ||
-    device.kind !== 'beams-light' ||
+    !qualifiedLightDevice(device) ||
     !device.light ||
     !validLight(device.light) ||
     !monitoring.devices.some(
@@ -81,7 +98,7 @@ export function lightCanSet(
   return (
     fresh &&
     monitoring.enabled &&
-    device.kind === 'beams-light' &&
+    qualifiedLightDevice(device) &&
     device.source_health === 'online' &&
     !!light &&
     validLight(light) &&

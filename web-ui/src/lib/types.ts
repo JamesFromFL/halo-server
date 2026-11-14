@@ -48,6 +48,9 @@ export interface NoncameraDevice {
   name: string;
   kind: string;
   model: string;
+  provider?: string;
+  family?: string;
+  capability_evidence?: string[];
   location_id: string;
   location_name: string;
   capabilities: string[];

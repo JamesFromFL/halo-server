@@ -8,6 +8,7 @@ import {
   lightSetBody,
   lightStateLabel,
   lightUnsettled,
+  qualifiedLightDevice,
   validLight,
 } from '../src/lib/light.ts';
 import { validNoncamera } from '../src/lib/noncamera.ts';
@@ -64,7 +65,7 @@ const monitoring: NoncameraState = {
   safety: { read_only: false, panic_enabled: false, emergency_dispatch_enabled: false },
 };
 
-test('light DTO is additive and restricted to qualified physical Beams lights', () => {
+test('light DTO is additive and rejects unqualified light families', () => {
   assert.equal(validLight(light), true);
   assert.equal(validNoncamera(monitoring), true);
   assert.equal(validNoncamera({ ...monitoring, devices: [{ ...device, light: undefined }] }), true);
@@ -82,6 +83,46 @@ test('light DTO is additive and restricted to qualified physical Beams lights', 
     assert.equal(validLight({ ...light, ...changes }), false);
   for (const kind of ['lighting-bridge', 'beams-light-group', 'motion-sensor', 'unknown', 'camera'])
     assert.equal(validNoncamera({ ...monitoring, devices: [{ ...device, kind }] }), false);
+});
+
+test('groups require exact provider, model, family and capability evidence before gaining controls', () => {
+  const group: NoncameraDevice = {
+    ...device,
+    kind: 'light-group',
+    family: 'lighting-group',
+    provider: 'ring-light-group',
+    model: 'Ring Light Group',
+    capabilities: ['switch'],
+    capability_evidence: ['ring-light-group-schema'],
+  };
+  const source = { ...monitoring, devices: [group] };
+  assert.equal(validNoncamera(source), true);
+  assert.equal(qualifiedLightDevice(group), true);
+  assert.equal(lightCanSet(source, group, true), true);
+  assert.deepEqual(lightSetBody(source, group, false, 'group-off'), {
+    ...lightSetBody(monitoring, device, false, 'group-off'),
+  });
+  assert.equal(lightPolicyBody(source, group, true, 900, 'policy').on_duration_seconds, 900);
+  for (const changes of [
+    { provider: undefined },
+    { provider: 'ring-hub' },
+    { provider: 'ring-rest' },
+    { family: undefined },
+    { family: 'hub' },
+    { kind: 'beams-light-group' },
+    { kind: 'beams-light' },
+    { model: 'Other group' },
+    { supported: false },
+    { capabilities: ['brightness'] },
+    { capability_evidence: ['ring-hub-device-schema'] },
+  ]) {
+    const invalid = { ...group, ...changes };
+    assert.equal(validNoncamera({ ...source, devices: [invalid] }), false);
+    assert.equal(qualifiedLightDevice(invalid), false);
+    assert.equal(lightCanSet(source, invalid, true), false);
+    assert.throws(() => lightSetBody(source, invalid, true, 'invalid'));
+    assert.throws(() => lightPolicyBody(source, invalid, true, 60, 'invalid'));
+  }
 });
 
 test('saved duration is bounded and policy carries device-scoped CAS without switching the light', () => {

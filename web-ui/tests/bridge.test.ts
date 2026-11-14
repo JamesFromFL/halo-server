@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   bridgeBody,
   bridgeDevicePreference,
+  bridgeDevicePreferred,
   bridgeDeviceStatus,
   validBridge,
 } from '../src/lib/bridge.ts';
@@ -91,6 +92,25 @@ test('individual import choices are explicit and keep every unrelated exclusion'
   assert.deepEqual(bridgeBody(monitoring, included, 'operation-two').excluded_mappings, ['smoke']);
 });
 
+test('groups need explicit inclusion even when automatic device import is enabled', () => {
+  const automatic = { ...bridge, auto_import: true };
+  const group = { id: 'outside-group', kind: 'light-group' };
+  assert.equal(bridgeDevicePreferred(automatic, group), false);
+  assert.equal(bridgeDevicePreferred(automatic, { ...group, kind: 'beams-light' }), true);
+  const selected = { ...automatic, ...bridgeDevicePreference(automatic, group.id, true) };
+  assert.equal(bridgeDevicePreferred(selected, group), true);
+  assert.equal(bridgeDevicePreferred({ ...selected, auto_import: false }, group), true);
+  assert.equal(
+    bridgeDevicePreferred(
+      { ...selected, ...bridgeDevicePreference(selected, group.id, false) },
+      group,
+    ),
+    false,
+  );
+  assert.deepEqual(selected.excluded_locations, bridge.excluded_locations);
+  assert.deepEqual(selected.excluded_kinds, bridge.excluded_kinds);
+});
+
 test('bridge preparation refuses missing account and unavailable registry state', () => {
   assert.throws(() => bridgeBody({ ...monitoring, bridge: undefined }, {}, 'one'));
   for (const status of ['error', 'loading', 'offline'] as const)
@@ -141,6 +161,10 @@ test('import status distinguishes missing, excluded, unsupported and bridge sele
   const device = bridge.devices[0]!;
   assert.equal(bridgeDeviceStatus(undefined), 'Import information unavailable');
   assert.equal(bridgeDeviceStatus(device), 'Selected for Halo Bridge');
+  assert.equal(
+    bridgeDeviceStatus({ ...device, reason: 'explicit-selection-required', selected: false }),
+    'Choose to include this group',
+  );
   assert.equal(
     bridgeDeviceStatus({ ...device, reason: 'bridge-capacity', selected: false }),
     'Bridge capacity reached',

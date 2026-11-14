@@ -181,7 +181,7 @@ class LightCoordinator:
         )
 
     def view(self, row):
-        if row.get("kind") != "beams-light":
+        if row.get("kind") not in {"beams-light", "light-group"}:
             return None
         binding = self.monitor._binding
         source = self._rows.get(row["id"], {})

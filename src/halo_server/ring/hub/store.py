@@ -11,6 +11,7 @@ from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, TypeAlias
 
+from halo_server.homekit.text import literal_text
 from halo_server.ring.hub.models import (
     AlarmAccountSnapshot,
     AlarmAssetSnapshot,
@@ -207,6 +208,9 @@ def _retained_device_patch(document: DeviceDocument) -> dict[str, Any]:
     for field_name, limit in _RETAINED_TEXT_FIELDS.items():
         if field_name in data:
             retained[field_name] = _bounded_text(data.get(field_name), limit)
+    if "groupId" in data:
+        value = data.get("groupId")
+        retained["groupId"] = value if literal_text(value, 128, empty=False) else None
     for field_name in _RETAINED_SCALAR_FIELDS:
         if field_name in data:
             retained[field_name] = _retained_scalar(data.get(field_name))
@@ -700,6 +704,7 @@ def _normalize_device(
         raw_type=raw_type,
         category_id=_category(data.get("categoryId")),
         parent_zid=parent_zid,
+        group_id=data.get("groupId"),
         capabilities=capabilities,
         connection=communication,
         asset_connection=asset.connection,
