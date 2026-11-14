@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy } from 'svelte';
+  import { onDestroy, untrack } from 'svelte';
   import { api, ApiError, errorMessage, operationId } from '../lib/api.ts';
   import { pretty } from '../lib/model.ts';
   import type { StateEnvelope, CameraPage, Operation } from '../lib/types.ts';
@@ -29,9 +29,19 @@
   let operation = $state<Operation | null>(null);
   let serial = 0;
   let destroyed = false;
+  let observedGeneration = '';
+  const unsettled = $derived(operation?.status === 'pending' || operation?.status === 'unknown');
   $effect(() => {
     const identity = generation;
-    if (identity) void load();
+    if (observedGeneration !== identity) {
+      observedGeneration = identity;
+      serial++;
+      selection = null;
+      operation = null;
+      error = '';
+      busy = false;
+    }
+    if (identity) void untrack(load);
   });
   onDestroy(() => {
     destroyed = true;
@@ -39,26 +49,28 @@
   });
   async function load() {
     const token = ++serial;
+    const expected = generation;
     loading = true;
     try {
       const value = await api.get<CameraPage>('selection');
-      if (!destroyed && token === serial) {
+      if (!destroyed && token === serial && expected === generation) {
         selection = value;
         error = '';
       }
     } catch (e) {
-      if (!destroyed && token === serial) error = errorMessage(e);
+      if (!destroyed && token === serial && expected === generation) error = errorMessage(e);
     } finally {
       if (token === serial) loading = false;
     }
   }
   async function select(camera_id: string, enabled: boolean) {
-    if (!selection || !fresh || busy) return;
+    if (!selection || !fresh || busy || loading || unsettled) return;
+    const expected = generation;
     busy = true;
     error = '';
     const id = operationId();
     try {
-      operation = await api.post<Operation>('selection', {
+      const result = await api.post<Operation>('selection', {
         camera_id,
         enabled,
         profile_id: selection.profile_id,
@@ -66,13 +78,20 @@
         expected_revision: selection.revision,
         operation_id: id,
       });
-      if (operation.status === 'completed') await load();
+      if (destroyed || expected !== generation) return;
+      operation = result;
+      if (result.status === 'completed') {
+        notify('Camera selection saved.');
+        await refresh();
+        if (!destroyed && expected === generation) await load();
+      }
     } catch (e) {
+      if (destroyed || expected !== generation) return;
       error = errorMessage(e);
       if (e instanceof ApiError && e.possiblySent)
         operation = { status: 'unknown', operation_id: id, possibly_sent: true };
     } finally {
-      busy = false;
+      if (!destroyed && expected === generation) busy = false;
     }
   }
 </script>
@@ -103,6 +122,10 @@
     {notify}
     {refresh}
   />
+{:else if !snapshot?.state}<p class="notice" role="status">
+    Integration status is unavailable while Halo reconnects. Saved preferences have not been
+    removed.
+  </p>
 {/if}
 <div class="section-head">
   <h3>Camera selection</h3>
@@ -115,9 +138,14 @@
 {#if error}<div class="notice error" role="alert">{error}</div>{/if}
 {#if operation}<OperationStatus
     {operation}
+    configuration
     onupdate={(v) => {
+      if (!operation?.operation_id || v.operation_id !== operation.operation_id) return;
       operation = v;
-      if (v.status === 'completed') void load();
+      if (v.status === 'completed') {
+        void refresh();
+        void load();
+      }
     }}
   />{/if}
 <div class="group">
@@ -138,8 +166,7 @@
         disabled={!fresh ||
           busy ||
           loading ||
-          operation?.status === 'pending' ||
-          operation?.status === 'unknown' ||
+          unsettled ||
           (row.available === false && row.selected !== true)}
         onchange={(event) => {
           event.currentTarget.checked = row.selected === true;
@@ -148,7 +175,11 @@
       /></Row
     >
   {:else}<div class="empty">
-      {loading ? 'Loading registered cameras…' : 'No cameras are registered for HomeKit.'}
+      {loading
+        ? 'Loading registered cameras…'
+        : !selection
+          ? 'Camera selection is unavailable. Refresh when Halo is connected.'
+          : 'No cameras are registered for HomeKit.'}
     </div>{/each}
 </div>
 <p class="inline-note">

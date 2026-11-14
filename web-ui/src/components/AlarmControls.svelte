@@ -240,6 +240,11 @@
       Ring account authority is not verified. Commands stay unavailable until Halo has explicit
       authority evidence.
     </p>{/if}
+  {#if current && (alarm.phase === null || alarm.signal === null)}<p class="notice">
+      Ring’s alarm phase or signal has not been confirmed. A current mode alone does not confirm
+      that the alarm is clear; mode controls stay unavailable until all required observations are
+      current.
+    </p>{/if}
   {#if alarm.pending}<p class="notice" role="status">
       An alarm command is in progress for this location. Waiting for Ring’s reported state.
     </p>

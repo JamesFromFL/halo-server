@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onDestroy } from 'svelte';
   import { api, errorMessage } from '../lib/api.ts';
   import { pretty, when } from '../lib/model.ts';
   import type { StateEnvelope } from '../lib/types.ts';
@@ -14,6 +15,26 @@
   let busy = $state(false);
   let error = $state('');
   let probe = $state(false);
+  let reportAt = $state<number | null>(null);
+  let serial = 0;
+  let destroyed = false;
+  let observedScope = '';
+  const scope = $derived(JSON.stringify([snapshot?.web.boot_id, snapshot?.state?.epoch]));
+  $effect(() => {
+    if (observedScope !== scope) {
+      observedScope = scope;
+      serial++;
+      report = null;
+      reportAt = null;
+      error = '';
+      probe = false;
+      busy = false;
+    }
+  });
+  onDestroy(() => {
+    destroyed = true;
+    serial++;
+  });
   const findings = $derived.by(() => {
     const daemon = report?.daemon;
     if (!daemon || typeof daemon !== 'object') return [];
@@ -30,23 +51,35 @@
     );
   });
   async function doctor(advanced = false) {
+    if (busy) return;
+    const request = ++serial;
+    const expected = scope;
     busy = true;
     error = '';
     probe = false;
     try {
-      report = advanced ? await api.post('doctor', { probe: true }) : await api.get('doctor');
+      const result = advanced
+        ? await api.post<Record<string, unknown>>('doctor', { probe: true })
+        : await api.get<Record<string, unknown>>('doctor');
+      if (destroyed || request !== serial || expected !== scope) return;
+      report = result;
+      reportAt = Date.now() / 1000;
       notify('Health check completed.');
     } catch (e) {
-      error = errorMessage(e);
+      if (!destroyed && request === serial && expected === scope) error = errorMessage(e);
     } finally {
-      busy = false;
+      if (!destroyed && request === serial) busy = false;
     }
   }
   async function support() {
+    if (busy) return;
+    const request = ++serial;
+    const expected = scope;
     busy = true;
     error = '';
     try {
       const value = await api.get<unknown>('support');
+      if (destroyed || request !== serial || expected !== scope) return;
       const blob = new Blob([JSON.stringify(value, null, 2) + '\n'], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
@@ -56,9 +89,9 @@
       setTimeout(() => URL.revokeObjectURL(url), 1000);
       notify('Sanitized support report downloaded.');
     } catch (e) {
-      error = errorMessage(e);
+      if (!destroyed && request === serial && expected === scope) error = errorMessage(e);
     } finally {
-      busy = false;
+      if (!destroyed && request === serial) busy = false;
     }
   }
 </script>
@@ -92,6 +125,7 @@
 </div>
 {#if busy}<p class="inline-note" role="status">Collecting diagnostics…</p>{/if}
 {#if report}<h3>Doctor findings</h3>
+  <p class="inline-note">Completed {when(reportAt)}. Run another check to update this report.</p>
   <div class="group">
     <Row
       title="Web companion"

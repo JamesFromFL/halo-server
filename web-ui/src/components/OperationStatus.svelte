@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onDestroy } from 'svelte';
   import { api, errorMessage } from '../lib/api.ts';
   import { pretty } from '../lib/model.ts';
   import type { Operation } from '../lib/types.ts';
@@ -21,16 +22,36 @@
   } = $props();
   let checking = $state(false);
   let error = $state('');
-  async function check() {
-    if (!operation.operation_id) return;
-    checking = true;
-    try {
-      onupdate(await api.get<Operation>(`operations/${operation.operation_id}`));
-      error = '';
-    } catch (e) {
-      error = errorMessage(e);
-    } finally {
+  let observedOperation = '';
+  let serial = 0;
+  let destroyed = false;
+  $effect(() => {
+    const id = operation.operation_id ?? '';
+    if (observedOperation !== id) {
+      observedOperation = id;
+      serial++;
       checking = false;
+      error = '';
+    }
+  });
+  onDestroy(() => {
+    destroyed = true;
+    serial++;
+  });
+  async function check() {
+    const id = operation.operation_id;
+    if (!id || checking) return;
+    const request = ++serial;
+    checking = true;
+    error = '';
+    try {
+      const result = await api.get<Operation>(`operations/${encodeURIComponent(id)}`);
+      if (!destroyed && request === serial && operation.operation_id === id) onupdate(result);
+    } catch (e) {
+      if (!destroyed && request === serial && operation.operation_id === id)
+        error = errorMessage(e);
+    } finally {
+      if (!destroyed && request === serial) checking = false;
     }
   }
   const resultStatus = $derived((operation.result as Record<string, unknown> | undefined)?.status);

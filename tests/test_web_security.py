@@ -152,6 +152,74 @@ async def test_local_reset_after_password_save_cannot_mint_session(paths, monkey
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["setup", "password"])
+async def test_prewrite_background_read_cannot_reject_completed_password_save(
+    paths, monkeypatch, action
+):
+    if action == "setup":
+        code = issue_setup(paths)["setup_code"]
+        auth = Authentication(paths)
+        await auth.refresh()
+        session, old_token = auth.create()
+    else:
+        auth, session, old_token = await enrolled(paths)
+    original_load, original_save, original_refresh = (
+        auth.store.load,
+        auth.store.save,
+        auth.refresh,
+    )
+    read_started, read_release, saved = threading.Event(), threading.Event(), threading.Event()
+    postwrite_refresh = asyncio.Event()
+
+    def captured_read():
+        record = original_load()
+        read_started.set()
+        assert read_release.wait(5)
+        return record
+
+    def save(*args, **kwargs):
+        record = original_save(*args, **kwargs)
+        saved.set()
+        return record
+
+    async def refresh():
+        if saved.is_set():
+            postwrite_refresh.set()
+        return await original_refresh()
+
+    monkeypatch.setattr(auth.store, "load", captured_read)
+    monkeypatch.setattr(auth.store, "save", save)
+    monkeypatch.setattr(auth, "refresh", refresh)
+    background = asyncio.create_task(auth.refresh())
+    writing = None
+    try:
+        assert await asyncio.to_thread(read_started.wait, 2)
+        new_password = "a different synthetic owner password"
+        operation = (
+            auth.setup(session, code, new_password, "peer", username=OWNER_USERNAME)
+            if action == "setup"
+            else auth.change_password(session, PASSWORD, new_password, "peer")
+        )
+        writing = asyncio.create_task(operation)
+        await asyncio.wait_for(postwrite_refresh.wait(), 2)
+        read_release.set()
+        owner, token = await writing
+        await background
+        assert owner.authenticated and auth.get(token, authenticated=True) is owner
+        assert auth.get(old_token) is None
+        assert auth.record == AuthStore(paths).load()
+        anonymous, _ = auth.create()
+        verified, _ = await auth.authenticate(
+            anonymous, new_password, "verification", username=OWNER_USERNAME
+        )
+        assert verified.authenticated
+    finally:
+        read_release.set()
+        await asyncio.gather(background, *([writing] if writing else []), return_exceptions=True)
+        await auth.close()
+
+
+@pytest.mark.asyncio
 async def test_refresh_does_not_accept_regressed_auth_revision(paths, monkeypatch):
     auth, _, _ = await enrolled(paths)
     old = replace(auth.record, revision=auth.record.revision - 1)

@@ -129,7 +129,7 @@ test('missing sensor state never means closed, clear, or disarmed', () => {
 test('partial discovery and disabled monitoring never claim a complete healthy provider', () => {
   assert.equal(
     monitoringStatus({ ...monitoring, state: 'partial', complete: false }, true),
-    'Some sources unavailable',
+    'Some observations need attention',
   );
   assert.equal(
     monitoringStatus({ ...monitoring, state: 'disabled', enabled: false }, true),

@@ -1,5 +1,5 @@
 /** Isolated Chime fixtures. Every write is handled locally; no Ring or HAP access. */
-import { chromium } from '@playwright/test';
+import { testBrowser } from './browser-engine.mjs';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { readFile, mkdir, writeFile } from 'node:fs/promises';
@@ -272,7 +272,7 @@ const server = createServer(async (request, response) => {
 });
 await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
 const timer = setInterval(publish, 1000),
-  browser = await chromium.launch({ headless: true });
+  browser = await testBrowser.launch({ headless: true });
 const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
 page.on('pageerror', (error) => errors.push(error.message));
 const button = (name) => page.getByRole('button', { name, exact: true });

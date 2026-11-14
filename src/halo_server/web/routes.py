@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import mimetypes
 import time
 from pathlib import Path
 
@@ -1119,10 +1120,32 @@ def _static(app, root):
                 raise web.HTTPNotFound()
         except OSError:
             raise web.HTTPNotFound() from None
+        if name == "index.html":
+            # Reproducible releases share mtimes and often index sizes. A
+            # FileResponse validator would therefore reuse an old index whose
+            # hashed script no longer exists. Always deliver the current shell,
+            # including when an older release left conditional cache headers.
+            return web.Response(
+                body=await asyncio.to_thread(resolved.read_bytes),
+                content_type="text/html",
+                charset="utf-8",
+                headers={"Cache-Control": "no-store"},
+            )
+        if not name.startswith("assets/"):
+            # Stable filenames need content validators: mtime and size are not
+            # release identities. Ignore modification dates for the same reason.
+            digest = allowed[name]
+            matches = request.if_none_match or ()
+            headers = {"Cache-Control": "no-cache", "ETag": f'"{digest}"'}
+            if any(tag.value in {digest, "*"} for tag in matches):
+                return web.Response(status=304, headers=headers)
+            return web.Response(
+                body=await asyncio.to_thread(resolved.read_bytes),
+                content_type=mimetypes.guess_type(name)[0] or "application/octet-stream",
+                headers=headers,
+            )
         response = web.FileResponse(resolved)
-        response.headers["Cache-Control"] = (
-            "no-cache" if name == "index.html" else "public, max-age=3600"
-        )
+        response.headers["Cache-Control"] = "public, max-age=3600"
         return response
 
     app.router.add_get("/{asset:.*}", asset)

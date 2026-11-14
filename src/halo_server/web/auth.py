@@ -214,6 +214,18 @@ class Authentication:
             self.refresh_task.add_done_callback(self._finished)
         await asyncio.shield(self.refresh_task)
 
+    async def _refresh_saved(self, saved):
+        await self.refresh()
+        if self.record.revision < saved.revision:
+            # A shared read can have captured the old record before our write
+            # completed. Join it first, then read again without racing refresh
+            # tasks or treating a successfully saved password as rejected.
+            await self.refresh()
+        if self.record != saved:
+            raise WebError(
+                "authentication_changed", "Web authentication changed; sign in again", status=401
+            )
+
     def _expire(self):
         now = self.clock()
         for key, session in tuple(self.sessions.items()):
@@ -362,11 +374,7 @@ class Authentication:
             raise WebError(
                 "setup_rejected", "Setup state changed; refresh the page", status=409
             ) from None
-        await self.refresh()
-        if self.record != saved:
-            raise WebError(
-                "authentication_changed", "Web authentication changed; sign in again", status=401
-            )
+        await self._refresh_saved(saved)
         return self.create(authenticated=True)
 
     async def change_password(self, session, current_password, password, peer):
@@ -384,11 +392,7 @@ class Authentication:
         saved = await self._owned(
             self.store.save, replace(record, verifier=verifier), expected_revision=record.revision
         )
-        await self.refresh()
-        if self.record != saved:
-            raise WebError(
-                "authentication_changed", "Web authentication changed; sign in again", status=401
-            )
+        await self._refresh_saved(saved)
         return self.create(authenticated=True)
 
     def list_sessions(self, current):

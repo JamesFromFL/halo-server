@@ -198,3 +198,91 @@ test('retiring a delayed reconnect cannot overwrite the rotated session token', 
   await client.post('pairing/reveal', {});
   assert.equal(sent, 'new-csrf');
 });
+
+test('a late session read cannot restore authority after sign-out or password rotation', async () => {
+  for (const action of ['clear', 'password'] as const) {
+    let reads = 0;
+    let release!: (response: Response) => void;
+    let sent = '';
+    const client = new ApiClient(async (url, init) => {
+      if (String(url).endsWith('/session')) {
+        if (++reads === 1) return ok(session);
+        return new Promise<Response>((resolve) => {
+          release = resolve;
+        });
+      }
+      if (String(url).endsWith('/password'))
+        return ok({ ...session, csrf_token: 'changed-password-csrf' });
+      sent = (init!.headers as Record<string, string>)['X-Halo-CSRF'];
+      return ok({});
+    });
+    await client.session();
+    const pending = client.session();
+    if (action === 'clear') client.clear();
+    else await client.changePassword('synthetic-old-password', 'synthetic-new-password');
+    release(ok(session));
+    await assert.rejects(
+      pending,
+      (error: unknown) => error instanceof ApiError && error.code === 'session_changed',
+    );
+    if (action === 'clear') await assert.rejects(client.post('controls', {}));
+    else {
+      await client.post('controls', {});
+      assert.equal(sent, 'changed-password-csrf');
+    }
+  }
+});
+
+test('concurrent session reads accept only the latest request', async () => {
+  let release!: (response: Response) => void;
+  let reads = 0;
+  let sent = '';
+  const client = new ApiClient(async (_url, init) => {
+    if (init?.method === 'GET') {
+      if (++reads === 1)
+        return new Promise<Response>((resolve) => {
+          release = resolve;
+        });
+      return ok({ ...session, csrf_token: 'newest-csrf' });
+    }
+    sent = (init!.headers as Record<string, string>)['X-Halo-CSRF'];
+    return ok({});
+  });
+  const pending = client.session();
+  await client.session();
+  release(ok(session));
+  await assert.rejects(
+    pending,
+    (error: unknown) => error instanceof ApiError && error.code === 'session_changed',
+  );
+  await client.post('controls', {});
+  assert.equal(sent, 'newest-csrf');
+});
+
+test('malformed sessions and success envelopes report invalid data without granting authority', async () => {
+  for (const value of [
+    null,
+    {},
+    { ...session, csrf_token: '' },
+    { ...session, setup_required: null },
+  ]) {
+    const client = new ApiClient(async () => ok(value));
+    await assert.rejects(
+      client.session(),
+      (error: unknown) => error instanceof ApiError && error.code === 'bad_response',
+    );
+    await assert.rejects(client.post('controls', {}));
+  }
+  for (const value of [null, [], {}, { ok: false }, { ok: true }]) {
+    let reads = 0;
+    const client = new ApiClient(async () =>
+      ++reads === 1 ? ok(session) : new Response(JSON.stringify(value)),
+    );
+    await client.session();
+    await assert.rejects(
+      client.post('controls', {}),
+      (error: unknown) =>
+        error instanceof ApiError && error.code === 'bad_response' && error.possiblySent,
+    );
+  }
+});

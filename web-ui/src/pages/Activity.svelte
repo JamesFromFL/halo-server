@@ -4,6 +4,7 @@
   let { snapshot }: { snapshot: StateEnvelope | null } = $props();
   let category = $state('');
   let device = $state('');
+  const available = $derived(!!snapshot?.state);
   const entries = $derived(
     (snapshot?.state?.activity.entries ?? [])
       .filter((v) => (!category || v.category === category) && (!device || v.camera_id === device))
@@ -18,17 +19,28 @@
   <h2>Activity</h2>
   <p>Recent events and owner actions in the current server session.</p>
 </div>
+{#if !available}<p class="notice" role="status">
+    Activity is unavailable while Halo reconnects. This does not mean the activity history is empty.
+  </p>{/if}
 <div class="searchbar">
-  <select aria-label="Filter activity type" bind:value={category}
+  <select aria-label="Filter activity type" bind:value={category} disabled={!available}
     ><option value="">All activity</option>{#each categories as value}<option {value}
         >{pretty(value)}</option
       >{/each}</select
-  ><select aria-label="Filter activity device" bind:value={device}
+  ><select aria-label="Filter activity device" bind:value={device} disabled={!available}
     ><option value="">All devices</option>{#each snapshot?.state?.devices ?? [] as value}<option
         value={value.camera_id}>{value.name}</option
       >{/each}</select
   >
 </div>
+{#if category || device}<div class="actions">
+    <button
+      onclick={() => {
+        category = '';
+        device = '';
+      }}>Clear activity filters</button
+    >
+  </div>{/if}
 {#if snapshot?.state?.activity.truncated}<div class="notice">
     Older entries have left the bounded activity history. This is not a complete archive.
   </div>{/if}
@@ -41,7 +53,14 @@
               >{snapshot?.state?.devices.find((d) => d.camera_id === item.camera_id)?.name ??
                 (item.camera_id ? 'Device no longer available' : 'Server')}</td
             ><td>{pretty(item.outcome)}</td></tr
-          >{:else}<tr><td colspan="4" class="empty">No activity matches this view.</td></tr
+          >{:else}<tr
+            ><td colspan="4" class="empty"
+              >{!available
+                ? 'Waiting for current activity.'
+                : category || device
+                  ? 'No activity matches these filters.'
+                  : 'No activity has been recorded in this server session.'}</td
+            ></tr
           >{/each}</tbody
       >
     </table>

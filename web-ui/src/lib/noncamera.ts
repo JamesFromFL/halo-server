@@ -129,7 +129,7 @@ export function monitoringStatus(state: NoncameraState | undefined, fresh: boole
     disabled: 'Disabled',
     starting: 'Discovering devices',
     ready: 'Monitoring',
-    partial: 'Some sources unavailable',
+    partial: 'Some observations need attention',
     offline: 'Sources unavailable',
     error: 'Monitoring needs attention',
   };

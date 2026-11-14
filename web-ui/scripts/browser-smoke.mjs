@@ -1,5 +1,5 @@
 /** Real companion smoke test. Never targets production or supplies Ring credentials. */
-import { chromium } from '@playwright/test';
+import { testBrowser } from './browser-engine.mjs';
 import assert from 'node:assert/strict';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { OWNER_USERNAME, USERNAME_MAX_LENGTH } from '../src/lib/auth.ts';
@@ -13,7 +13,7 @@ const output = process.env.HALO_BROWSER_OUTPUT;
 if (!output?.startsWith('/'))
   throw new Error('HALO_BROWSER_OUTPUT must be an absolute task output directory');
 await mkdir(output, { recursive: true });
-const browser = await chromium.launch({ headless: true });
+const browser = await testBrowser.launch({ headless: true });
 const context = await browser.newContext({
   ignoreHTTPSErrors: true,
   viewport: { width: 1440, height: 1000 },
@@ -181,8 +181,9 @@ try {
   const firstHref = await links.first().getAttribute('href');
   const search = page.getByRole('searchbox', { name: 'Search devices' });
   await search.fill('No such camera '.repeat(200));
-  await page.getByText('No devices match your search.', { exact: true }).waitFor();
-  await search.fill('');
+  await page.getByText('No cameras match your search or filters.', { exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Clear camera search and filters', exact: true }).click();
+  assert.equal(await search.inputValue(), '');
   assert.equal(await links.count(), 7);
   await links.first().click();
   await page.getByRole('heading', { name: 'Recording', exact: true }).waitFor();

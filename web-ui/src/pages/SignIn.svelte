@@ -3,8 +3,10 @@
   import { PASSWORD_MIN_LENGTH, PASSWORD_MAX_LENGTH } from '../lib/password.ts';
   import { api, errorMessage } from '../lib/api.ts';
   import type { Session } from '../lib/types.ts';
-  let { session, onauthenticated }: { session: Session; onauthenticated: () => Promise<void> } =
-    $props();
+  let {
+    session,
+    onauthenticated,
+  }: { session: Session; onauthenticated: (session: Session) => Promise<void> } = $props();
   let username = $state('');
   let password = $state('');
   let confirmation = $state('');
@@ -13,6 +15,7 @@
   let error = $state('');
   async function submit(event: SubmitEvent) {
     event.preventDefault();
+    if (busy) return;
     error = '';
     if (session.setup_required && password !== confirmation) {
       error = 'The two passwords do not match.';
@@ -20,13 +23,13 @@
     }
     busy = true;
     try {
-      await api.post(
+      const current = await api.authenticate(
         session.setup_required ? 'setup' : 'login',
         session.setup_required
           ? { setup_code: setupCode, username: OWNER_USERNAME, password }
           : { username, password },
       );
-      await onauthenticated();
+      await onauthenticated(current);
     } catch (e) {
       error = errorMessage(e);
     } finally {

@@ -42,7 +42,7 @@
   let requestedScope = '';
   let destroyed = false;
   const bridge = $derived(monitoring.bridge);
-  const identity = $derived(JSON.stringify([generation, monitoring.scope]));
+  const identity = $derived(JSON.stringify([generation, monitoring.scope, device?.id]));
   const registration = $derived(bridge?.devices.find((item) => item.id === device?.id));
   const unsettled = $derived(operation?.status === 'pending' || operation?.status === 'unknown');
   const disabled = $derived(

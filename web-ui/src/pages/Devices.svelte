@@ -54,7 +54,7 @@
   let operation = $state<Operation | null>(null);
   let serial = 0;
   let destroyed = false;
-  let operationDevice = '';
+  let operationScope = '';
   const device = $derived(cameraDetailTarget(snapshot, deviceId));
   const cameraKey = $derived(device?.camera_id ?? '');
   const noncamera = $derived(snapshot?.state?.noncamera);
@@ -112,9 +112,11 @@
   $effect(() => {
     const key = cameraKey;
     const epoch = generation;
-    if (operationDevice !== key) {
+    const scope = JSON.stringify([key, epoch]);
+    if (operationScope !== scope) {
       operation = null;
-      operationDevice = key;
+      confirmation = null;
+      operationScope = scope;
     }
     if (key && epoch) void untrack(load);
     else {
@@ -226,7 +228,8 @@
       )
         secret = value;
     } catch (e) {
-      error = errorMessage(e);
+      if (!destroyed && samePairingScope(requestedScope, { generation, deviceId, serial }))
+        error = errorMessage(e);
     } finally {
       busy = false;
     }
@@ -331,17 +334,28 @@
           /></span
         ><Icon name="next" size={16} /></a
       >{:else}<div class="empty">
-        {search || filter
-          ? 'No devices match your search.'
-          : 'No cameras are currently discovered. Check the Ring connection in Settings.'}
+        {!snapshot?.state
+          ? 'Camera inventory is unavailable while Halo reconnects. Saved cameras have not been removed.'
+          : search || filter
+            ? 'No cameras match your search or filters.'
+            : 'No cameras are currently discovered. Check the Ring connection in Settings.'}
       </div>{/each}
   </div>
+  {#if search || filter}<div class="actions">
+      <button
+        onclick={() => {
+          search = '';
+          filter = '';
+        }}>Clear camera search and filters</button
+      >
+    </div>{/if}
   <p class="inline-note">
     Historical HomeKit accessories remain in <a href="#/integrations">Integrations</a> if a source device
     is temporarily missing.
   </p>
   <NoncameraDevices
     monitoring={noncamera}
+    inventoryAvailable={!!snapshot?.state}
     {search}
     {fresh}
     {generation}
@@ -361,8 +375,15 @@
   />
 {:else if !device}<a href="#/devices">← Devices</a>
   <div class="empty">
-    <h2>Device is no longer available</h2>
-    <p>Its account or inventory scope changed. Refresh the device list.</p>
+    <h2>
+      {snapshot?.state ? 'Device is no longer available' : 'Device information is unavailable'}
+    </h2>
+    <p>
+      {snapshot?.state
+        ? 'Its account or inventory scope changed. Refresh the device list.'
+        : 'Halo is reconnecting. This does not mean the device or its pairing was removed.'}
+    </p>
+    <button onclick={refresh}>Refresh device list</button>
   </div>
 {:else}
   <div class="detail-heading">
@@ -372,6 +393,11 @@
       <p class="muted">{device.model || 'Ring camera'}</p>
     </div>
   </div>
+  <div class="actions">
+    <button onclick={load} disabled={busy || loading}>
+      {loading ? 'Refreshing details…' : 'Refresh camera details'}
+    </button>
+  </div>
   {#if error}<div class="notice error" role="alert">
       {error}
       <div class="actions"><button onclick={load} disabled={busy}>Refresh details</button></div>
@@ -380,6 +406,7 @@
   {#if operation}<OperationStatus
       {operation}
       onupdate={(value) => {
+        if (!operation?.operation_id || value.operation_id !== operation.operation_id) return;
         operation = value;
         if (value.status === 'completed') {
           void refresh();
@@ -393,9 +420,11 @@
       ><Status value={fresh ? device.observed.source_available : null} /></Row
     ><Row title="Battery"
       ><span
-        >{device.observed.battery_percent == null
-          ? 'Not reported'
-          : `${device.observed.battery_percent}%`}</span
+        >{!fresh
+          ? 'Unknown'
+          : device.observed.battery_percent == null
+            ? 'Not reported'
+            : `${device.observed.battery_percent}%`}</span
       ></Row
     >
   </div>

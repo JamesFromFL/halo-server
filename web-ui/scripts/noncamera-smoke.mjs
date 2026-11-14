@@ -1,5 +1,5 @@
 /** Isolated browser fixture: no Ring credentials, HomeKit publication, or physical commands. */
-import { chromium } from '@playwright/test';
+import { testBrowser } from './browser-engine.mjs';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { readFile, mkdir, writeFile } from 'node:fs/promises';
@@ -7,7 +7,7 @@ import { resolve, dirname, extname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const staticRoot = resolve(root, '../src/halo_server/web/static');
+const staticRoot = process.env.HALO_STATIC_ROOT || resolve(root, '../src/halo_server/web/static');
 const output = process.env.HALO_BROWSER_OUTPUT;
 if (output && !output.startsWith('/')) throw new Error('HALO_BROWSER_OUTPUT must be absolute');
 if (output) await mkdir(output, { recursive: true });
@@ -300,7 +300,7 @@ await new Promise((resolve, reject) => {
   server.listen(0, '127.0.0.1', resolve);
 });
 const timer = setInterval(publish, 1000);
-const browser = await chromium.launch({ headless: true });
+const browser = await testBrowser.launch({ headless: true });
 const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
 const page = await context.newPage();
 page.on('pageerror', (error) => errors.push(error.message));
@@ -311,7 +311,7 @@ const cameraRequests = () =>
 try {
   await page.goto(`http://127.0.0.1:${server.address().port}/#/devices`);
   await page.getByRole('heading', { name: 'Other Ring devices', exact: true }).waitFor();
-  await page.getByText('Some sources unavailable', { exact: true }).waitFor();
+  await page.getByText('Some observations need attention', { exact: true }).waitFor();
   assert.equal(await page.locator('.device-link').count(), 4);
   assert.equal(cameraRequests().length, 0);
   assert.equal(await page.getByRole('button', { name: /panic|arm|unlock|siren/i }).count(), 0);
@@ -328,8 +328,26 @@ try {
   assert.equal(await page.getByText('Unknown', { exact: true }).count(), 1);
   assert.equal(await page.getByRole('heading', { name: 'Recording', exact: true }).count(), 0);
   assert.equal(cameraRequests().length, 0, 'generic details never request camera administration');
-  await page.getByRole('link', { name: 'Back to devices', exact: true }).click();
-  await page.locator('.device-link').filter({ hasText: 'Garage motion' }).click();
+  delayBridgeSave = true;
+  await page
+    .getByRole('switch', { name: 'Include Front door in Halo Bridge', exact: true })
+    .click();
+  for (let attempt = 0; !finishDelayedSave && attempt < 50; attempt++)
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.ok(finishDelayedSave);
+  await page.evaluate(() => (location.hash = '/devices/noncamera%3Amotion-one'));
+  await page.getByRole('heading', { name: 'Garage motion', exact: true, level: 2 }).waitFor();
+  finishDelayedSave();
+  finishDelayedSave = undefined;
+  delayBridgeSave = false;
+  await page.waitForTimeout(100);
+  assert.equal(
+    await page.getByText(`Operation: ${delayedOperationId}`, { exact: true }).count(),
+    0,
+    'Another device never displays the previous device’s delayed operation',
+  );
+  checks.push('Late bridge preference completion cannot attach to another device detail');
+
   await page.getByText('Current device state is unavailable.', { exact: false }).waitFor();
   assert.equal(
     await page.getByText('Detected', { exact: true }).count(),

@@ -1,5 +1,6 @@
 /** Pairing lifecycle against real HTTPS/auth/SSE and synthetic owner metadata. */
-import { chromium, request as requestContext } from '@playwright/test';
+import { request as requestContext } from '@playwright/test';
+import { testBrowser } from './browser-engine.mjs';
 import assert from 'node:assert/strict';
 import { mkdir, writeFile } from 'node:fs/promises';
 
@@ -12,7 +13,7 @@ const output = process.env.HALO_BROWSER_OUTPUT;
 if (!password || password.length < 15 || !code || !output?.startsWith('/'))
   throw new Error('Synthetic credentials and an absolute output directory are required');
 await mkdir(output, { recursive: true });
-const browser = await chromium.launch({ headless: true });
+const browser = await testBrowser.launch({ headless: true });
 const context = await browser.newContext({ ignoreHTTPSErrors: true });
 const page = await context.newPage();
 const checks = [],

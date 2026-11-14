@@ -3,6 +3,7 @@
   import type { Snippet } from 'svelte';
   let { title, onclose, children }: { title: string; onclose: () => void; children: Snippet } =
     $props();
+  const titleId = $props.id();
   let dialog: HTMLDialogElement;
   onMount(() => {
     const previous = document.activeElement;
@@ -16,12 +17,12 @@
 
 <dialog
   bind:this={dialog}
-  aria-labelledby="confirmation-title"
+  aria-labelledby={titleId}
   oncancel={(event) => {
     event.preventDefault();
     onclose();
   }}
 >
-  <h2 id="confirmation-title">{title}</h2>
+  <h2 id={titleId}>{title}</h2>
   {@render children()}
 </dialog>

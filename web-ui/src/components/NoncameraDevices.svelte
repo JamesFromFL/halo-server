@@ -25,6 +25,7 @@
     monitoring,
     device,
     search = '',
+    inventoryAvailable = true,
     fresh,
     generation,
     reauthenticate,
@@ -34,6 +35,7 @@
     monitoring: NoncameraState | undefined;
     device?: NoncameraDevice;
     search?: string;
+    inventoryAvailable?: boolean;
     fresh: boolean;
     generation: string;
     reauthenticate: () => Promise<boolean>;
@@ -75,9 +77,8 @@
     fresh &&
       !!monitoring?.enabled &&
       !!device &&
-      (device.alarm || device.light || device.chime
-        ? device.source_health === 'online'
-        : !device.stale && device.available === true),
+      (device.source_health === 'online' ||
+        (device.source_health === undefined && !device.stale && device.available === true)),
   );
   $effect(() => {
     if (requestedScope !== identity) {
@@ -130,6 +131,10 @@
   {#if !current}<p class="notice">
       Current device state is unavailable. Missing or out-of-date observations do not mean a sensor
       is clear or an alarm is disarmed.
+    </p>
+  {:else if device.stale}<p class="notice">
+      Some observations are out of date. Current values are shown individually; unconfirmed values
+      stay unknown.
     </p>{/if}
   <h3>Device</h3>
   <div class="group">
@@ -227,7 +232,9 @@
   <div class="section-head">
     <h3>Other Ring devices</h3>
     <span class="muted"
-      >{monitoring?.devices.length ?? 0}{monitoring?.truncated ? '+' : ''} discovered</span
+      >{inventoryAvailable
+        ? `${monitoring?.devices.length ?? 0}${monitoring?.truncated ? '+' : ''} discovered`
+        : 'Inventory unavailable'}</span
     >
   </div>
   <div class="group">
@@ -254,8 +261,12 @@
     </Row>
     <Row
       title="Monitoring status"
-      subtitle={monitoring?.complete ? 'Discovery completed' : 'Discovery may be incomplete'}
-      ><span class="status">{monitoringStatus(monitoring, fresh)}</span></Row
+      subtitle={monitoring?.complete
+        ? 'Discovery and observed values are current'
+        : 'Discovery or individual observations may be incomplete'}
+      ><span class="status"
+        >{inventoryAvailable ? monitoringStatus(monitoring, fresh) : 'Unavailable'}</span
+      ></Row
     >
     <Row
       title="Alarm protections"
@@ -292,8 +303,8 @@
       inventory.
     </p>
   {:else if monitoring?.enabled && !monitoring.complete}<p class="inline-note">
-      Some devices may still be loading or their source may be unavailable. An incomplete discovery
-      does not remove devices.
+      Discovery or some observed values are incomplete. A device may be online while individual
+      observations are unknown or out of date. Existing devices are retained.
     </p>{/if}
   {#if (monitoring?.devices.length ?? 0) > 0}
     <div class="searchbar device-filters">
@@ -308,6 +319,17 @@
           >{/each}</select
       >
     </div>
+    {#if location || kind}<div class="actions">
+        <button
+          onclick={() => {
+            location = '';
+            kind = '';
+          }}>Clear other device filters</button
+        >
+      </div>{/if}
+    <p class="inline-note" role="status">
+      {matches.length} of {monitoring?.devices.length ?? 0} inventory entries shown.
+    </p>
     <div class="group">
       {#each matches as item (item.id)}
         <a class="device-link" href={`#/devices/${encodeURIComponent(noncameraRouteId(item.id))}`}>
@@ -336,11 +358,13 @@
       {:else}<div class="empty">No other devices match your search or filters.</div>{/each}
     </div>
   {:else}<div class="empty">
-      {!monitoring
-        ? 'Other device discovery is not available in this server version.'
-        : monitoring.enabled
-          ? 'No other devices have been discovered yet.'
-          : 'Enable monitoring to discover sensors, alarms, chimes, lighting, and other Ring devices.'}
+      {!inventoryAvailable
+        ? 'Other device inventory is unavailable while Halo reconnects.'
+        : !monitoring
+          ? 'Other device discovery is not available in this server response.'
+          : monitoring.enabled
+            ? 'No other devices have been discovered yet.'
+            : 'Enable monitoring to discover sensors, alarms, chimes, lighting, and other Ring devices.'}
     </div>{/if}
   <p class="inline-note">
     Manage Halo Bridge in <a href="#/integrations">Integrations</a> to share selected devices with Apple

@@ -39,6 +39,7 @@ never opens media. With the pinned Playwright Chromium installed:
 ```sh
 python scripts/check_web_browser.py --output /tmp/halo-browser-evidence
 python scripts/check_web_pairing_browser.py --output /tmp/halo-pairing-evidence
+python scripts/check_web_upgrade_browser.py --output /tmp/halo-upgrade-evidence
 ```
 
 Use `--installed` with an isolated environment containing the built wheel to
@@ -46,7 +47,10 @@ exercise the installed package. The pairing regression uses real HTTPS, password
 verification and status events with synthetic pairing metadata. It checks that
 a password-confirmed reveal survives session rotation and still clears when
 visibility, navigation or authentication changes. Neither harness uses a real
-Ring account.
+Ring account. Set `HALO_BROWSER=firefox` to run the same browser flows with the
+pinned Playwright Firefox installation; Chromium remains the default. The
+upgrade harness keeps the browser cache across a server change and verifies an
+ordinary reload even when release files share identical sizes and timestamps.
 
 Prepare loopback-only access from the local owner's terminal:
 
@@ -294,3 +298,17 @@ newer Chime models require additional qualification.
 
 See the [deployment and acceptance guide](noncamera-acceptance.md) for the first
 server/device pilot and remaining qualification boundaries.
+
+## Interface recovery
+
+The HTML entry point always serves the current release with `Cache-Control:
+no-store`; content-addressed scripts remain cacheable. This prevents an old
+HTML page from referencing scripts removed during an upgrade. If a script fails
+to load, the page retains a reload link. If a page fails while rendering, an
+error panel offers retry/reload while the server continues running.
+
+A missing daemon observation is labeled unavailable, not an empty device list.
+Refresh controls show when a read is in progress. Older reads and responses from
+a retired account or page cannot replace newer observations. See the
+[November 14 web UI audit](engineering/web-ui-audit-2026-11-14.md) for the
+confirmed defects, regression coverage and remaining acceptance boundaries.

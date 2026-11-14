@@ -15,27 +15,60 @@ export class ApiError extends Error {
 }
 export class ApiClient {
   private csrf = '';
+  private sessionGeneration = 0;
+  private sessionRead = 0;
   private transport: typeof fetch;
   constructor(transport: typeof fetch = globalThis.fetch.bind(globalThis)) {
     this.transport = transport;
   }
   clear() {
+    this.sessionGeneration++;
     this.csrf = '';
   }
-  private rememberSession(value: Session): Session {
-    if (typeof value.csrf_token !== 'string' || typeof value.authenticated !== 'boolean')
-      throw new ApiError('bad_response', 'Halo returned an invalid session.');
+  private rememberSession(value: Session, mutation = false): Session {
+    if (
+      !value ||
+      typeof value !== 'object' ||
+      typeof value.csrf_token !== 'string' ||
+      !value.csrf_token ||
+      value.csrf_token.length > 256 ||
+      typeof value.authenticated !== 'boolean' ||
+      typeof value.setup_required !== 'boolean' ||
+      typeof value.reauthenticated !== 'boolean' ||
+      (value.session_id !== null && typeof value.session_id !== 'string')
+    )
+      throw new ApiError('bad_response', 'Halo returned an invalid session.', mutation);
+    this.sessionGeneration++;
     this.csrf = value.csrf_token;
     return value;
   }
   async session(signal?: AbortSignal): Promise<Session> {
+    const generation = this.sessionGeneration;
+    const read = ++this.sessionRead;
     const value = await this.get<Session>('session', signal);
-    if (signal?.aborted)
+    if (signal?.aborted || generation !== this.sessionGeneration || read !== this.sessionRead)
       throw new ApiError('session_changed', 'This session refresh is no longer current.');
     return this.rememberSession(value);
   }
+  private async rotateSession(path: string, body: unknown): Promise<Session> {
+    const generation = ++this.sessionGeneration;
+    const value = await this.post<Session>(path, body);
+    if (generation !== this.sessionGeneration)
+      throw new ApiError(
+        'session_changed',
+        'This authentication request is no longer current.',
+        true,
+      );
+    return this.rememberSession(value, true);
+  }
+  authenticate(path: 'setup' | 'login', credentials: Record<string, string>): Promise<Session> {
+    return this.rotateSession(path, credentials);
+  }
   async reauthenticate(password: string): Promise<Session> {
-    return this.rememberSession(await this.post<Session>('reauth', { password }));
+    return this.rotateSession('reauth', { password });
+  }
+  changePassword(current_password: string, password: string): Promise<Session> {
+    return this.rotateSession('password', { current_password, password });
   }
   get<T>(path: string, signal?: AbortSignal): Promise<T> {
     return this.request<T>(path, 'GET', undefined, signal);
@@ -115,11 +148,39 @@ export class ApiClient {
           response.status,
         );
       }
-      if (!response.ok || payload.ok !== true)
+      if (!payload || typeof payload !== 'object' || Array.isArray(payload))
+        throw new ApiError(
+          'bad_response',
+          'Halo returned an invalid response.',
+          mutation,
+          response.status,
+        );
+      if (
+        typeof payload.ok !== 'boolean' ||
+        (payload.ok === false &&
+          (!payload.error ||
+            typeof payload.error.code !== 'string' ||
+            typeof payload.error.message !== 'string')) ||
+        (payload.ok === true && !response.ok)
+      )
+        throw new ApiError(
+          'bad_response',
+          'Halo returned an invalid response.',
+          mutation,
+          response.status,
+        );
+      if (payload.ok === false)
         throw new ApiError(
           payload.error?.code ?? 'request_failed',
           payload.error?.message ?? 'Halo could not complete the request.',
           payload.error?.possibly_sent === true,
+          response.status,
+        );
+      if (!Object.hasOwn(payload, 'result'))
+        throw new ApiError(
+          'bad_response',
+          'Halo returned an incomplete response.',
+          mutation,
           response.status,
         );
       return payload.result as T;

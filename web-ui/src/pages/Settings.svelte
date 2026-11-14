@@ -23,6 +23,7 @@
     notify,
     refresh,
     logout,
+    changePassword,
     setNavigationGuard,
   }: {
     snapshot: StateEnvelope | null;
@@ -32,6 +33,7 @@
     notify: (s: string) => void;
     refresh: () => Promise<void>;
     logout: () => Promise<void>;
+    changePassword: (currentPassword: string, password: string) => Promise<void>;
     setNavigationGuard: (guard: (() => boolean) | null) => void;
   } = $props();
   let appearance = $state(readAppearance());
@@ -62,6 +64,8 @@
   let repeatPassword = $state('');
   let showPassword = $state(false);
   let destroyed = false;
+  let loadSerial = 0;
+  let challengeGeneration = 0;
   const dirty = $derived(
     !!draft && !!configuration && JSON.stringify(draft) !== JSON.stringify(configuration.saved),
   );
@@ -72,7 +76,14 @@
   let accountEpoch: string | null = null;
   $effect(() => {
     const epoch = snapshot?.state?.epoch ?? null;
-    if (accountEpoch !== null && accountEpoch !== epoch) void cancelChallenge();
+    if (accountEpoch !== null && accountEpoch !== epoch) {
+      // The new account can arrive over SSE before login's HTTP response.
+      // Retire the old form as well as its challenge; never accept a late reply
+      // across an account change merely to finish the previous dialog.
+      showRing = false;
+      email = '';
+      void cancelChallenge();
+    }
     accountEpoch = epoch;
   });
   $effect(() => {
@@ -110,6 +121,7 @@
   });
   onDestroy(() => {
     destroyed = true;
+    loadSerial++;
     void cancelChallenge();
     ringPassword = '';
     otp = '';
@@ -118,7 +130,10 @@
     repeatPassword = '';
   });
   async function load() {
+    const request = ++loadSerial;
+    const draftAtStart = JSON.stringify(draft);
     loading = true;
+    error = '';
     const results = await Promise.allSettled([
       api.get<ConfigurationView>('configuration'),
       api.get<Record<string, unknown>>('access'),
@@ -128,10 +143,10 @@
       api.get<{ sessions: typeof sessions }>('sessions'),
       api.get<{ operations: Operation[] }>('operations'),
     ]);
-    if (destroyed) return;
+    if (destroyed || request !== loadSerial) return;
     if (results[0].status === 'fulfilled') {
       configuration = results[0].value;
-      draft = { ...results[0].value.saved };
+      if (JSON.stringify(draft) === draftAtStart) draft = { ...results[0].value.saved };
     }
     if (results[1].status === 'fulfilled') access = results[1].value;
     if (results[2].status === 'fulfilled') restart = results[2].value;
@@ -206,13 +221,14 @@
     if (busy || !fresh) return;
     busy = true;
     error = '';
+    const request = ++challengeGeneration;
     try {
       const value = await api.post<RingChallenge>('ring/login', {
         email,
         password: ringPassword,
         epoch: snapshot?.state?.epoch,
       });
-      if (destroyed) {
+      if (destroyed || request !== challengeGeneration) {
         if (value.challenge_id)
           void api.delete(`ring/challenge/${value.challenge_id}`).catch(() => {});
         return;
@@ -237,11 +253,13 @@
     if (!challenge?.challenge_id || busy) return;
     busy = true;
     error = '';
+    const request = challengeGeneration;
     try {
       const value = await api.post<RingChallenge>('ring/challenge', {
         challenge_id: challenge.challenge_id,
         otp_code: otp,
       });
+      if (destroyed || request !== challengeGeneration) return;
       if (value.status === 'connected') {
         challenge = null;
         showRing = false;
@@ -257,6 +275,7 @@
     }
   }
   async function cancelChallenge() {
+    challengeGeneration++;
     const id = challenge?.challenge_id;
     challenge = null;
     ringPassword = '';
@@ -290,6 +309,7 @@
   }
   async function password(event: SubmitEvent) {
     event.preventDefault();
+    if (busy) return;
     if (newPassword !== repeatPassword) {
       error = 'The new passwords do not match.';
       return;
@@ -297,11 +317,17 @@
     busy = true;
     error = '';
     try {
-      await api.post('password', { current_password: currentPassword, password: newPassword });
-      await api.session();
+      await changePassword(currentPassword, newPassword);
+      if (destroyed) return;
       showPassword = false;
       notify('Web password changed. Other sessions are revoked.');
-      sessions = (await api.get<{ sessions: typeof sessions }>('sessions')).sessions;
+      try {
+        sessions = (await api.get<{ sessions: typeof sessions }>('sessions')).sessions;
+      } catch {
+        sessions = [];
+        error =
+          'Your password changed, but the session list could not refresh. Reload settings to check it.';
+      }
     } catch (e) {
       error = errorMessage(e);
     } finally {
@@ -572,7 +598,7 @@
       <button class="primary" disabled={!dirty || busy || !fresh || unsettled}>Save settings</button
       ><button
         type="button"
-        disabled={busy}
+        disabled={busy || loading}
         onclick={() => {
           if (dirty) confirmation = 'discard';
           else void load();
