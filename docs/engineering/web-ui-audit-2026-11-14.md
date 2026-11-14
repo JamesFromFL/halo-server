@@ -63,3 +63,47 @@ and final live HTTP/browser results are retained under
 physical device command tests, and Apple Home HKSV clip acceptance remain
 distinct from this web UI audit. No physical command or recording enablement
 is part of the repair.
+
+## Completed qualification and deployment
+
+Application commit `102fa289ff0d4e372a89f578fc54041e24fa8e64` was deployed as
+release `e5371dcc41f5724aac25b87188d91c8f1f60a00cde59aebea60e5f23285cf32a`,
+selection revision 25. The previous complete release remains available for
+recovery. No changes were pushed to GitHub.
+
+Fresh source verification passed 166 affected Python tests, 61 frontend tests,
+formatting, Svelte validation and the production build. Installed qualification
+passed 896 Python tests, 323 adapter tests, both real child/service lifecycle
+probes, and both Chromium and Firefox browser suites. Browser coverage included
+120 page/theme/viewport layouts, pairing and session lifetime, ordinary cached
+upgrades, 12 shell cases and 70 inventory detail views per engine. A prior
+4,025-test full-source run is explicitly inherited evidence, not a fresh run.
+The first installed browser attempt failed in the test harness TLS setup; its
+corrected retry passed without changing application or package bytes. The
+failed attempt is preserved with the qualification evidence.
+
+Independent viewport measurements confirmed that the sticky header and sidebar
+remain at viewport top at scroll positions 0 and 400 in both engines. Their
+placement partway down a full-page screenshot was capture composition rather
+than a layout defect.
+
+Live acceptance confirmed:
+
+- The old index ETag and modification-date request now returns HTTP 200 with
+  `Cache-Control: no-store`, and all served bundle bytes match the qualified build.
+- Anonymous state, pairing and configuration requests require sign-in.
+- Native desktop Firefox 160 renders the HTTPS sign-in page using an isolated
+  profile; the owner's browser profile and password were not accessed.
+- The current owner-state projection is fresh and accepted by the frontend,
+  with seven cameras and 28 noncamera records.
+- Both services run the selected release, all seven cameras remain selected,
+  published and paired, and pairing files are byte-identical to the preimage.
+- Existing owner authentication, TLS, recording preferences and device policies
+  are preserved. Read-only monitoring remains enabled; bridge publication,
+  physical controls, panic/emergency dispatch and recording opt-ins remain off.
+
+Some source observations remain partial, including unqualified Alarm phase and
+signal observations. Unsupported account-management records remain identified
+as unsupported. UI recovery and rendering tests do not establish physical
+control behavior or Apple Home recording acceptance. The owner's authenticated
+Firefox session is the remaining user acceptance check.
