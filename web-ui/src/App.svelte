@@ -344,7 +344,14 @@
             {notify}
             {refresh}
           />
-        {:else if page === 'integrations'}<Integrations {snapshot} {fresh} {generation} />
+        {:else if page === 'integrations'}<Integrations
+            {snapshot}
+            {fresh}
+            {generation}
+            {reauthenticate}
+            {notify}
+            {refresh}
+          />
         {:else if page === 'activity'}<Activity {snapshot} />
         {:else if page === 'diagnostics'}<Diagnostics {snapshot} {fresh} {notify} />
         {:else if page === 'settings'}<Settings

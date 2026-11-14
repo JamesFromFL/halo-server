@@ -55,7 +55,7 @@ async def test_unconfigured_inventory_no_disk_then_atomic_prepare_and_exclude(tm
     assert not view["configured"] and not view["enabled"]
     assert not monitor.bridge.store.path.exists()
     result = await service.handle_admin("devices_bridge_set", preferences(sessions))
-    assert result["selected_count"] == 1 and result["publication"] == "not_implemented"
+    assert result["selected_count"] == 1 and result["publication"] == "implemented"
     view = monitor.snapshot()["bridge"]
     assert view["devices"][0]["selected"]
     identity = view["devices"][0]["accessory_uuid"]

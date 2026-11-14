@@ -650,7 +650,7 @@ class BridgeRegistryStore(PrivateJsonStore[BridgeRegistry]):
 def bridge_projection(
     registry: BridgeRegistry, profile_id: str | None, records: tuple[DeviceRecord, ...] = ()
 ) -> dict[str, Any]:
-    """Pure projection; publication and pairing are unavailable in this slice."""
+    """Pure registry projection; the coordinator supplies runtime publication state."""
     if profile_id is not None:
         records = _records(profile_id, records)
     elif records:

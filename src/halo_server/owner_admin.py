@@ -24,6 +24,10 @@ class OwnerAdministration:
             "owner_state",
             "devices_monitoring_set",
             "devices_bridge_set",
+            "devices_bridge_publication_set",
+            "devices_bridge_pairing_get",
+            "devices_bridge_pairing_reveal",
+            "devices_bridge_pairing_reset",
             "configuration_get",
             "configuration_set",
             "camera_control_list",
@@ -59,6 +63,33 @@ class OwnerAdministration:
             return project_owner_state(self.service)
         if method.startswith("stream_capture_"):
             return await self.stream_capture.handle(method, params)
+        if method == "devices_bridge_pairing_get":
+            _only(params, set())
+            return await self.service._device_monitor.bridge.publisher.pairing()
+        if method in {"devices_bridge_pairing_reveal", "devices_bridge_pairing_reset"}:
+            from halo_server.devices.publication import PAIRING_FIELDS
+
+            required = PAIRING_FIELDS | ({"operation_id"} if method.endswith("reset") else set())
+            _only(params, required)
+            if set(params) != required:
+                raise AdminProtocolError("bad_params", "Bridge pairing identity is required")
+            publisher = self.service._device_monitor.bridge.publisher
+            action = publisher.reset if method.endswith("reset") else publisher.reveal
+            return await action(**params)
+        if method == "devices_bridge_publication_set":
+            required = {
+                "profile_id",
+                "account_generation",
+                "expected_registry_revision",
+                "expected_revision",
+                "enabled",
+            }
+            _only(params, required)
+            if set(params) != required:
+                raise AdminProtocolError(
+                    "bad_params", "Bridge publication preferences are required"
+                )
+            return await self.service._device_monitor.bridge.publisher.configure(**params)
         if method == "devices_bridge_set":
             from halo_server.devices.bridge import PREFERENCE_FIELDS
 

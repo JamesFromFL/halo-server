@@ -154,3 +154,23 @@ This release adds management of the current camera backend. Contact sensors,
 motion sensors, chimes, alarms, and additional ecosystems still require their own
 backend integrations. The interface does not automatically preview or play video,
 browse arbitrary files, expose raw logs, or provide browser-driven software updates.
+
+## Halo Bridge for non-camera sensors
+
+Enable read-only monitoring in Devices, prepare the Halo Bridge import preferences,
+and select supported sensors. Then use **Integrations → Halo Bridge → Connect Halo Bridge to
+Apple Home** to explicitly enable publication. Saved import preferences alone do
+not publish. One bridge pairing brings its selected contact, motion, leak, smoke
+and carbon monoxide sensors into Apple Home; each camera retains its own pairing.
+
+Reveal the bridge setup code after confirming the Halo password. The code is
+short-lived and disappears when the page or account changes. Reset pairing only
+when intentionally replacing the Apple Home association. A reset disables bridge
+publication before deleting its pairing; cameras and other account identities are
+preserved. An interrupted reset offers **Resume reset**, using the original
+operation. After completion, remove the old bridge from Apple Home, explicitly
+reconnect publication and pair again.
+
+Unavailable or stale readings produce a HomeKit fault rather than a fabricated
+closed/dry/clear state. Alarm, panic, bypass and other non-camera controls remain
+disabled in this sensor release. Installed and physical qualification is pending.

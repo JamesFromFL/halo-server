@@ -115,7 +115,7 @@
     <div class="group">
       <Row
         title="Import status"
-        subtitle="Saved preferences prepare this device for a future HomeKit update."
+        subtitle="Saved preferences determine which sensor capabilities this bridge shares."
       >
         <span class="status"
           >{fresh && bridge.status === 'ready'
@@ -146,8 +146,8 @@
       </Row>
       <Row
         title="HomeKit publication"
-        subtitle="Bridge pairing and publication will be added in a later update."
-        ><span>Not available yet</span></Row
+        subtitle="This sensor shares Halo Bridge’s pairing and has no individual setup code."
+        ><a href="#/integrations">Manage Halo Bridge</a></Row
       >
     </div>
     {#if registration?.mappings.length}<p class="inline-note">
@@ -206,8 +206,8 @@
       </Row>
       <Row
         title="HomeKit publication"
-        subtitle="These preferences are saved locally. Bridge pairing and publication will be added in a later update."
-        ><span>Not available yet</span></Row
+        subtitle="Preparing the bridge does not connect it to HomeKit. Choose that separately in Integrations."
+        ><a href="#/integrations">Manage Halo Bridge</a></Row
       >
     </div>
     {#if bridge.overflow_count > 0}<p class="notice">

@@ -1,8 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import QRCode from 'qrcode';
-  import type { PairingSecret } from '../lib/types.ts';
-  let { secret, onhide }: { secret: PairingSecret; onhide: () => void } = $props();
+  import type { PairingSetup } from '../lib/types.ts';
+  let { secret, onhide }: { secret: PairingSetup; onhide: () => void } = $props();
   let canvas: HTMLCanvasElement;
   let failed = $state(false);
   let remaining = $state(60);

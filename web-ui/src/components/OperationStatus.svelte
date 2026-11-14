@@ -6,10 +6,12 @@
     operation,
     onupdate,
     configuration = false,
+    pairing = false,
   }: {
     operation: Operation;
     onupdate: (v: Operation) => void;
     configuration?: boolean;
+    pairing?: boolean;
   } = $props();
   let checking = $state(false);
   let error = $state('');
@@ -32,9 +34,11 @@
   <strong>{pretty(resultStatus ?? operation.status ?? operation.outcome)}</strong>
   <p>
     {operation.status === 'unknown' || operation.possibly_sent
-      ? configuration
-        ? 'Halo may have saved these preferences. The outcome is uncertain; the change will not be sent again automatically.'
-        : 'The action may have reached the device. Its outcome is uncertain; it will not be sent again automatically.'
+      ? pairing
+        ? 'Halo may have changed this HomeKit pairing. The outcome is uncertain; the reset will not be sent again automatically.'
+        : configuration
+          ? 'Halo may have saved these preferences. The outcome is uncertain; the change will not be sent again automatically.'
+          : 'The action may have reached the device. Its outcome is uncertain; it will not be sent again automatically.'
       : resultStatus === 'accepted'
         ? 'Ring accepted the command. The observed device state may update later.'
         : operation.status === 'pending'

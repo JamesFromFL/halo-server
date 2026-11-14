@@ -77,6 +77,16 @@ export interface BridgeDevice {
   reason: string | null;
   present: boolean;
 }
+export interface BridgeRuntime {
+  state: 'disabled' | 'starting' | 'ready' | 'offline' | 'error' | 'reset_pending';
+  reason: string | null;
+  boot_id: string | null;
+  published: boolean;
+  publication_enabled: boolean;
+  publication_revision: number;
+  reset_pending: boolean;
+  reset_operation_id: string | null;
+}
 export interface BridgeState extends BridgePreferences {
   revision: number;
   configured: boolean;
@@ -86,10 +96,37 @@ export interface BridgeState extends BridgePreferences {
   selected_count: number;
   retained_count: number;
   overflow_count: number;
-  publication: 'not_implemented';
+  publication: 'not_implemented' | 'implemented';
+  runtime?: BridgeRuntime;
   status: 'ready' | 'loading' | 'error' | 'offline';
   devices: BridgeDevice[];
   truncated: boolean;
+}
+export interface BridgePairing {
+  profile_id: string;
+  account_generation: number;
+  registry_revision: number;
+  publication_revision: number;
+  accessory_id: string;
+  username: string;
+  boot_id: string | null;
+  available: boolean;
+  published: boolean;
+  paired_known: boolean;
+  paired: boolean;
+  paired_clients: number;
+  pairing_revision: string | null;
+  pending_reset: boolean;
+  reset_operation_id: string | null;
+}
+export interface BridgePairingSecret extends PairingSetup {
+  registry_revision: number;
+  pairing_revision: string;
+  profile_id: string;
+  account_generation: number;
+  accessory_id: string;
+  boot_id: string;
+  [key: string]: unknown;
 }
 export interface NoncameraState {
   schema: 1;
@@ -178,11 +215,13 @@ export interface PairingCamera {
   reset_operation_id?: string | null;
   [key: string]: unknown;
 }
-export interface PairingSecret {
-  camera_id: string;
+export interface PairingSetup {
   pin: string;
   setup_uri: string;
   expires_in_ms: number;
+}
+export interface PairingSecret extends PairingSetup {
+  camera_id: string;
   [key: string]: unknown;
 }
 export interface Configuration {

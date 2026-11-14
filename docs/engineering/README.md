@@ -1,12 +1,17 @@
 # Halo Server engineering
 
+[Non-camera implementation wave 3](noncamera-wave3-2026-11-14.md) records the
+separate read-only HomeKit bridge, explicit publication, sensor freshness, pairing
+and resumable reset, owner interface and local qualification. Live deployment and
+physical acceptance remain pending.
+
 [Non-camera implementation wave 2](noncamera-wave2-2026-11-14.md) records durable
 account-bound bridge identities, import preferences, capacity handling, private
-storage isolation and failure/recovery tests. Publication and pairing are next.
+storage isolation and failure/recovery tests. Publication and pairing follow in wave 3.
 
 [Non-camera implementation wave 1](noncamera-wave1-2026-11-14.md) records the opt-in
 read-only discovery/catalog, shared-auth ownership, backend command denial, owner
-interface and qualification boundaries. HomeKit bridge publication remains pending.
+interface and qualification boundaries. Bridge publication follows in wave 3.
 
 [Non-camera Halo Bridge research and implementation plan](noncamera-bridge-plan-2026-11-14.md)
 records the pair-once bridge topology, standalone camera preservation, device

@@ -1,4 +1,10 @@
-import type { BridgeDevice, BridgePreferences, BridgeState, NoncameraState } from './types.ts';
+import type {
+  BridgeDevice,
+  BridgePreferences,
+  BridgeRuntime,
+  BridgeState,
+  NoncameraState,
+} from './types.ts';
 
 export const mappingLabels: Record<string, string> = {
   contact: 'Contact',
@@ -18,6 +24,23 @@ const textList = (value: unknown, maximum: number): value is string[] =>
   value.length <= maximum &&
   value.every(text) &&
   new Set(value).size === value.length;
+
+export function validBridgeRuntime(value: unknown): value is BridgeRuntime {
+  if (!value || typeof value !== 'object') return false;
+  const runtime = value as BridgeRuntime;
+  return (
+    ['disabled', 'starting', 'ready', 'offline', 'error', 'reset_pending'].includes(
+      runtime.state,
+    ) &&
+    optionalText(runtime.reason) &&
+    optionalText(runtime.boot_id) &&
+    typeof runtime.published === 'boolean' &&
+    typeof runtime.publication_enabled === 'boolean' &&
+    count(runtime.publication_revision) &&
+    typeof runtime.reset_pending === 'boolean' &&
+    optionalText(runtime.reset_operation_id)
+  );
+}
 
 export function validBridge(value: unknown): value is BridgeState {
   if (!value || typeof value !== 'object') return false;
@@ -43,7 +66,8 @@ export function validBridge(value: unknown): value is BridgeState {
     textList(bridge.excluded_mappings, 5) &&
     bridge.excluded_mappings.every((mapping) => Object.hasOwn(mappingLabels, mapping)) &&
     !bridge.included_devices.some((id) => bridge.excluded_devices.includes(id)) &&
-    bridge.publication === 'not_implemented' &&
+    (bridge.publication === 'not_implemented' ||
+      (bridge.publication === 'implemented' && validBridgeRuntime(bridge.runtime))) &&
     ['ready', 'loading', 'error', 'offline'].includes(bridge.status) &&
     typeof bridge.truncated === 'boolean' &&
     Array.isArray(bridge.devices) &&
@@ -133,5 +157,5 @@ export function bridgeDeviceStatus(device: BridgeDevice | undefined): string {
   if (device.excluded) return 'Excluded';
   if (!device.present)
     return device.selected ? 'Selected; source temporarily missing' : 'Source temporarily missing';
-  return device.selected ? 'Selected for future publication' : 'Not selected';
+  return device.selected ? 'Selected for Halo Bridge' : 'Not selected';
 }

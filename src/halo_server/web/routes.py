@@ -555,6 +555,91 @@ class WebConsole:
             )
         )
 
+    async def device_bridge_pairing(self, request):
+        return success(await self.pool.call(self.client.devices_bridge_pairing_get))
+
+    async def _device_bridge_target(self, value):
+        page = await self.pool.call(self.client.devices_bridge_pairing_get)
+        if any(
+            value.get(key) != page.get(key)
+            for key in (
+                "profile_id",
+                "account_generation",
+                "registry_revision",
+                "accessory_id",
+                "boot_id",
+                "pairing_revision",
+            )
+        ):
+            raise WebError("configuration_conflict", "Bridge pairing changed; refresh", status=409)
+        return page
+
+    async def device_bridge_reveal(self, request):
+        from halo_server.devices.publication import PAIRING_FIELDS
+
+        self.auth.recent(request[SESSION])
+        value = await body(request, tuple(PAIRING_FIELDS))
+        await self._device_bridge_target(value)
+        result = await self.pool.call(self.client.devices_bridge_pairing_reveal, **value)
+        await self.auth.refresh()
+        self.auth.get(request.cookies.get(COOKIE), authenticated=True)
+        # Recheck publication/account authority after crossing the IPC boundary.
+        await self._device_bridge_target(value)
+        return success(result)
+
+    async def device_bridge_reset(self, request):
+        from halo_server.devices.publication import PAIRING_FIELDS
+
+        self.auth.recent(request[SESSION])
+        value = await body(request, tuple(PAIRING_FIELDS) + ("operation_id",))
+        identifier = operation_id(value["operation_id"])
+        page = await self._device_bridge_target(value)
+        if page["pending_reset"] and page["reset_operation_id"] != identifier:
+            raise WebError("configuration_conflict", "Resume the pending bridge reset", status=409)
+        return success(
+            await self.operations.run(
+                identifier,
+                "reset",
+                {
+                    "target": "device_bridge_pairing",
+                    **{
+                        key: value[key]
+                        for key in ("profile_id", "accessory_id", "pairing_revision")
+                    },
+                },
+                lambda: self.pool.call(self.client.devices_bridge_pairing_reset, **value),
+                resume=page["pending_reset"],
+            )
+        )
+
+    async def device_bridge_publication(self, request):
+        value = await body(
+            request,
+            (
+                "profile_id",
+                "account_generation",
+                "expected_registry_revision",
+                "expected_revision",
+                "enabled",
+                "operation_id",
+            ),
+        )
+        text(value["profile_id"], maximum=36)
+        integer(value["account_generation"], minimum=1)
+        integer(value["expected_registry_revision"])
+        integer(value["expected_revision"])
+        boolean(value["enabled"])
+        identifier = operation_id(value["operation_id"])
+        params = {key: item for key, item in value.items() if key != "operation_id"}
+        return success(
+            await self.operations.run(
+                identifier,
+                "configuration",
+                {"target": "device_bridge_publication", **value},
+                lambda: self.pool.call(self.client.devices_bridge_publication_set, **params),
+            )
+        )
+
     async def devices_bridge(self, request):
         from halo_server.devices.bridge import PREFERENCE_FIELDS, validate_preferences
 
@@ -807,6 +892,10 @@ def create_application(console, *, static_root=None):
         web.get(PREFIX + "/devices", console.devices),
         web.post(PREFIX + "/devices/monitoring", console.devices_monitoring),
         web.post(PREFIX + "/devices/bridge", console.devices_bridge),
+        web.get(PREFIX + "/devices/bridge/pairing", console.device_bridge_pairing),
+        web.post(PREFIX + "/devices/bridge/publication", console.device_bridge_publication),
+        web.post(PREFIX + "/devices/bridge/pairing/reveal", console.device_bridge_reveal),
+        web.post(PREFIX + "/devices/bridge/pairing/reset", console.device_bridge_reset),
         web.get(PREFIX + "/events", console.events),
         web.get(PREFIX + "/{read:selection|controls|recording|configuration}", console.read_owner),
         web.get(PREFIX + "/pairing", console.pairing_list),

@@ -92,6 +92,10 @@ class ServerPaths:
         return self.homekit_device_directory / "registry.json"
 
     @property
+    def homekit_device_publication_file(self) -> Path:
+        return self.homekit_device_directory / "publication.json"
+
+    @property
     def homekit_device_pairing_directory(self) -> Path:
         return self.homekit_device_directory / "pairings"
 

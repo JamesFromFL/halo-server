@@ -263,6 +263,8 @@ class PairingMaintenanceStore(PrivateJsonStore):
 class MaintenanceOwner:
     """Keep the exact flock description alive across adapter exit and helper."""
 
+    helper_name = "pairing-reset.js"
+
     def __init__(self, directory_fd, lock_fd):
         self.directory_fd, self.lock_fd = directory_fd, lock_fd
         self.process = None
@@ -317,7 +319,7 @@ class MaintenanceOwner:
             raise
 
     async def _cleanup(self, resources, row, *, resume):
-        helper = resources.entry.with_name("pairing-reset.js")
+        helper = resources.entry.with_name(self.helper_name)
         payload = {
             "v": 1,
             "operation_id": row.operation_id,

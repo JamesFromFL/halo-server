@@ -202,3 +202,51 @@ parent retirement, a preserved intent and refused restart; helper failure emits
 no success. Separate storage tests inject short/zero writes and failures at
 write, close, rename, unlink and fsync boundaries. They verify syscall ordering
 and explicit uncertainty, rather than claiming a physical power-cut test.
+
+## Independent non-camera bridge
+
+`device-main.js` is a separately supervised HAP Bridge process. It has one
+inherited private control socket and its own pinned pairing directory and lock.
+Cameras continue using their existing process, identities and pairing store.
+Python resolves and verifies the complete managed release before execution and
+keeps its release guard inherited by the child. The matching `build_id` handshake
+checks the parent's selected session; its echoed value is not independent
+artifact attestation. Development launch requires an already-built checkout.
+
+Device IPC uses a separate version-1 schema with a 256 KiB frame limit. Each full
+snapshot contains one immutable account generation and bridge UUID/username,
+a monotonic registry revision and sequence, and at most 149 selected sensors.
+Unknown message kinds, duplicate JSON fields, malformed observations and stale
+identities are rejected. There is no command, Ring credential or media channel.
+Python alone owns discovery and provider access. Explicit publication opt-in is
+separate from the saved import selection.
+
+Contact, motion, leak, smoke and carbon-monoxide services expose read-only typed
+observations. Missing, stale or unknown values return a HomeKit communication
+error and set `StatusFault`; they never become false or safe values. Each snapshot
+has an absolute monotonic deadline capped to 15 seconds after receipt. Both read
+handlers and a timer enforce expiry independently of heartbeat traffic. Optional
+battery and tamper service graphs are deferred until their presence can be
+persisted reliably; those observations remain visible in Halo.
+
+Stable child UUIDs and service subtypes preserve HAP IDs across rename, reorder,
+restart and explicit removal/re-inclusion. Missing selected children stay in the
+graph with faults. Unused identifier purging is disabled to preserve removed
+identities. Existing private-store file/cache limits still fail closed on
+excessive historical churn rather than regenerating IDs.
+
+Pairing status never includes a setup secret. Reveal requires an unpaired,
+listening and advertised bridge with matching account, registry and pairing
+revision. Reset preparation permanently fences that process before unpublishing,
+then checks the unchanged pairing manifest again. After the parent has reaped the
+process, `device-pairing-reset.js` reuses the existing exact-namespace,
+manifest-CAS cleanup primitive under the inherited exclusive lock. It never
+resets cameras or another account's bridge.
+
+Network-denied Node tests cover all five service mappings, unknown/stale reads,
+identity and capacity boundaries, AID/IID stability, publication failure,
+pairing/reveal/reset races, framing and bounded output. Python tests additionally
+exercise the actual reset helper against private synthetic files, checking
+camera/other-account byte preservation, stale-manifest rejection, crash resume,
+lock ownership and retained storage-failure markers. These tests do not claim
+live Ring or Apple Home validation.

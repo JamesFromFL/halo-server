@@ -196,6 +196,18 @@ class AdminClient:
             excluded_mappings=excluded_mappings,
         )
 
+    async def devices_bridge_publication_set(self, **params):
+        return await self._object("devices_bridge_publication_set", **params)
+
+    async def devices_bridge_pairing_get(self):
+        return await self._object("devices_bridge_pairing_get")
+
+    async def devices_bridge_pairing_reveal(self, **params):
+        return await self._object("devices_bridge_pairing_reveal", **params)
+
+    async def devices_bridge_pairing_reset(self, **params):
+        return await self._object("devices_bridge_pairing_reset", **params)
+
     async def logout(self, *, expected_epoch: str | None = None) -> dict[str, Any]:
         result = await self.request(
             "logout", **({"expected_epoch": expected_epoch} if expected_epoch is not None else {})

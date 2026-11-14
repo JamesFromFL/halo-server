@@ -1,9 +1,4 @@
-"""Daemon ownership of durable bridge preparation, independent of Ring controls.
-
-This slice owns identities and import preferences only. No HAP publication, pairing
-reset, or device actuation is admitted here. Disk work is coalesced by metadata and
-joined before shutdown; sensor observations remain in the in-memory catalog.
-"""
+"""Durable sensor identities and import preferences with isolated HAP publication."""
 
 from __future__ import annotations
 
@@ -74,12 +69,16 @@ class DeviceBridge:
         self.registry = BridgeRegistry()
         self._loaded = False
         self._error = False
+        self._configuring = False
         self._lock = asyncio.Lock()
         self._records = ()
         self._scope = None
         self._signature = None
         self._pending = None
         self._task = None
+        from halo_server.devices.publication import DevicePublisher
+
+        self.publisher = DevicePublisher(self)
 
     def _context(self):
         client = self.service._sessions.active_client
@@ -105,8 +104,10 @@ class DeviceBridge:
         self._loaded = False
         self._error = True
         self._signature = None
+        self.publisher.invalidate()
 
     async def reconcile(self):
+        self.publisher.start()
         async with self._lock:
             try:
                 await self._load_locked()
@@ -119,6 +120,7 @@ class DeviceBridge:
         if not self._current(scope):
             return
         self._scope, self._records = scope, records
+        self.publisher.notify()
         # State/freshness updates must not create a file transaction for every
         # sensor event. Only identity, mapping evidence and import filters matter.
         signature = (
@@ -159,6 +161,7 @@ class DeviceBridge:
                     )
                     self._signature = signature
                     self._error = False
+                    self.publisher.notify()
                 except Exception:
                     self._failed()
                     # Retry on a subsequent inventory/reconcile cycle, not in a
@@ -167,6 +170,7 @@ class DeviceBridge:
                     return
 
     def invalidate(self):
+        self.publisher.invalidate()
         self._pending = None
         self._scope = None
         self._records = ()
@@ -176,6 +180,7 @@ class DeviceBridge:
         self.invalidate()
         if self._task is not None:
             await settle_owned(self._task)
+        await self.publisher.close()
 
     async def configure(self, *, profile_id, account_generation, expected_revision, **value):
         try:
@@ -190,46 +195,58 @@ class DeviceBridge:
                 raise AdminProtocolError("account_changed", "The Ring account changed")
             if self.service._stop_requested.is_set():
                 raise AdminProtocolError("service_stopping", "Halo Server is stopping")
-            records = self._records if self._scope == scope else ()
+            self._configuring = True
             try:
-                self.registry = await owned_thread(
-                    self.store.configure,
-                    profile_id,
-                    records=records,
-                    expected_revision=expected_revision,
-                    **preferences,
-                )
-                self._loaded = True
-                self._error = False
-            except BridgeRegistryConflictError as error:
-                self._failed()
+                self.publisher.invalidate()
+                records = self._records if self._scope == scope else ()
                 try:
-                    await self._load_locked()
-                except Exception:
+                    self.registry = await owned_thread(
+                        self.store.configure,
+                        profile_id,
+                        records=records,
+                        expected_revision=expected_revision,
+                        **preferences,
+                    )
+                    self._loaded = True
+                    self._error = False
+                except asyncio.CancelledError:
                     self._failed()
-                raise AdminProtocolError(
-                    "configuration_conflict", "Bridge preferences changed; refresh before saving"
-                ) from error
-            except BridgeRegistryError as error:
-                self._failed()
-                raise AdminProtocolError(
-                    "device_bridge_unavailable", "Bridge preferences need attention"
-                ) from error
-            projection = bridge_projection(self.registry, profile_id, records)
-            # The durable web operation journal has a much smaller budget than
-            # the inventory. Never put device lists or pairing identity into it.
-            return {
-                key: projection[key]
-                for key in (
-                    "revision",
-                    "configured",
-                    "enabled",
-                    "auto_import",
-                    "selected_count",
-                    "overflow_count",
-                    "publication",
-                )
-            }
+                    raise
+                except BridgeRegistryConflictError as error:
+                    self._failed()
+                    try:
+                        await self._load_locked()
+                    except Exception:
+                        self._failed()
+                    raise AdminProtocolError(
+                        "configuration_conflict",
+                        "Bridge preferences changed; refresh before saving",
+                    ) from error
+                except BridgeRegistryError as error:
+                    self._failed()
+                    raise AdminProtocolError(
+                        "device_bridge_unavailable", "Bridge preferences need attention"
+                    ) from error
+                self.publisher.start()
+                projection = bridge_projection(self.registry, profile_id, records)
+                projection["publication"] = "implemented"
+                # The durable web operation journal has a much smaller budget than
+                # the inventory. Never put device lists or pairing identity into it.
+                return {
+                    key: projection[key]
+                    for key in (
+                        "revision",
+                        "configured",
+                        "enabled",
+                        "auto_import",
+                        "selected_count",
+                        "overflow_count",
+                        "publication",
+                    )
+                }
+            finally:
+                self._configuring = False
+                self.publisher.notify()
 
     def snapshot(self):
         scope = self._context()
@@ -248,6 +265,8 @@ class DeviceBridge:
             # camera administration usable while bridge preparation is blocked.
             self._failed()
             projection = bridge_projection(BridgeRegistry(), scope.profile_id if scope else None)
+        projection["publication"] = "implemented"
+        projection["runtime"] = self.publisher.snapshot()
         projection["status"] = (
             "error"
             if self._error

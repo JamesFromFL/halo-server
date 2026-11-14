@@ -343,13 +343,16 @@ try {
   );
   await page.getByRole('link', { name: 'Back to devices', exact: true }).click();
   await page.getByRole('switch', { name: 'Prepare Halo Bridge', exact: true }).waitFor();
-  assert.equal(await page.getByText('Not available yet', { exact: true }).count(), 1);
+  assert.equal(
+    await page.getByRole('link', { name: 'Manage Halo Bridge', exact: true }).count(),
+    1,
+  );
   await page.getByRole('switch', { name: 'Automatically include supported sensors' }).click();
   await page.getByText('0 of 149 selected', { exact: true }).waitFor();
   assert.equal(bridge.auto_import, false);
   await page.locator('.device-link').filter({ hasText: 'Front door' }).click();
   await page.getByRole('switch', { name: 'Include Front door in Halo Bridge' }).click();
-  await page.getByText('Selected for future publication', { exact: true }).waitFor();
+  await page.getByText('Selected for Halo Bridge', { exact: true }).waitFor();
   assert.deepEqual(bridge.included_devices, ['sensor-one']);
   await page.getByRole('switch', { name: 'Include Front door in Halo Bridge' }).click();
   await page.getByText('Excluded', { exact: true }).waitFor();
@@ -536,7 +539,7 @@ try {
     publish();
     await page.getByText('1 of 149 selected', { exact: true }).waitFor();
     await page.locator('.device-link').filter({ hasText: backend.devices[0].name }).click();
-    await page.getByText('Selected for future publication', { exact: true }).waitFor();
+    await page.getByText('Selected for Halo Bridge', { exact: true }).waitFor();
     assert.equal(
       await page
         .getByRole('switch', { name: `Include ${backend.devices[0].name} in Halo Bridge` })

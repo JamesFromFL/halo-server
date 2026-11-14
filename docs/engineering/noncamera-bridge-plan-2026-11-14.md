@@ -242,6 +242,11 @@ The current working tree has prior UI/snapshot changes; preserve them throughout
 
 ## Implementation slices
 
+Progress: [wave 3](noncamera-wave3-2026-11-14.md) implements the separate bridge
+runtime and read-only sensor publication in slice 4, with its usable pairing
+interface from slice 6. All changes remain local pending installed and physical
+qualification. Alarm and other control families remain future work.
+
 Each slice should have meaningful regression checks and a reviewable commit.
 Physical acceptance and deployment are distinct from fixture success.
 The [comparative acceptance additions](ring-project-comparison-2026-11-14.md#additions-to-implementation-and-verification)

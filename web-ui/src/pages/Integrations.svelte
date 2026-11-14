@@ -6,11 +6,22 @@
   import Row from '../components/Row.svelte';
   import Icon from '../components/Icon.svelte';
   import OperationStatus from '../components/OperationStatus.svelte';
+  import BridgeHomeKit from '../components/BridgeHomeKit.svelte';
   let {
     snapshot,
     fresh,
     generation,
-  }: { snapshot: StateEnvelope | null; fresh: boolean; generation: string } = $props();
+    reauthenticate,
+    notify,
+    refresh,
+  }: {
+    snapshot: StateEnvelope | null;
+    fresh: boolean;
+    generation: string;
+    reauthenticate: () => Promise<boolean>;
+    notify: (message: string) => void;
+    refresh: () => Promise<void>;
+  } = $props();
   let selection = $state<CameraPage | null>(null);
   let error = $state('');
   let busy = $state(false);
@@ -82,6 +93,17 @@
     </div>
   </div>
 </div>
+{#if snapshot?.state?.noncamera?.bridge}
+  <BridgeHomeKit
+    monitoring={snapshot.state.noncamera}
+    homekitEnabled={snapshot.state.homekit.enabled}
+    {fresh}
+    {generation}
+    {reauthenticate}
+    {notify}
+    {refresh}
+  />
+{/if}
 <div class="section-head">
   <h3>Camera selection</h3>
   <button disabled={busy || loading} onclick={load}>{loading ? 'Refreshing…' : 'Refresh'}</button>

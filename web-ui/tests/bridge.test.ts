@@ -122,10 +122,10 @@ test('bridge DTO validation is additive and rejects unsafe or incomplete prefere
   }
 });
 
-test('import status distinguishes missing, excluded, unsupported and future publication', () => {
+test('import status distinguishes missing, excluded, unsupported and bridge selection', () => {
   const device = bridge.devices[0]!;
   assert.equal(bridgeDeviceStatus(undefined), 'Import information unavailable');
-  assert.equal(bridgeDeviceStatus(device), 'Selected for future publication');
+  assert.equal(bridgeDeviceStatus(device), 'Selected for Halo Bridge');
   assert.equal(
     bridgeDeviceStatus({ ...device, reason: 'bridge-capacity', selected: false }),
     'Bridge capacity reached',
