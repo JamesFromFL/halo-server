@@ -23,6 +23,8 @@ class OwnerAdministration:
         {
             "owner_state",
             "devices_monitoring_set",
+            "devices_light_policy_set",
+            "devices_light_set",
             "devices_alarm_policy_set",
             "devices_alarm_mode_set",
             "devices_bridge_set",
@@ -74,6 +76,16 @@ class OwnerAdministration:
                 raise AdminProtocolError("bad_params", "Alarm parameters are required")
             alarm = self.service._device_monitor.alarm
             action = alarm.set_mode if method.endswith("mode_set") else alarm.configure
+            return await action(**params)
+        if method in {"devices_light_policy_set", "devices_light_set"}:
+            from halo_server.devices.light import POLICY_FIELDS, SET_FIELDS
+
+            required = SET_FIELDS if method == "devices_light_set" else POLICY_FIELDS
+            _only(params, required)
+            if set(params) != required:
+                raise AdminProtocolError("bad_params", "Light parameters are required")
+            light = self.service._device_monitor.light
+            action = light.set_light if method == "devices_light_set" else light.configure
             return await action(**params)
         if method == "devices_bridge_pairing_get":
             _only(params, set())

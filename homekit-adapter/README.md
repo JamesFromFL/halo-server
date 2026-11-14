@@ -237,13 +237,29 @@ Night, panic, bypass and arbitrary provider commands have no IPC route. Unknown
 alarm state faults instead of reporting disarmed, and startup/identify never
 actuates a device.
 
-The child can request an `alarm_set` using its boot, account, registry revision,
-accepted snapshot sequence and exact child identity. Its correlated result is
+Qualified physical Beams lights add one binary Lightbulb service. Brightness,
+embedded motion services and lighting groups are deferred. The `light_set` command
+requests a finite On override or a return to automatic operation; Python owns the
+configured duration and per-device control grant. Actual lamp `On` is an independent
+observation: returning to automatic mode must not fabricate an Off reading.
+
+The Lightbulb uses a stable read/write/notify/write-response descriptor. Its setter
+returns confirmed actual state so HAP cannot optimistically cache the request.
+Actual On/availability changes received during a write take precedence over an
+older callback; unchanged pending snapshots do not. A truthful follow-up event
+also covers controllers that do not request write responses. The pinned HAP
+accessory serializer omits a falsy response value; false still remains correctly
+cached, readable and notified. Tests exercise this complete HAP write path without
+changing the pinned HAP library.
+
+The child can request an `alarm_set` or `light_set` using its boot, account,
+registry revision, accepted snapshot sequence and exact child identity. Its correlated result is
 bounded and reflects provider readback, never an optimistic state change.
 Observation updates continue while a command waits. Policy revocation, account
 changes, expiry and authority loss invalidate pending commands; an uncertain
 result cannot be retried automatically. One command per device and four in total
-are admitted. A lost child connection does not cancel or retry a potentially
+are admitted, shared between alarm and lighting commands. A lost child connection
+does not cancel or retry a potentially
 sent Ring command: Python retains ownership through bounded retirement.
 
 Stable child UUIDs and service subtypes preserve HAP IDs across rename, reorder,
@@ -260,9 +276,9 @@ process, `device-pairing-reset.js` reuses the existing exact-namespace,
 manifest-CAS cleanup primitive under the inherited exclusive lock. It never
 resets cameras or another account's bridge.
 
-Network-denied Node tests cover sensor and alarm mappings, unknown/stale reads,
+Network-denied Node tests cover sensor, alarm and lighting mappings, unknown/stale reads,
 identity and capacity boundaries, AID/IID stability, publication failure,
-pairing/reveal/reset races, framing, bounded output and alarm confirmation.
+pairing/reveal/reset races, framing, bounded output and observed command confirmation.
 Python tests exercise command/reply races through an actual private socket,
 including authority revocation, duplicate commands and child-loss retirement.
 Python tests additionally

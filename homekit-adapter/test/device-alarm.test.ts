@@ -6,7 +6,8 @@ import {
   Perms,
   Service,
 } from "@homebridge/hap-nodejs";
-import { DeviceAlarm, DeviceAlarmRequests } from "../src/device-alarm.js";
+import { DeviceAlarm } from "../src/device-alarm.js";
+import { DeviceCommandRequests } from "../src/device-commands.js";
 import {
   validateDeviceEnvelope,
   validateDevicePublication,
@@ -244,14 +245,14 @@ test("a fresh snapshot cannot revive a command whose prior observation expired",
 test("alarm request channel matches the full authority tuple and bounds concurrent requests", async () => {
   const sent: DeviceEnvelope[] = [],
     failures: string[] = [];
-  const channel = new DeviceAlarmRequests({
+  const channel = new DeviceCommandRequests({
     boot: () => deviceProfile,
     send: async (message) => {
       sent.push(message);
     },
     fail: (code) => failures.push(code),
   });
-  const pending = channel.request(request());
+  const pending = channel.request("alarm_set", request());
   assert.equal(sent.length, 1);
   assert.equal(sent[0]!.kind, "alarm_set");
   validateDeviceEnvelope(sent[0], "device-hap");
@@ -277,9 +278,11 @@ test("alarm request channel matches the full authority tuple and bounds concurre
   assert.equal((await pending).accepted, true);
   assert.throws(() => channel.receive(response));
   assert.deepEqual(failures, []);
-  const queue = Array.from({ length: 4 }, () => channel.request(request()));
+  const queue = Array.from({ length: 4 }, () =>
+    channel.request("alarm_set", request()),
+  );
   const rejects = queue.map((value) => assert.rejects(value));
-  await assert.rejects(channel.request(request()), /busy/);
+  await assert.rejects(channel.request("alarm_set", request()), /busy/);
   channel.close();
   await Promise.all(rejects);
 });
@@ -287,7 +290,7 @@ test("alarm timeout closes admission rather than retrying or accepting a late re
   context.mock.timers.enable({ apis: ["setTimeout"] });
   let sent: DeviceEnvelope | undefined;
   const failures: string[] = [];
-  const channel = new DeviceAlarmRequests({
+  const channel = new DeviceCommandRequests({
     boot: () => deviceProfile,
     send: async (message) => {
       sent = message;
@@ -295,10 +298,10 @@ test("alarm timeout closes admission rather than retrying or accepting a late re
     fail: (code) => failures.push(code),
     timeoutMs: 10,
   });
-  const pending = assert.rejects(channel.request(request()));
+  const pending = assert.rejects(channel.request("alarm_set", request()));
   context.mock.timers.tick(11);
   await pending;
-  assert.deepEqual(failures, ["alarm-command-timeout"]);
+  assert.deepEqual(failures, ["device-command-timeout"]);
   assert.throws(() =>
     channel.receive({
       ...sent!,
@@ -306,7 +309,7 @@ test("alarm timeout closes admission rather than retrying or accepting a late re
       payload: { ...request(), accepted: true, code: "ok" },
     }),
   );
-  await assert.rejects(channel.request(request()));
+  await assert.rejects(channel.request("alarm_set", request()));
 });
 test("strict alarm schema exposes no arbitrary action or ambiguous unavailable state", () => {
   const snapshot = devicePublication({ children: [alarmChild(true)] });

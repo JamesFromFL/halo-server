@@ -1,5 +1,4 @@
 /** Readback-driven alarm service and one narrowly scoped parent RPC. */
-import { randomUUID } from "node:crypto";
 import {
   Accessory,
   AccessoryEventTypes,
@@ -9,15 +8,7 @@ import {
   Perms,
   Service,
 } from "@homebridge/hap-nodejs";
-import { ProtocolError } from "./protocol.js";
-import {
-  validateDeviceAlarm,
-  type AlarmMode,
-  type DeviceAlarmRequest,
-  type DeviceAlarmResult,
-  type DeviceChild,
-  type DeviceEnvelope,
-} from "./device-protocol.js";
+import { type AlarmMode, type DeviceChild } from "./device-protocol.js";
 const targetValues: Record<AlarmMode, number> = {
   home: 0,
   away: 1,
@@ -135,94 +126,5 @@ export class DeviceAlarm {
       available: false,
       alarm: { mode: null, triggered: null, control_enabled: false },
     });
-  }
-}
-interface PendingAlarm {
-  request: DeviceEnvelope;
-  timer: NodeJS.Timeout;
-  resolve: (result: DeviceAlarmResult) => void;
-  reject: (error: Error) => void;
-}
-export interface DeviceAlarmChannelOptions {
-  boot: () => string | null;
-  send: (message: DeviceEnvelope) => Promise<void>;
-  fail: (code: string) => void;
-  timeoutMs?: number;
-}
-/** This queue never owns a Ring command; disconnect cannot retry or cancel provider actuation. */
-export class DeviceAlarmRequests {
-  private readonly pending = new Map<string, PendingAlarm>();
-  private closed = false;
-  constructor(private readonly options: DeviceAlarmChannelOptions) {}
-  async request(payload: DeviceAlarmRequest): Promise<DeviceAlarmResult> {
-    validateDeviceAlarm(payload);
-    const boot = this.options.boot();
-    if (this.closed || boot === null) throw new ProtocolError("not-ready");
-    if (this.pending.size >= 4) throw new ProtocolError("busy");
-    const message: DeviceEnvelope = {
-      v: 1,
-      kind: "alarm_set",
-      boot_id: boot,
-      request_id: randomUUID(),
-      payload: { ...structuredClone(payload) },
-    };
-    return new Promise<DeviceAlarmResult>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.options.fail("alarm-command-timeout");
-        this.close();
-      }, this.options.timeoutMs ?? 15_000);
-      this.pending.set(message.request_id, {
-        request: message,
-        timer,
-        resolve,
-        reject,
-      });
-      void this.options.send(message).catch(() => {
-        this.options.fail("alarm-command-write-failed");
-        this.close();
-      });
-    });
-  }
-  receive(message: DeviceEnvelope): void {
-    const pending = this.pending.get(message.request_id);
-    if (
-      this.closed ||
-      message.kind !== "alarm_set_result" ||
-      message.boot_id !== this.options.boot() ||
-      !pending
-    )
-      throw new ProtocolError("unowned-alarm-result");
-    validateDeviceAlarm(message.payload, true);
-    for (const key of [
-      "scope",
-      "registry_revision",
-      "sequence",
-      "accessory_uuid",
-      "device_id",
-      "target",
-    ]) {
-      const left = message.payload[key],
-        right = pending.request.payload[key];
-      const same =
-        key === "scope"
-          ? (left as DeviceAlarmRequest["scope"]).profile_id ===
-              (right as DeviceAlarmRequest["scope"]).profile_id &&
-            (left as DeviceAlarmRequest["scope"]).account_generation ===
-              (right as DeviceAlarmRequest["scope"]).account_generation
-          : left === right;
-      if (!same) throw new ProtocolError("mismatched-alarm-result");
-    }
-    this.pending.delete(message.request_id);
-    clearTimeout(pending.timer);
-    pending.resolve(message.payload as unknown as DeviceAlarmResult);
-  }
-  close(): void {
-    if (this.closed) return;
-    this.closed = true;
-    for (const pending of this.pending.values()) {
-      clearTimeout(pending.timer);
-      pending.reject(failure());
-    }
-    this.pending.clear();
   }
 }

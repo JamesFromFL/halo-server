@@ -420,6 +420,43 @@ def encode_mode_command(
     }
 
 
+def encode_light_command(
+    asset_id: str, light_zid: str, on: bool, duration_seconds: int | None, sequence: int
+) -> dict[str, Any]:
+    """Encode physical Beams manual-on or return-to-automatic only.
+
+    Ring's ``default`` mode is not a promise that motion lighting stays off.
+    Groups, brightness, and generic switch actuators use different contracts.
+    """
+    asset_id = _validate_outbound_identifier(asset_id, "asset_id")
+    light_zid = _validate_outbound_identifier(light_zid, "light_zid")
+    _validate_outbound_sequence(sequence)
+    if (
+        type(on) is not bool
+        or (
+            on and (type(duration_seconds) is not int or duration_seconds not in {30, 60, 300, 900})
+        )
+        or (not on and duration_seconds is not None)
+    ):
+        raise ValueError("unsupported light command")
+    data = {"lightMode": "on", "duration": duration_seconds} if on else {"lightMode": "default"}
+    return {
+        "channel": "message",
+        "msg": {
+            "msg": "DeviceInfoSet",
+            "datatype": "DeviceInfoSetType",
+            "dst": asset_id,
+            "body": [
+                {
+                    "zid": light_zid,
+                    "command": {"v1": [{"commandType": "light-mode.set", "data": data}]},
+                }
+            ],
+            "seq": sequence,
+        },
+    }
+
+
 def encode_clap_frame(payload: Mapping[str, Any]) -> str:
     """Serialize an already constructed outbound CLAP envelope."""
 

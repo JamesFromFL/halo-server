@@ -194,6 +194,7 @@ class DevicePublisher:
                 on_ready=changed,
                 on_retired=changed,
                 on_alarm_set=self._alarm_set,
+                on_light_set=self._light_set,
             )
             self._runtime_token, self._scope = token, scope
             self._state = "starting"
@@ -318,6 +319,20 @@ class DevicePublisher:
                         and available
                     ),
                 }
+            light = None
+            if entry["mappings"] == ["lightbulb"]:
+                state = monitor.light.view(row) if row else None
+                on = state.get("on") if state and available else None
+                light = {
+                    "on": on,
+                    "control_enabled": bool(
+                        state
+                        and state["enabled"]
+                        and state["authorization"] == "allowed"
+                        and type(on) is bool
+                        and available
+                    ),
+                }
             children.append(
                 {
                     "device_id": entry["id"],
@@ -328,6 +343,7 @@ class DevicePublisher:
                     "available": available,
                     "values": values,
                     "alarm": alarm,
+                    "light": light,
                 }
             )
         return {
@@ -405,6 +421,86 @@ class DevicePublisher:
         return {
             "accepted": False,
             "code": "uncertain" if result.get("possibly_sent") else "policy-denied",
+        }
+
+    async def _light_set(self, payload, admission):
+        """A HAP request has no Ring authority until the daemon admits it."""
+        scope, profile = self._profile()
+        runtime, token = self.runtime, self._token
+        boot = runtime.boot_id if runtime else None
+        revision = self.bridge.registry.revision
+        snapshot = self._last_snapshot
+        if (
+            scope is None
+            or profile is None
+            or runtime is None
+            or snapshot is None
+            or not admission()
+            or not self._admitted(scope, revision, runtime, token, boot)
+            or self._published_boot != boot
+            or payload["scope"] != snapshot["scope"]
+            or payload["registry_revision"] != revision
+            or payload["sequence"] != snapshot["sequence"]
+            or snapshot["expires_at_ms"] <= time.monotonic() * 1000
+        ):
+            return {"accepted": False, "code": "conflict", "observed_on": None}
+        child = next(
+            (
+                row
+                for row in snapshot["children"]
+                if row["device_id"] == payload["device_id"]
+                and row["accessory_uuid"] == payload["accessory_uuid"]
+            ),
+            None,
+        )
+        if not child or not child.get("light") or not child["light"]["control_enabled"]:
+            return {"accepted": False, "code": "policy-denied", "observed_on": None}
+        monitor = self.service._device_monitor
+        row = monitor.light._row(payload["device_id"])
+        state = monitor.light.view(row) if row else None
+        if not state or not state["can_set"]:
+            return {"accepted": False, "code": "policy-denied", "observed_on": None}
+
+        def current():
+            # Observation sequence may advance while waiting for readback.
+            return admission() and self._admitted(scope, revision, runtime, token, boot)
+
+        try:
+            result = await monitor.light.set_light(
+                profile_id=scope.profile_id,
+                account_generation=scope.generation,
+                device_id=payload["device_id"],
+                provider_generation=state["provider_generation"],
+                expected_epoch=state["epoch"],
+                expected_revision=state["observed_revision"],
+                expected_policy_revision=state["policy_revision"],
+                target=payload["target"],
+                operation_id=str(uuid4()),
+                admission=current,
+            )
+        except AdminProtocolError as error:
+            return {
+                "accepted": False,
+                "code": "busy" if error.code == "busy" else "conflict",
+                "observed_on": None,
+            }
+        if result.get("status") == "confirmed" and type(result.get("on")) is bool and current():
+            # A newer source event can reach the daemon after the provider
+            # produced its result. Do not overwrite it with an older reply.
+            latest_row = monitor.light._row(payload["device_id"])
+            latest = monitor.light.view(latest_row) if latest_row else None
+            if not latest or latest["on"] is None or latest["authorization"] != "allowed":
+                return {"accepted": False, "code": "uncertain", "observed_on": None}
+            observed = (
+                latest["on"]
+                if latest["observed_revision"] > state["observed_revision"]
+                else result["on"]
+            )
+            return {"accepted": True, "code": "ok", "observed_on": observed}
+        return {
+            "accepted": False,
+            "code": "uncertain" if result.get("possibly_sent") else "policy-denied",
+            "observed_on": None,
         }
 
     def snapshot(self):

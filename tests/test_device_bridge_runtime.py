@@ -39,6 +39,7 @@ def snapshot():
                 "mappings": ["contact"],
                 "available": True,
                 "alarm": None,
+                "light": None,
                 "values": {**dict.fromkeys(ipc.MAPPINGS), "contact": False},
             }
         ],
@@ -214,7 +215,7 @@ def test_pairing_metadata_validates_exact_manifest_and_never_accepts_partial_sec
     ipc.encode_frame(reveal)
 
 
-def fake_child(tmp_path, *, hello="", ping="", before="", publish="", alarm_result=""):
+def fake_child(tmp_path, *, hello="", ping="", before="", publish="", command_result=""):
     path = tmp_path / "fake.cjs"
     path.write_text(
         """
@@ -258,9 +259,9 @@ control.on('data', chunk => {
 """
         + publish
         + """
-    } else if (message.kind === 'alarm_set_result') {
+    } else if (['alarm_set_result','light_set_result'].includes(message.kind)) {
 """
-        + alarm_result
+        + command_result
         + """
     } else if (message.kind === 'shutdown') {
       message.kind = 'shutdown_ack'; send(message); control.end();
@@ -674,6 +675,32 @@ async def test_python_and_node_accept_identical_bounded_protocol_corpus():
                 }
             ).encode()
         )
+    from test_device_light_runtime import light_command, light_snapshot
+
+    light = light_snapshot()
+    cases.append(json.dumps(envelope("publish", light)).encode())
+    for change in ({"on": None}, {"on": 1}, {"on": "on"}, {"control_enabled": 1}):
+        changed = copy.deepcopy(light)
+        changed["children"][0]["light"].update(change)
+        cases.append(json.dumps(envelope("publish", changed)).encode())
+    for target in (True, False, 0, 1, "on", "default", None, []):
+        request = envelope("light_set", {**light_command(light), "target": target})
+        cases.append(json.dumps(request).encode())
+        for observed in (True, False, 1, None):
+            cases.append(
+                json.dumps(
+                    {
+                        **request,
+                        "kind": "light_set_result",
+                        "payload": {
+                            **request["payload"],
+                            "accepted": True,
+                            "code": "ok",
+                            "observed_on": observed,
+                        },
+                    }
+                ).encode()
+            )
     expected = []
     for body in cases:
         try:

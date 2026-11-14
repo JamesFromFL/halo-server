@@ -24,6 +24,7 @@ export function deviceChild(
     mappings,
     available: true,
     alarm: null,
+    light: null,
     values: {
       contact: null,
       motion: null,
@@ -70,7 +71,10 @@ export class DeviceFakePublisher implements DevicePublisher {
     this.unpublished.push(bridge);
   }
 }
-export function deviceHarness(onAlarmSet?: DeviceBridgeOptions["onAlarmSet"]) {
+export function deviceHarness(
+  onAlarmSet?: DeviceBridgeOptions["onAlarmSet"],
+  onLightSet?: DeviceBridgeOptions["onLightSet"],
+) {
   let now = 1,
     closes = 0,
     preflights = 0;
@@ -88,6 +92,7 @@ export function deviceHarness(onAlarmSet?: DeviceBridgeOptions["onAlarmSet"]) {
     store,
     monotonicNow: () => now,
     ...(onAlarmSet ? { onAlarmSet } : {}),
+    ...(onLightSet ? { onLightSet } : {}),
   });
   return {
     manager,

@@ -102,6 +102,21 @@ test('bridge preparation refuses missing account and unavailable registry state'
 
 test('bridge DTO validation is additive and rejects unsafe or incomplete preference snapshots', () => {
   assert.equal(validBridge(bridge), true);
+  assert.equal(
+    validBridge({
+      ...bridge,
+      excluded_mappings: [
+        'contact',
+        'motion',
+        'leak',
+        'smoke',
+        'carbon_monoxide',
+        'security_system',
+        'lightbulb',
+      ],
+    }),
+    true,
+  );
   assert.equal(validNoncamera(monitoring), true);
   assert.equal(validNoncamera({ ...monitoring, bridge: undefined }), true);
   const invalid = [

@@ -29,7 +29,15 @@ PREFERENCE_FIELDS = frozenset(
 )
 _KEY = re.compile(r"[a-f0-9]{64}\Z")
 _KIND = re.compile(r"[a-z][a-z0-9-]{0,63}\Z")
-_MAPPINGS = {"contact", "motion", "leak", "smoke", "carbon_monoxide", "security_system"}
+_MAPPINGS = {
+    "contact",
+    "motion",
+    "leak",
+    "smoke",
+    "carbon_monoxide",
+    "security_system",
+    "lightbulb",
+}
 
 
 def validate_preferences(value):
@@ -43,7 +51,7 @@ def validate_preferences(value):
         ("excluded_devices", 512, lambda item: _KEY.fullmatch(item)),
         ("excluded_locations", 128, lambda item: _KEY.fullmatch(item)),
         ("excluded_kinds", 64, lambda item: _KIND.fullmatch(item)),
-        ("excluded_mappings", 6, lambda item: item in _MAPPINGS),
+        ("excluded_mappings", 7, lambda item: item in _MAPPINGS),
     ):
         items = value[key]
         if (

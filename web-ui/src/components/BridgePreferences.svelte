@@ -54,11 +54,15 @@
   const mappingExclusion = $derived(
     registration?.eligible === true && registration.mappings.length === 0,
   );
+  const legacySwitchExclusion = $derived(
+    device?.kind === 'beams-light' && bridge?.excluded_kinds.includes('switch') === true,
+  );
   const broaderExclusion = $derived(
     !!device &&
       !!bridge &&
       (bridge.excluded_locations.includes(device.location_id) ||
         bridge.excluded_kinds.includes(device.kind) ||
+        legacySwitchExclusion ||
         mappingExclusion),
   );
   const preferred = $derived(
@@ -126,10 +130,12 @@
       <Row
         title="Include in Halo Bridge"
         subtitle={mappingExclusion
-          ? 'All eligible sensor capabilities are excluded. Change capability preferences in Devices first.'
-          : broaderExclusion
-            ? 'Excluded by a location or device-type preference. Change that preference in Devices first.'
-            : 'Only qualified device capabilities are eligible. Alarm controls require their own location opt-in.'}
+          ? 'All eligible device capabilities are excluded. Change capability preferences in Devices first.'
+          : legacySwitchExclusion
+            ? 'Excluded by a saved switch-family preference. Remove that device-type exclusion in Devices to include this light.'
+            : broaderExclusion
+              ? 'Excluded by a location or device-type preference. Change that preference in Devices first.'
+              : 'Only qualified device capabilities are eligible. Alarm and light controls require their own opt-in.'}
       >
         <input
           type="checkbox"
@@ -176,7 +182,7 @@
       </Row>
       <Row
         title="Automatically include supported devices"
-        subtitle="Includes qualified devices as they are discovered. Exclusions take priority; alarm controls remain a separate opt-in."
+        subtitle="Includes qualified devices as they are discovered. Exclusions take priority; alarm and light controls remain separate opt-ins."
       >
         <input
           type="checkbox"
@@ -221,7 +227,7 @@
     <details class="bridge-exclusions">
       <summary>Import exclusions</summary>
       <p class="inline-note">
-        Exclude locations, device types, or individual sensor capabilities. Open a device to change
+        Exclude locations, device types, or individual device capabilities. Open a device to change
         its own import preference.
       </p>
       <div class="group">
@@ -289,7 +295,7 @@
           </Row>
         {/each}
       </div>
-      <h3>Sensor capabilities</h3>
+      <h3>Device capabilities</h3>
       <div class="group">
         {#each Object.entries(mappingLabels) as [mapping, label]}
           <Row title={label} subtitle="Include this reported capability on eligible devices">

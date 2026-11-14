@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "source_hash": "370b9eb7cf048fa10d54f31cdf9e63d9af1750bf457de82b131fd9e4fb5fbb5d",
+  "source_hash": "8c3fd415d06643a5d35fd6d886965a09ba4dc4297a5af182af20748408d8eb8f",
   "source_files": [
     {
       "path": ".prettierignore",
@@ -24,7 +24,7 @@
     },
     {
       "path": "package.json",
-      "sha256": "14a55735d08a66eca60654f609dac0a02da883d1348e93a8d1bba90e791c5136"
+      "sha256": "5143768bc99f439d6b2e39aabd095dd5043db6f9cb356b0745fb2f402e2d342f"
     },
     {
       "path": "public/THIRD_PARTY_NOTICES.txt",
@@ -55,8 +55,12 @@
       "sha256": "8ddb7b83a22aeaa6a9ca00cb9abfa075d9db2b04c907bbd81a363d9456915cb2"
     },
     {
+      "path": "scripts/light-smoke.mjs",
+      "sha256": "7e5d353767e3576e315c0c8a3e972ae6abdae30ef4132c0c6bb3180e86ceb9cb"
+    },
+    {
       "path": "scripts/noncamera-smoke.mjs",
-      "sha256": "52a7626b259386a1985d4af0207ad028ae10b05bef05d233786950d17247a180"
+      "sha256": "65c7d6f858853572b586a567642c16b3d7322ae2c2faa63cea53bd7699dd2372"
     },
     {
       "path": "src/App.svelte",
@@ -68,11 +72,11 @@
     },
     {
       "path": "src/components/BridgeHomeKit.svelte",
-      "sha256": "37ec5f8a18044277f84603869da47d7b358dac35485c8c5a16a1f29427b6cd44"
+      "sha256": "c594ccf7f2c544ec90ba46d011c90f28f52879e5a6e947fe65adffd8e4c4d53f"
     },
     {
       "path": "src/components/BridgePreferences.svelte",
-      "sha256": "c12e4710e32aa4c0125deee589567ee6a5b14fbc595f61be5ed8a812cb0d3907"
+      "sha256": "e53b77558cb22b4d738da1f55e5d752d144b7402a6c9b838cdc0b05ccd16df99"
     },
     {
       "path": "src/components/Confirm.svelte",
@@ -83,12 +87,16 @@
       "sha256": "b01bc5b8265cd3e81b3f32b4ee6513fb639527eb4ade2f4818613c1bac897400"
     },
     {
+      "path": "src/components/LightControls.svelte",
+      "sha256": "74e859364f7378f14a14e6541176e2e9ec785aab51df6fc6a2caf05a75f78961"
+    },
+    {
       "path": "src/components/NoncameraDevices.svelte",
-      "sha256": "2e96ba44b4b4da17d077b8d11be0320035c60b84f73b0985da5b3908e43cf7c1"
+      "sha256": "85e028e2a8176b3035f6d7f7a786560451b613848e73eea49ed9b56df76f13b3"
     },
     {
       "path": "src/components/OperationStatus.svelte",
-      "sha256": "2832ae3aa031d0e7301adf81fd04e19feee9cbc847689d0bb6112e1a26c10adc"
+      "sha256": "f70dc043109e615b7e83ca292e925c8a4ceb5636807e236e47bcc55a6aedc17a"
     },
     {
       "path": "src/components/PairingCode.svelte",
@@ -116,7 +124,11 @@
     },
     {
       "path": "src/lib/bridge.ts",
-      "sha256": "ad1e8002eac75e31d8598aed1c63818c7fbf6dc1eeb92e05be5569c269e724b0"
+      "sha256": "b816b667a5070ed602b2a277db633bbe7e8358c536d1e824ebbeaedfdd1d3ed8"
+    },
+    {
+      "path": "src/lib/light.ts",
+      "sha256": "dcc7461f097ac01604aac6d71d108ff96c50f33999affcf7b0301be8968a599f"
     },
     {
       "path": "src/lib/model.ts",
@@ -124,7 +136,7 @@
     },
     {
       "path": "src/lib/noncamera.ts",
-      "sha256": "d94029253a10125b83558706569c8284892f2a0385cb8b588d6b0efe393396b1"
+      "sha256": "4d5d281c39980d55a33d29f6b624bdcfc3eeecfcc9f0a222a80e69b05acc1eff"
     },
     {
       "path": "src/lib/password.ts",
@@ -132,7 +144,7 @@
     },
     {
       "path": "src/lib/types.ts",
-      "sha256": "f67f5e745796648c94ea7cc6bee85ba4f485a37af37b24e918912962af771a61"
+      "sha256": "b5617a370123c5f12cd40937609d26078eb6e0bc228832d0b15881e1f37e8d8a"
     },
     {
       "path": "src/main.ts",
@@ -188,7 +200,11 @@
     },
     {
       "path": "tests/bridge.test.ts",
-      "sha256": "3474c822186f5d7bfc326ca09a832e00b034397206c2d7b4c5b6d14a12a958b7"
+      "sha256": "6bd29cd501453b4409d4056cfcdbbdeaa596431dd131c4564c6092c86d7eb684"
+    },
+    {
+      "path": "tests/light.test.ts",
+      "sha256": "adbf1b77a8276fa8eac8685f669a0778b53084c24f1ecc7cf3d374a174e33945"
     },
     {
       "path": "tests/model.test.ts",
@@ -217,12 +233,12 @@
       "sha256": "27b3a540203dab45ee90ade440f4840b513dd2055969a84a9ebccb561fd14799"
     },
     {
-      "path": "assets/index-CPzicLH6.js",
-      "sha256": "d8bcaca8451e79586cd1295185ed7d8fbe6d6c5a13af410f244792ed8f3290a7"
+      "path": "assets/index-CmI0CDOp.css",
+      "sha256": "7e2c4e87300cfab9ea67f076cfc39ce94221067a7a5a3fb93c35a32777ecbcc3"
     },
     {
-      "path": "assets/index-l1HE-UYa.css",
-      "sha256": "3bba76a1b6060af365a006bd77153f0c125a3f690a1ac89bdbfcfbad3ea6c545"
+      "path": "assets/index-DxQ5h14g.js",
+      "sha256": "7d104989560c79700bdd433b6300dbe6351cfe13dacd6974145cda661bcffead"
     },
     {
       "path": "halo.png",
@@ -230,7 +246,7 @@
     },
     {
       "path": "index.html",
-      "sha256": "be1a3ca76b58ff0dc89cb2f8a581df2d1b05ee8ee7c673620b4b3e67d6d11174"
+      "sha256": "6ab285240ddcb94232e7f1d856fc73d9ad36a6e022439f98e6b940846baeb56e"
     }
   ]
 }

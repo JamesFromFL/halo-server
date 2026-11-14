@@ -564,7 +564,7 @@ try {
     assert.equal(await include.isChecked(), false);
     assert.equal(await include.isDisabled(), true);
     await page
-      .getByText('All eligible sensor capabilities are excluded.', { exact: false })
+      .getByText('All eligible device capabilities are excluded.', { exact: false })
       .waitFor();
     backend.bridge.overflow_count = 1;
     backend.bridge.devices[0].reason = 'registry-capacity';

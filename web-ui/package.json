@@ -17,6 +17,7 @@
     "test:devices": "node scripts/noncamera-smoke.mjs",
     "test:bridge": "node scripts/bridge-homekit-smoke.mjs",
     "test:alarm": "node scripts/alarm-smoke.mjs",
+    "test:light": "node scripts/light-smoke.mjs",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },

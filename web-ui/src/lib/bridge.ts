@@ -13,6 +13,7 @@ export const mappingLabels: Record<string, string> = {
   smoke: 'Smoke',
   carbon_monoxide: 'Carbon monoxide',
   security_system: 'Security system',
+  lightbulb: 'Lightbulb',
 };
 
 const count = (value: unknown): value is number =>
@@ -64,7 +65,7 @@ export function validBridge(value: unknown): value is BridgeState {
     bridge.included_devices.length + bridge.excluded_devices.length <= 512 &&
     textList(bridge.excluded_locations, 128) &&
     textList(bridge.excluded_kinds, 64) &&
-    textList(bridge.excluded_mappings, 6) &&
+    textList(bridge.excluded_mappings, 7) &&
     bridge.excluded_mappings.every((mapping) => Object.hasOwn(mappingLabels, mapping)) &&
     !bridge.included_devices.some((id) => bridge.excluded_devices.includes(id)) &&
     (bridge.publication === 'not_implemented' ||

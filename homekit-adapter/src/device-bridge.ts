@@ -9,6 +9,7 @@ import {
   Service,
 } from "@homebridge/hap-nodejs";
 import { DeviceAlarm } from "./device-alarm.js";
+import { DeviceLight } from "./device-light.js";
 import { ProtocolError, type PairingManifest } from "./protocol.js";
 import { pairingSnapshot } from "./pairing.js";
 import { pairingRevision, type PairingStore } from "./storage.js";
@@ -23,6 +24,8 @@ import {
   type AlarmMode,
   type DeviceAlarmRequest,
   type DeviceAlarmResult,
+  type DeviceLightRequest,
+  type DeviceLightResult,
 } from "./device-protocol.js";
 
 const sensors = {
@@ -71,7 +74,7 @@ export class DeviceSensor {
       callback(),
     );
     for (const mapping of value.mappings) {
-      if (mapping === "security_system")
+      if (mapping === "security_system" || mapping === "lightbulb")
         throw new ProtocolError("invalid-device-child");
       const definition = sensors[mapping],
         service = new definition.service(value.name, `halo:${mapping}`);
@@ -184,6 +187,7 @@ export interface DeviceBridgeOptions {
   publisher: DevicePublisher;
   monotonicNow?: () => number;
   onAlarmSet?: (request: DeviceAlarmRequest) => Promise<DeviceAlarmResult>;
+  onLightSet?: (request: DeviceLightRequest) => Promise<DeviceLightResult>;
 }
 const sameScope = (
   a: DevicePublication["scope"],
@@ -196,13 +200,16 @@ const sameScope = (
 export class DeviceBridgeManager {
   private bridge: Bridge | null = null;
   private publication: DevicePublication | null = null;
-  private readonly children = new Map<string, DeviceSensor | DeviceAlarm>();
+  private readonly children = new Map<
+    string,
+    DeviceSensor | DeviceAlarm | DeviceLight
+  >();
   private readonly identities = new Map<
     string,
     { uuid: string; mappings: string }
   >();
-  private readonly pendingAlarms = new Set<string>();
-  private readonly alarmEpochs = new Map<string, number>();
+  private readonly pendingCommands = new Set<string>();
+  private readonly commandEpochs = new Map<string, number>();
   private expiry: NodeJS.Timeout | null = null;
   private deadline = 0;
   private claimed = false;
@@ -301,7 +308,7 @@ export class DeviceBridgeManager {
       this.bridge
         .getService(Service.AccessoryInformation)!
         .setCharacteristic(Characteristic.Manufacturer, "Halo")
-        .setCharacteristic(Characteristic.Model, "Ring Sensor Bridge")
+        .setCharacteristic(Characteristic.Model, "Ring Device Bridge")
         .setCharacteristic(
           Characteristic.SerialNumber,
           value.bridge.accessory_uuid,
@@ -339,13 +346,14 @@ export class DeviceBridgeManager {
           child?.accessory_uuid,
           child?.available,
           child?.alarm?.control_enabled,
+          child?.light?.control_enabled,
         ]);
       if (
         (previous !== null && this.now() >= this.deadline) ||
         authority(previousChildren.get(id)) !==
           authority(currentChildren.get(id))
       )
-        this.alarmEpochs.set(id, (this.alarmEpochs.get(id) ?? 0) + 1);
+        this.commandEpochs.set(id, (this.commandEpochs.get(id) ?? 0) + 1);
     }
     this.deadline = Math.min(this.now() + 15_000, value.expires_at_ms);
     for (const child of [...value.children].sort((a, b) =>
@@ -360,7 +368,13 @@ export class DeviceBridgeManager {
               () => this.fresh(),
               (target) => this.setAlarm(child.device_id, target),
             )
-          : new DeviceSensor(child, () => this.fresh());
+          : child.mappings.includes("lightbulb")
+            ? new DeviceLight(
+                child,
+                () => this.fresh(),
+                (target) => this.setLight(child.device_id, target),
+              )
+            : new DeviceSensor(child, () => this.fresh());
         this.bridge.addBridgedAccessory(sensor.accessory);
         this.children.set(child.device_id, sensor);
         this.identities.set(child.device_id, {
@@ -410,10 +424,10 @@ export class DeviceBridgeManager {
       !["disarmed", "home", "away"].includes(target)
     )
       throw unavailable();
-    if (this.pendingAlarms.has(deviceId))
+    if (this.pendingCommands.has(deviceId) || this.pendingCommands.size >= 4)
       throw new HapStatusError(HAPStatus.RESOURCE_BUSY);
-    this.pendingAlarms.add(deviceId);
-    const epoch = this.alarmEpochs.get(deviceId);
+    this.pendingCommands.add(deviceId);
+    const epoch = this.commandEpochs.get(deviceId);
     const request: DeviceAlarmRequest = {
       scope: structuredClone(publication.scope),
       registry_revision: publication.registry_revision,
@@ -428,7 +442,7 @@ export class DeviceBridgeManager {
         now = current?.children.find((item) => item.device_id === deviceId);
       if (
         !result.accepted ||
-        this.alarmEpochs.get(deviceId) !== epoch ||
+        this.commandEpochs.get(deviceId) !== epoch ||
         !this.fresh() ||
         !this.published ||
         !current ||
@@ -441,7 +455,57 @@ export class DeviceBridgeManager {
         throw unavailable();
       // The parent only accepts after observed readback. CurrentState is never set here.
     } finally {
-      this.pendingAlarms.delete(deviceId);
+      this.pendingCommands.delete(deviceId);
+    }
+  }
+  async setLight(deviceId: string, target: boolean): Promise<boolean> {
+    const publication = this.publication,
+      child = publication?.children.find((item) => item.device_id === deviceId);
+    if (
+      !publication ||
+      !child ||
+      !this.fresh() ||
+      !this.published ||
+      !child.available ||
+      !child.light?.control_enabled ||
+      typeof child.light.on !== "boolean" ||
+      typeof target !== "boolean" ||
+      !this.options.onLightSet
+    )
+      throw unavailable();
+    if (this.pendingCommands.has(deviceId) || this.pendingCommands.size >= 4)
+      throw new HapStatusError(HAPStatus.RESOURCE_BUSY);
+    this.pendingCommands.add(deviceId);
+    const epoch = this.commandEpochs.get(deviceId);
+    const request: DeviceLightRequest = {
+      scope: structuredClone(publication.scope),
+      registry_revision: publication.registry_revision,
+      sequence: publication.sequence,
+      device_id: child.device_id,
+      accessory_uuid: child.accessory_uuid,
+      target,
+    };
+    try {
+      const result = await this.options.onLightSet(request);
+      const current = this.publication,
+        now = current?.children.find((item) => item.device_id === deviceId);
+      if (
+        !result.accepted ||
+        typeof result.observed_on !== "boolean" ||
+        this.commandEpochs.get(deviceId) !== epoch ||
+        !this.fresh() ||
+        !this.published ||
+        !current ||
+        !sameScope(current.scope, request.scope) ||
+        current.registry_revision !== request.registry_revision ||
+        !now?.available ||
+        now.accessory_uuid !== request.accessory_uuid ||
+        !now.light?.control_enabled
+      )
+        throw unavailable();
+      return result.observed_on;
+    } finally {
+      this.pendingCommands.delete(deviceId);
     }
   }
   private base(identity: DevicePairingIdentity): PairingBase {

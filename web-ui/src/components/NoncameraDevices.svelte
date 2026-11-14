@@ -18,6 +18,7 @@
   import OperationStatus from './OperationStatus.svelte';
   import BridgePreferences from './BridgePreferences.svelte';
   import AlarmControls from './AlarmControls.svelte';
+  import LightControls from './LightControls.svelte';
 
   let {
     monitoring,
@@ -62,7 +63,8 @@
     device
       ? deviceObservations(device).filter(
           (item) =>
-            !device.alarm || !['alarm_mode', 'alarm_state', 'alarm_signal'].includes(item.key),
+            (!device.alarm || !['alarm_mode', 'alarm_state', 'alarm_signal'].includes(item.key)) &&
+            (!device.light || item.key !== 'light_on'),
         )
       : [],
   );
@@ -70,7 +72,7 @@
     fresh &&
       !!monitoring?.enabled &&
       !!device &&
-      (device.alarm
+      (device.alarm || device.light
         ? device.source_health === 'online'
         : !device.stale && device.available === true),
   );
@@ -138,9 +140,11 @@
       ><span
         >{device.alarm
           ? 'Alarm monitoring and guarded controls'
-          : device.supported
-            ? 'Read-only monitoring'
-            : 'Not yet supported'}</span
+          : device.light
+            ? 'Light monitoring and guarded controls'
+            : device.supported
+              ? 'Read-only monitoring'
+              : 'Not yet supported'}</span
       ></Row
     >
   </div>
@@ -156,7 +160,16 @@
       {notify}
       {refresh}
     />{/if}
-  {#if observations.length || !device.alarm}<h3>Observations</h3>
+  {#if monitoring && device.light}<LightControls
+      {monitoring}
+      {device}
+      {fresh}
+      {generation}
+      {reauthenticate}
+      {notify}
+      {refresh}
+    />{/if}
+  {#if observations.length || (!device.alarm && !device.light)}<h3>Observations</h3>
     <div class="group">
       {#each observations as observation (observation.key)}
         <Row
@@ -181,7 +194,7 @@
       >
     </div>
   {/if}
-  {#if !device.alarm}<p class="inline-note">
+  {#if !device.alarm && !device.light}<p class="inline-note">
       This device is read-only in Halo. Device commands, panic actions, and emergency dispatch are
       blocked by the server.
     </p>{/if}
@@ -282,7 +295,13 @@
           >
           <span class="device-status"
             ><span class="badge"
-              >{item.alarm ? 'Alarm' : item.supported ? 'Read-only' : 'Unsupported'}</span
+              >{item.alarm
+                ? 'Alarm'
+                : item.light
+                  ? 'Light'
+                  : item.supported
+                    ? 'Read-only'
+                    : 'Unsupported'}</span
             ><span class="status">{noncameraHealth(item, fresh && !!monitoring?.enabled)}</span
             ></span
           ><Icon name="next" size={16} />

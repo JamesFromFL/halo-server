@@ -17,6 +17,7 @@ from halo_server.api.admin import AdminProtocolError
 from halo_server.devices.alarm import AlarmCoordinator
 from halo_server.devices.bridge import DeviceBridge
 from halo_server.devices.catalog import CatalogError, DeviceCatalog
+from halo_server.devices.light import LightCoordinator
 from halo_server.devices.policy import (
     DevicePolicy,
     DevicePolicyConflictError,
@@ -51,6 +52,7 @@ class DeviceMonitor:
         self._generation = 0
         self._state = "disabled"
         self.alarm = AlarmCoordinator(self)
+        self.light = LightCoordinator(self)
 
     def _context(self):
         client = self.service._sessions.active_client
@@ -73,10 +75,12 @@ class DeviceMonitor:
         if self._binding is not None:
             self._binding.active.clear()
         self.alarm.invalidate()
+        self.light.invalidate()
         self.bridge.invalidate()
 
     async def reconcile(self):
         await self.alarm.load()
+        await self.light.load()
         await self.bridge.reconcile()
         async with self._lock:
             try:
@@ -147,14 +151,17 @@ class DeviceMonitor:
             return
         try:
             alarms = batch.pop("alarms", ())
+            lights = batch.pop("lights", ())
             self._catalog.apply(**batch)
         except (CatalogError, TypeError, ValueError):
             self._state = "error"
             self.alarm.receive(binding, ())
+            self.light.receive(binding, ())
             self.bridge.publisher.notify()
             return
         self._state = "ready" if batch["complete"] else "partial"
         self.alarm.receive(binding, alarms)
+        self.light.receive(binding, lights)
         self.bridge.observe(binding.scope, self._catalog.records(present_only=True))
 
     async def _retire(self):
@@ -163,6 +170,7 @@ class DeviceMonitor:
             return
         binding.active.clear()
         self.alarm.invalidate()
+        self.light.invalidate()
         self._catalog = None
         self.bridge.invalidate()
 
@@ -184,8 +192,13 @@ class DeviceMonitor:
                 await self._retire()
                 self._state = "disabled" if not self.policy.enabled else "offline"
         finally:
-            await self.alarm.close()
-            await self.bridge.close()
+            try:
+                await self.alarm.close()
+            finally:
+                try:
+                    await self.light.close()
+                finally:
+                    await self.bridge.close()
 
     async def set_enabled(self, *, profile_id, account_generation, expected_revision, enabled):
         if (
@@ -215,6 +228,7 @@ class DeviceMonitor:
                 )
                 self._loaded = True
                 await self.alarm.load()
+                await self.light.load()
             except DevicePolicyConflictError as error:
                 try:
                     self.policy = await owned_thread(self.store.load)
@@ -273,6 +287,9 @@ class DeviceMonitor:
             alarm = self.alarm.view(row)
             if alarm is not None:
                 row["alarm"] = alarm
+            light = self.light.view(row)
+            if light is not None:
+                row["light"] = light
         if truncated:
             inventory["complete"] = False
         return {
@@ -289,7 +306,8 @@ class DeviceMonitor:
             "safety": safety_snapshot()
             | {
                 "read_only": not any(
-                    row.get("alarm", {}).get("enabled") for row in inventory["devices"]
+                    row.get("alarm", {}).get("enabled") or row.get("light", {}).get("enabled")
+                    for row in inventory["devices"]
                 )
             },
             "bridge": self.bridge.snapshot(),

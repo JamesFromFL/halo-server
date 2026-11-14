@@ -16,6 +16,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 
 from halo_server.devices.alarm_commands import AlarmCommands
+from halo_server.devices.light_commands import BEAMS_TYPES, LightCommands
 from halo_server.devices.models import DeviceIdentity, DeviceObservation, DeviceRecord
 from halo_server.ring.hub.models import (
     AlarmConnectionStatus,
@@ -145,6 +146,8 @@ class NoncameraProvider:
         self._close_task: asyncio.Task | None = None
         self._error: str | None = None
         self._alarm_commands = AlarmCommands(self, timeout=command_timeout)
+        self._beams_owners: dict[tuple[str, str], bool] = {}
+        self._light_commands = LightCommands(self, timeout=command_timeout)
 
     async def start(self):
         if self._closed:
@@ -181,6 +184,26 @@ class NoncameraProvider:
     def _active(self):
         return not self._closed and self._admission() is True
 
+    async def set_light(
+        self,
+        device_id,
+        target,
+        *,
+        expected_revision,
+        expected_epoch,
+        duration_seconds,
+        admission=None,
+    ):
+        """Set a qualified physical Beams light with an explicit finite duration."""
+        return await self._light_commands.request(
+            device_id,
+            target,
+            expected_revision=expected_revision,
+            expected_epoch=expected_epoch,
+            duration_seconds=duration_seconds,
+            admission=admission,
+        )
+
     async def _discovery_loop(self):
         while self._active():
             await self.refresh()
@@ -200,7 +223,7 @@ class NoncameraProvider:
                 for result in (devices, locations):
                     if isinstance(result, BaseException):
                         raise result
-                rows, seeds = self._discover(devices, locations)
+                rows, seeds, beams_owners = self._discover(devices, locations)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -218,6 +241,7 @@ class NoncameraProvider:
             self._error = None
             self._rest_valid = True
             self._rest_records = rows
+            self._beams_owners = beams_owners
             current = {seed.location_id: seed for seed in seeds}
             rest_keys = {record.key for record in rows}
             # An offline location makes the aggregate inventory partial. Still
@@ -244,6 +268,7 @@ class NoncameraProvider:
                     self._runtimes.pop(location_id, None)
                     self._store.remove_location(location_id)
                     self._alarm_commands.invalidate(location_id)
+                    self._light_commands.invalidate(location_id)
                     await self._stop_runtime(runtime)
                     self._observation_times = {
                         key: value
@@ -294,6 +319,7 @@ class NoncameraProvider:
         records = []
         hub_rows = []
         alarm_ownership: dict[str, list[bool]] = {}
+        beams_owners = {}
         seen = set()
         count = 0
         now = self._clock()
@@ -381,21 +407,29 @@ class NoncameraProvider:
                     hub_rows.append(row)
                 if family == "base_stations":
                     alarm_ownership.setdefault(location, []).append(row.get("owned") is True)
+                if family == "beams_bridges":
+                    # REST role belongs to this bridge, not every asset at its
+                    # location. Ticket doorbotId establishes the exact match.
+                    beams_owners[(location, device_id)] = row.get("role") == "owner"
         seeds = location_seeds_from_base_stations(hub_rows, raw_locations=location_rows)
         # Explicit owner role is documented authority for ordinary Alarm modes.
         # It does not prove subscription entitlement. Ring enforces entitlement
         # on each admitted request; shared/unknown roles remain read-only.
-        return tuple(records), tuple(
-            replace(
-                seed,
-                write_authorization=(
-                    AlarmWriteAuthorization.ALLOWED
-                    if alarm_ownership.get(seed.location_id)
-                    and all(alarm_ownership[seed.location_id])
-                    else AlarmWriteAuthorization.UNKNOWN
-                ),
-            )
-            for seed in seeds
+        return (
+            tuple(records),
+            tuple(
+                replace(
+                    seed,
+                    write_authorization=(
+                        AlarmWriteAuthorization.ALLOWED
+                        if alarm_ownership.get(seed.location_id)
+                        and all(alarm_ownership[seed.location_id])
+                        else AlarmWriteAuthorization.UNKNOWN
+                    ),
+                )
+                for seed in seeds
+            ),
+            beams_owners,
         )
 
     async def _supervise(self, runtime):
@@ -403,6 +437,7 @@ class NoncameraProvider:
         while self._active() and self._runtimes.get(runtime.seed.location_id) is runtime:
             runtime.epoch = self._store.begin_epoch(runtime.seed.location_id)
             self._alarm_commands.invalidate(runtime.seed.location_id)
+            self._light_commands.invalidate(runtime.seed.location_id)
             epoch = runtime.epoch
             began = self._monotonic()
             await self._publish()
@@ -423,6 +458,7 @@ class NoncameraProvider:
             runtime.error = _error_code(error)
             self._store.mark_location_stale(runtime.seed.location_id, epoch)
             self._alarm_commands.invalidate(runtime.seed.location_id)
+            self._light_commands.invalidate(runtime.seed.location_id)
             await self._publish()
             if self._monotonic() - began >= 60:
                 backoff = 1.0
@@ -514,6 +550,7 @@ class NoncameraProvider:
         if isinstance(message, (DeviceInfoDocList, DeviceInfoDocUpdate)):
             self._record_receipts(runtime.seed.location_id, message)
         self._alarm_commands.observe(runtime, epoch, message)
+        self._light_commands.observe(runtime, epoch, message)
         if isinstance(message, SessionInfo):
             for session in message.sessions:
                 asset = previous.find_asset(session.asset_id) if previous else None
@@ -606,6 +643,7 @@ class NoncameraProvider:
         self._records = tuple(records)
         self._revision += 1
         alarms = self._alarm_commands.snapshots()
+        lights = self._light_commands.snapshots()
         if self._callback is not None:
             result = self._callback(
                 records=self._records,
@@ -613,6 +651,7 @@ class NoncameraProvider:
                 revision=self._revision,
                 observed_at=self._clock(),
                 alarms=alarms,
+                lights=lights,
             )
             if inspect.isawaitable(result):
                 await result
@@ -705,7 +744,7 @@ class NoncameraProvider:
             provider_generation=self.provider_generation,
             name=device.name or str(device.kind),
             family="hub",
-            kind=str(device.kind),
+            kind="beams-light" if device.raw_type in BEAMS_TYPES else str(device.kind),
             model=device.raw_type,
             location_name=location_name,
             capabilities=capabilities,
@@ -735,6 +774,7 @@ class NoncameraProvider:
             self._closed = True
             for location_id in self._runtimes:
                 self._alarm_commands.invalidate(location_id)
+                self._light_commands.invalidate(location_id)
             self._close_task = asyncio.create_task(self._close_impl(), name="ring-device-close")
         await asyncio.shield(self._close_task)
 

@@ -16,6 +16,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from halo_server.account_scope import valid_profile_id
+from halo_server.devices.light_policy import qualified_light
 from halo_server.devices.models import DeviceIdentity, DeviceObservation, DeviceRecord
 from halo_server.private_json import MAX_REVISION, PrivateJsonError, PrivateJsonStore
 
@@ -24,12 +25,15 @@ MAX_RETAINED_DEVICES = 1024
 MAX_BRIDGE_CHILDREN = 149
 MAX_DEVICE_PREFERENCES = 512
 MAX_REGISTRY_BYTES = 1024 * 1024
-MAPPINGS = frozenset({"contact", "motion", "leak", "smoke", "carbon_monoxide", "security_system"})
+MAPPINGS = frozenset(
+    {"contact", "motion", "leak", "smoke", "carbon_monoxide", "security_system", "lightbulb"}
+)
 _HASH = re.compile(r"[0-9a-f]{64}\Z")
 _KIND = re.compile(r"[a-z][a-z0-9-]{0,63}\Z")
 _USERNAME = re.compile(r"(?:[0-9A-F]{2}:){5}[0-9A-F]{2}\Z")
 _MARKER = b"halo-device-bridge-registry-v1\n"
 _KIND_MAPPINGS = {
+    "beams-light": (("switch",), ("lightbulb",)),
     "security-panel": (("mode",), ("security_system",)),
     "contact-sensor": (("contact",), ("contact",)),
     "retrofit-zone": (("contact",), ("contact",)),
@@ -109,7 +113,7 @@ class BridgeProfile:
             ("excluded_devices", MAX_DEVICE_PREFERENCES, _hash),
             ("excluded_locations", 128, _hash),
             ("excluded_kinds", 64, _kind),
-            ("excluded_mappings", 6, lambda value: isinstance(value, str) and value in MAPPINGS),
+            ("excluded_mappings", 7, lambda value: isinstance(value, str) and value in MAPPINGS),
         ):
             if not _tuple(getattr(self, name), limit, check):
                 raise BridgeRegistryError("Bridge selection filters are invalid")
@@ -306,6 +310,8 @@ def _mapping(record: DeviceRecord) -> tuple[str, ...]:
     allowed = _KIND_MAPPINGS.get(record.kind)
     if (
         allowed is None
+        or record.kind == "beams-light"
+        and not qualified_light(record)
         or record.identity.provider != "ring-hub"
         or record.family != "hub"
         or not record.supported
@@ -321,7 +327,9 @@ def _exclusion(profile: BridgeProfile, entry: BridgeDevice) -> str | None:
         return "device-excluded"
     if entry.location_id in profile.excluded_locations:
         return "location-excluded"
-    if entry.kind in profile.excluded_kinds:
+    if entry.kind in profile.excluded_kinds or (
+        entry.kind == "beams-light" and "switch" in profile.excluded_kinds
+    ):
         return "kind-excluded"
     if entry.mappings and not set(entry.mappings).difference(profile.excluded_mappings):
         return "mappings-excluded"
@@ -357,6 +365,9 @@ def _known_preferences(
         item.identity.location_key for item in records
     }
     kinds = {item.kind for item in entries} | {item.kind for item in records}
+    if "beams-light" in kinds:
+        # Persisted switch-family exclusions still cover enriched Beams entries.
+        kinds.add("switch")
     if (
         not set((*profile.included_devices, *profile.excluded_devices)).issubset(devices)
         or not set(profile.excluded_locations).issubset(locations)
@@ -412,6 +423,17 @@ def _enroll(
     for item in entries:
         record = records_by_id.get(item.device_id)
         if record is not None:
+            # Wave 1 cataloged physical Beams as generic switches. A newly
+            # qualified exact model enriches that unexposed identity in place.
+            if (
+                item.kind == "switch"
+                and not item.mappings
+                and not item.selected
+                and item.provider == record.identity.provider
+                and item.location_id == record.identity.location_key
+                and _mapping(record) == ("lightbulb",)
+            ):
+                item = replace(item, kind="beams-light")
             same_metadata = (
                 item.provider == record.identity.provider
                 and item.kind == record.kind
@@ -567,6 +589,15 @@ class BridgeRegistryStore(PrivateJsonStore[BridgeRegistry]):
                 or (entry.mappings and replacement.mappings != entry.mappings)
                 or replace(
                     entry,
+                    kind=replacement.kind
+                    if (
+                        entry.kind == "switch"
+                        and not entry.mappings
+                        and not entry.selected
+                        and replacement.kind == "beams-light"
+                        and replacement.mappings == ("lightbulb",)
+                    )
+                    else entry.kind,
                     mappings=replacement.mappings,
                     qualified=replacement.qualified,
                     selected=replacement.selected,

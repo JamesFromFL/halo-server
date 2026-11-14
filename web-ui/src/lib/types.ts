@@ -59,6 +59,23 @@ export interface NoncameraDevice {
   supported: boolean;
   unsupported_reason: string | null;
   alarm?: AlarmState;
+  light?: LightState;
+}
+export type LightDuration = 30 | 60 | 300 | 900;
+export interface LightState {
+  policy_revision: number;
+  enabled: boolean;
+  on_duration_seconds: LightDuration;
+  provider_generation: number;
+  epoch: number;
+  observed_revision: number;
+  on: boolean | null;
+  authorization: 'allowed' | 'denied' | 'unknown';
+  can_set: boolean;
+  reason: string | null;
+  pending: boolean;
+  outcome_unknown: boolean;
+  requested_on: boolean | null;
 }
 export type AlarmMode = 'disarmed' | 'home' | 'away';
 export interface AlarmState {

@@ -67,7 +67,7 @@ if (!issued) {
         tmp_path,
         before="let issued=false,last=null,results=[];",
         publish=publish,
-        alarm_result=result,
+        command_result=result,
     )
     return entry, output
 
@@ -186,7 +186,7 @@ async def test_readonly_or_expired_alarm_is_denied_without_handler(tmp_path):
         expired = alarm_snapshot()
         expired["expires_at_ms"] = int(time.monotonic() * 1000) - 1
         child._accept_publication(expired)
-        assert not child._alarm_current(command(expired), child.boot_id, initial=True)
+        assert not child._command_current(command(expired), child.boot_id, initial=True)
     finally:
         await child.stop()
 
@@ -324,7 +324,7 @@ async def test_disconnect_reaps_hap_but_does_not_cancel_owned_alarm_confirmation
         release.set()
         await stopped
         assert completed == [False] and cancelled == []
-        assert not child.retirement_pending and not child._alarm_tasks
+        assert not child.retirement_pending and not child._command_tasks
     finally:
         release.set()
         await child.stop()
@@ -333,7 +333,7 @@ async def test_disconnect_reaps_hap_but_does_not_cancel_owned_alarm_confirmation
 @pytest.mark.asyncio
 async def test_stuck_callback_keeps_retirement_owned_until_later_join(tmp_path, monkeypatch):
     entered, release = asyncio.Event(), asyncio.Event()
-    monkeypatch.setattr("halo_server.devices.runtime.ALARM_RETIRE_SECONDS", 0.01)
+    monkeypatch.setattr("halo_server.devices.runtime.COMMAND_RETIRE_SECONDS", 0.01)
 
     async def handler(payload, admission):
         entered.set()

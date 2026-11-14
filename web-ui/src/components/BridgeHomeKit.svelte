@@ -271,7 +271,7 @@
             ? 'Enable device monitoring in Devices first.'
             : !homekitEnabled
               ? 'Enable HomeKit mode in Settings first.'
-              : 'Publish this bridge and its selected devices on your local network. Alarm controls require a separate location opt-in.'}
+              : 'Publish this bridge and its selected devices on your local network. Alarm and light controls require their own opt-in.'}
       icon="integrations"
     >
       <input

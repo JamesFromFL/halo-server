@@ -19,6 +19,7 @@ export type DeviceMapping = (typeof DEVICE_MAPPINGS)[number];
 export const DEVICE_SERVICE_MAPPINGS = [
   ...DEVICE_MAPPINGS,
   "security_system",
+  "lightbulb",
 ] as const;
 export type AlarmMode = "disarmed" | "home" | "away";
 export interface DeviceAlarmState {
@@ -38,16 +39,29 @@ export interface DeviceAlarmResult extends DeviceAlarmRequest {
   accepted: boolean;
   code: string;
 }
+export interface DeviceLightState {
+  on: boolean | null;
+  control_enabled: boolean;
+}
+export interface DeviceLightRequest extends Omit<DeviceAlarmRequest, "target"> {
+  target: boolean;
+}
+export interface DeviceLightResult extends DeviceLightRequest {
+  accepted: boolean;
+  code: string;
+  observed_on: boolean | null;
+}
 
 export interface DeviceChild {
   device_id: string;
   accessory_uuid: string;
   name: string;
   model: string;
-  mappings: (DeviceMapping | "security_system")[];
+  mappings: (DeviceMapping | "security_system" | "lightbulb")[];
   available: boolean;
   values: Record<DeviceMapping, boolean | null>;
   alarm: DeviceAlarmState | null;
+  light: DeviceLightState | null;
 }
 export interface DevicePublication {
   scope: AccountScope;
@@ -82,7 +96,9 @@ export type DeviceKind =
   | "shutdown"
   | "shutdown_ack"
   | "alarm_set"
-  | "alarm_set_result";
+  | "alarm_set_result"
+  | "light_set"
+  | "light_set_result";
 export interface DeviceEnvelope {
   v: 1;
   kind: DeviceKind;
@@ -171,6 +187,7 @@ export function validateDevicePublication(v: unknown): DevicePublication {
       "available",
       "values",
       "alarm",
+      "light",
     ]);
     if (
       !hash(child.device_id) ||
@@ -182,7 +199,7 @@ export function validateDevicePublication(v: unknown): DevicePublication {
       typeof child.available !== "boolean" ||
       !Array.isArray(child.mappings) ||
       !child.mappings.length ||
-      child.mappings.length > 6 ||
+      child.mappings.length > DEVICE_SERVICE_MAPPINGS.length ||
       child.mappings.some((x) => !DEVICE_SERVICE_MAPPINGS.includes(x)) ||
       new Set(child.mappings).size !== child.mappings.length ||
       child.mappings.join() !== [...child.mappings].sort().join()
@@ -206,6 +223,19 @@ export function validateDevicePublication(v: unknown): DevicePublication {
         throw new ProtocolError("invalid-alarm-state");
     } else if (child.alarm !== null)
       throw new ProtocolError("invalid-alarm-mapping");
+    if (child.mappings.includes("lightbulb")) {
+      if (child.mappings.length !== 1)
+        throw new ProtocolError("invalid-light-mapping");
+      exact(child.light, ["on", "control_enabled"]);
+      if (
+        (child.light.on !== null && typeof child.light.on !== "boolean") ||
+        typeof child.light.control_enabled !== "boolean" ||
+        (!child.available &&
+          (child.light.on !== null || child.light.control_enabled))
+      )
+        throw new ProtocolError("invalid-light-state");
+    } else if (child.light !== null)
+      throw new ProtocolError("invalid-light-mapping");
     exact(child.values, DEVICE_MAPPINGS);
     for (const mapping of DEVICE_MAPPINGS) {
       const observed = child.values[mapping];
@@ -246,6 +276,39 @@ export function validateDeviceAlarm(
     throw new ProtocolError("invalid-alarm-command");
   if (result) outcome(value);
   return value as unknown as DeviceAlarmRequest;
+}
+export function validateDeviceLight(
+  value: unknown,
+  result = false,
+): DeviceLightRequest | DeviceLightResult {
+  exact(value, [
+    "scope",
+    "registry_revision",
+    "sequence",
+    "accessory_uuid",
+    "device_id",
+    "target",
+    ...(result ? ["accepted", "code", "observed_on"] : []),
+  ]);
+  validateDeviceScope(value.scope);
+  if (
+    !integer(value.registry_revision) ||
+    !integer(value.sequence, 1) ||
+    !uuid4(value.accessory_uuid) ||
+    !hash(value.device_id) ||
+    typeof value.target !== "boolean"
+  )
+    throw new ProtocolError("invalid-light-command");
+  if (result) {
+    outcome(value);
+    if (
+      value.accepted
+        ? typeof value.observed_on !== "boolean"
+        : value.observed_on !== null
+    )
+      throw new ProtocolError("invalid-light-result");
+  }
+  return value as unknown as DeviceLightRequest;
 }
 export function validateDevicePairing(
   v: unknown,
@@ -320,6 +383,7 @@ export function validateDeviceEnvelope(
     "reset_prepare",
     "shutdown",
     "alarm_set_result",
+    "light_set_result",
   ];
   const replies = [
     "hello_ack",
@@ -330,6 +394,7 @@ export function validateDeviceEnvelope(
     "reset_prepare_result",
     "shutdown_ack",
     "alarm_set",
+    "light_set",
   ];
   if (
     !(
@@ -348,6 +413,12 @@ export function validateDeviceEnvelope(
       break;
     case "alarm_set_result":
       validateDeviceAlarm(p, true);
+      break;
+    case "light_set":
+      validateDeviceLight(p);
+      break;
+    case "light_set_result":
+      validateDeviceLight(p, true);
       break;
     case "hello":
     case "hello_ack":

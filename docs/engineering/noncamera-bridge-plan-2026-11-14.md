@@ -1,10 +1,12 @@
 # Halo Bridge: non-camera Ring integration
 
 Date: November 14, 2026. Status: provider/catalog, durable registry, sensor bridge
-publication and guarded normal Alarm controls are implemented locally. Installed
-and physical-device acceptance remain pending. See the [wave 1](noncamera-wave1-2026-11-14.md),
-[wave 2](noncamera-wave2-2026-11-14.md), [wave 3](noncamera-wave3-2026-11-14.md)
-and [wave 4](noncamera-wave4-2026-11-14.md) implementation records.
+publication, guarded normal Alarm controls and individual Smart Lighting controls
+are implemented locally. Installed and physical-device acceptance remain pending.
+See the [wave 1](noncamera-wave1-2026-11-14.md),
+[wave 2](noncamera-wave2-2026-11-14.md), [wave 3](noncamera-wave3-2026-11-14.md),
+[wave 4](noncamera-wave4-2026-11-14.md) and
+[wave 5](noncamera-wave5-2026-11-14.md) implementation records.
 
 The subsequent [Scrypted, Homebridge and Home Assistant comparison](ring-project-comparison-2026-11-14.md)
 is complete. It expands the configuration, provider-recovery and control acceptance
@@ -247,8 +249,22 @@ Progress: [wave 3](noncamera-wave3-2026-11-14.md) implements the separate bridge
 runtime and read-only sensor publication in slice 4, with its usable pairing
 interface from slice 6. [Wave 4](noncamera-wave4-2026-11-14.md) adds the Alarm
 family of slice 5, including observed state and separately opted-in normal modes.
-All changes remain local pending installed and physical qualification. Lighting,
-chimes and other control families remain future work.
+[Wave 5](noncamera-wave5-2026-11-14.md) adds individually qualified physical Beams
+lights: observed binary state, bounded On requests, return to automatic, HomeKit
+Lightbulb publication and per-device control preferences. These controls require
+an exact bridge/asset match and explicit owner role; shared-user lighting control
+is a remaining qualification task, not a claim that Ring forbids it.
+All changes remain local pending installed and physical qualification. Lighting
+groups, brightness, chimes and other control families remain future work.
+
+Next control work needs the bounded shared-session REST write path: lighting
+groups require REST/CLAP deduplication and arbitration with overlapping camera
+lights, while Chime actions/settings use REST instead of the new hub command.
+Qualify Chime connectivity from `alerts.connection` before exposing controls;
+the existing discovery checks do not yet handle that field. Start Chimes in
+Halo's interface with known-model volume and explicit sound tests, then qualify
+snooze, tones and automatic nightlight configuration separately. Do not create
+constant-state HomeKit action switches or imply nightlight settings are lamp state.
 
 Each slice should have meaningful regression checks and a reviewable commit.
 Physical acceptance and deployment are distinct from fixture success.

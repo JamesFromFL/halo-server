@@ -478,9 +478,9 @@ class AlarmCoordinator:
                         "mode": None,
                     }
                 return result
-            except Exception:
-                # The provider normally supplies a precise uncertain result. A
-                # lost IPC result cannot prove no action reached Ring.
+            except (Exception, asyncio.CancelledError):
+                # This owned task is shielded from its caller. Cancellation of
+                # the Ring-loop future is a lost result, not proof of no send.
                 if self.monitor._current(binding):
                     source = self._rows.get(device_id, {})
                     self._uncertain[key] = (

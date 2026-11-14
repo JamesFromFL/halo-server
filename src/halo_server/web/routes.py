@@ -603,6 +603,57 @@ class WebConsole:
             )
         )
 
+    async def device_light_policy(self, request):
+        from halo_server.devices.light import POLICY_FIELDS
+        from halo_server.devices.light_policy import ON_DURATIONS, valid_device_id
+
+        value = await body(request, tuple(POLICY_FIELDS) + ("operation_id",))
+        text(value["profile_id"], maximum=36)
+        integer(value["account_generation"], minimum=1)
+        integer(value["expected_revision"])
+        integer(value["on_duration_seconds"], minimum=1)
+        if (
+            not valid_device_id(value["device_id"])
+            or value["on_duration_seconds"] not in ON_DURATIONS
+        ):
+            raise WebError("bad_request", "Light preference or identity is invalid")
+        boolean(value["enabled"])
+        if value["enabled"]:
+            self.auth.recent(request[SESSION])
+        identifier = operation_id(value["operation_id"])
+        params = {key: item for key, item in value.items() if key != "operation_id"}
+        return success(
+            await self.operations.run(
+                identifier,
+                "configuration",
+                {"target": "light_policy", **value},
+                lambda: self.pool.call(self.client.devices_light_policy_set, **params),
+            )
+        )
+
+    async def device_light_set(self, request):
+        from halo_server.devices.light import SET_FIELDS
+        from halo_server.devices.light_policy import valid_device_id
+
+        value = await body(request, tuple(SET_FIELDS))
+        text(value["profile_id"], maximum=36)
+        for field in ("account_generation", "provider_generation"):
+            integer(value[field], minimum=1)
+        for field in ("expected_epoch", "expected_revision", "expected_policy_revision"):
+            integer(value[field])
+        boolean(value["target"])
+        if not valid_device_id(value["device_id"]):
+            raise WebError("bad_request", "Light identity is invalid")
+        identifier = operation_id(value["operation_id"])
+        return success(
+            await self.operations.run(
+                identifier,
+                "control",
+                {"control": "light", **value},
+                lambda: self.pool.call(self.client.devices_light_set, **value),
+            )
+        )
+
     async def device_bridge_pairing(self, request):
         return success(await self.pool.call(self.client.devices_bridge_pairing_get))
 
@@ -939,6 +990,8 @@ def create_application(console, *, static_root=None):
         web.get(PREFIX + "/state", console.snapshot),
         web.get(PREFIX + "/devices", console.devices),
         web.post(PREFIX + "/devices/monitoring", console.devices_monitoring),
+        web.post(PREFIX + "/devices/light/policy", console.device_light_policy),
+        web.post(PREFIX + "/devices/light/set", console.device_light_set),
         web.post(PREFIX + "/devices/alarm/policy", console.device_alarm_policy),
         web.post(PREFIX + "/devices/alarm/mode", console.device_alarm_mode),
         web.post(PREFIX + "/devices/bridge", console.devices_bridge),

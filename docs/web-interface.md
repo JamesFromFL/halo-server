@@ -143,26 +143,28 @@ Hiding a code does not rotate it. Reset affects one explicitly named camera and
 may temporarily interrupt the HomeKit adapter. Resume an existing pending reset
 by its original operation ID rather than starting another reset.
 
-Light and siren responses distinguish accepted, rejected, and unknown outcomes.
+Camera light and siren responses distinguish accepted, rejected, and unknown outcomes.
 An accepted command is not proof of the physical device state. The existing
 30-second siren bound remains in force. Recording controls distinguish Halo's
 warm-source opt-in from Apple Home's recording and audio preferences.
 
 ## Scope
 
-The interface manages cameras, non-camera monitoring, Halo Bridge sensor imports,
-and guarded Ring Alarm mode controls. Chime and lighting controls, other device
-families and additional ecosystems are follow-on integrations. It does not automatically preview or play video,
+The interface manages cameras, non-camera monitoring, Halo Bridge imports,
+guarded Ring Alarm mode controls and individual Ring Smart Lighting controls.
+Lighting groups, brightness, Chime controls, other device families and additional
+ecosystems are follow-on integrations. It does not automatically preview or play video,
 browse arbitrary files, expose raw logs, or provide browser-driven software updates.
 
-## Halo Bridge for sensors and Ring Alarm
+## Halo Bridge for non-camera devices
 
 Enable read-only monitoring in Devices, prepare the Halo Bridge import preferences,
 and select supported sensors. Then use **Integrations → Halo Bridge → Connect Halo Bridge to
 Apple Home** to explicitly enable publication. Saved import preferences alone do
 not publish. One bridge pairing brings its selected contact, motion, leak, smoke,
-carbon monoxide and Ring Alarm services into Apple Home; each camera retains its
-own pairing. Importing an alarm exposes observed state and does not enable control.
+carbon monoxide, Ring Alarm and qualified physical Beams light services into Apple
+Home; each camera retains its own pairing. Importing an alarm or light exposes
+observed state and does not enable control.
 
 Reveal the bridge setup code after confirming the Halo password. The code is
 short-lived and disappears when the page or account changes. Reset pairing only
@@ -173,7 +175,7 @@ operation. After completion, remove the old bridge from Apple Home, explicitly
 reconnect publication and pair again.
 
 Unavailable or stale readings produce a HomeKit fault rather than a fabricated
-closed/dry/clear/disarmed state. Installed and physical qualification is pending.
+closed/dry/clear/disarmed/off state. Installed and physical qualification is pending.
 
 Open the security panel in Devices to see its observed mode, entry/exit/alarm phase,
 Ring account authority and pending or uncertain command status. **Allow normal
@@ -191,3 +193,31 @@ checking the observed state; the same operation is never automatically replayed.
 Arming cannot bypass open/faulted sensors, and Night mode is not mapped to another
 mode. Panic, emergency dispatch, siren activation and active-alarm cancellation
 remain blocked. Use the Ring app or keypad for an active alarm or a bypass flow.
+
+## Individual Smart Lighting controls
+
+Open a supported Beams light in Devices to see its actual reported state and
+control authority. **Allow light controls** defaults off. Choose an On duration
+of 30 seconds, 1 minute, 5 minutes or 15 minutes, then **Apply light preferences**.
+The default duration is 1 minute. Enabling requires password confirmation; saving
+preferences does not switch the light. The saved duration applies to both Halo
+and Apple Home. Ordinary light actions do not require another password prompt.
+
+**Return to automatic** releases Ring's manual On override. Apple Home's Off
+request has this same meaning: motion rules, schedules or another controller may
+keep or turn the light on. Halo shows the actual reported On/Off state separately
+and does not invent an Off value or a shutoff countdown. Confirmation requires a
+fresh matching state report; a return-to-automatic request can remain uncertain
+while Ring still reports On. The On duration is a bounded request to Ring, not a
+guaranteed physical shutoff time.
+
+Controls require a known physical Beams model, an unambiguous bridge match,
+explicit owner role, current state and the saved opt-in. Unknown or shared roles
+remain read-only in this implementation. This is Halo's current qualification
+boundary; Ring itself supports some shared-user lighting controls. An uncertain
+command is never automatically resent. **Check outcome** retrieves the existing
+operation; use newer observed state to resolve an old receipt only when Halo
+offers that action. Disabling controls preserves monitoring and HomeKit identity.
+
+Lighting groups, brightness and camera-integrated lights do not use these new
+controls. Existing camera controls keep their own interface.

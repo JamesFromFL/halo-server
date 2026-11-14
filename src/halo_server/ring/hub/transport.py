@@ -24,6 +24,7 @@ from halo_server.ring.hub.protocol import (
     HubDisconnection,
     encode_clap_frame,
     encode_device_list_request,
+    encode_light_command,
     encode_mode_command,
     parse_clap_frame,
 )
@@ -66,6 +67,7 @@ class AlarmTicketAsset:
     kind: str
     status: str
     on_battery: bool | None = None
+    doorbot_id: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -272,6 +274,28 @@ class RingAlarmTransport:
             mode_command=(asset_id, panel_zid, mode),
         )
 
+    async def send_light(
+        self,
+        asset_id: str,
+        light_zid: str,
+        on: bool,
+        *,
+        duration_seconds: int | None,
+        epoch: int,
+        admission: Callable[[], AbstractContextManager[None]],
+    ) -> None:
+        """Send one guarded physical Beams command; never a generic actuator."""
+        if not callable(admission):
+            raise AlarmTransportError("operation-not-allowed")
+        await self._send_encoded(
+            lambda sequence: encode_light_command(
+                asset_id, light_zid, on, duration_seconds, sequence
+            ),
+            epoch=epoch,
+            admission=admission,
+            light_command=(asset_id, light_zid, on, duration_seconds),
+        )
+
     async def close(self) -> None:
         """Close the socket and its independently owned aiohttp session."""
 
@@ -338,6 +362,7 @@ class RingAlarmTransport:
         epoch: int,
         admission: Callable[[], AbstractContextManager[None]] | None = None,
         mode_command: tuple[str, str, AlarmMode] | None = None,
+        light_command: tuple[str, str, bool, int | None] | None = None,
     ) -> None:
         async with self._send_lock:
             websocket = self._websocket
@@ -353,24 +378,34 @@ class RingAlarmTransport:
             self._sequence += 1
             payload = encode(sequence)
             message = payload.get("msg") if isinstance(payload, Mapping) else None
-            # Generic encoded calls remain read-only. Only the typed method
-            # above can opt into the exact normal-mode schema, with admission.
-            allowed = (
-                (
+            # Generic encoded calls remain read-only. Each actuator opts into
+            # its own exact schema and asset kind with a send-boundary guard.
+            if mode_command is None and light_command is None:
+                allowed = (
                     isinstance(message, Mapping)
                     and set(message) == {"msg", "dst", "seq"}
                     and message.get("msg") == "DeviceInfoDocGetList"
                 )
-                if mode_command is None
-                else (
+            elif mode_command is not None:
+                allowed = (
                     callable(admission)
+                    and light_command is None
                     and payload == encode_mode_command(*mode_command, sequence)
                     and any(
                         asset.asset_id == mode_command[0] and asset.kind.startswith("base_station")
                         for asset in self._assets
                     )
                 )
-            )
+            else:
+                allowed = (
+                    callable(admission)
+                    and light_command is not None
+                    and payload == encode_light_command(*light_command, sequence)
+                    and any(
+                        asset.asset_id == light_command[0] and asset.kind == "beams_bridge_v1"
+                        for asset in self._assets
+                    )
+                )
             if (
                 not isinstance(message, Mapping)
                 or set(payload) != {"channel", "msg"}
@@ -449,12 +484,16 @@ def _parse_ticket(payload: object) -> _Ticket:
             else "unknown"
         )
         on_battery = value.get("onBattery")
+        doorbot_id = value.get("doorbotId")
         assets.append(
             AlarmTicketAsset(
                 asset_id=asset_id,
                 kind=kind,
                 status=status,
                 on_battery=on_battery if isinstance(on_battery, bool) else None,
+                doorbot_id=doorbot_id
+                if type(doorbot_id) is int and 0 < doorbot_id < 2**53
+                else None,
             )
         )
     if not assets:

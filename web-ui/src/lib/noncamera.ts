@@ -1,6 +1,7 @@
 import type { Device, NoncameraDevice, NoncameraState, StateEnvelope } from './types.ts';
 import { validBridge } from './bridge.ts';
 import { validAlarm } from './alarm.ts';
+import { validLight } from './light.ts';
 
 const ROUTE_PREFIX = 'noncamera:';
 const STATES = new Set(['disabled', 'starting', 'ready', 'partial', 'offline', 'error']);
@@ -41,6 +42,8 @@ export function validNoncamera(value: unknown): value is NoncameraState {
         boundedText(device.kind) &&
         (device.alarm === undefined ||
           (device.kind === 'security-panel' && validAlarm(device.alarm))) &&
+        (device.light === undefined ||
+          (device.kind === 'beams-light' && validLight(device.light))) &&
         boundedText(device.model) &&
         boundedText(device.location_id) &&
         boundedText(device.location_name) &&
