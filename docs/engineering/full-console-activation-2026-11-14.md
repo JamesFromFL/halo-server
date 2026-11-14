@@ -84,3 +84,67 @@ crosses real HTTPS, `AdminClient`, the Unix admin server and pairing
 administration with a synthetic paired adapter. Rejected reveals preserve
 pairing state; interrupted event handshakes release their subscriber capacity.
 These checks do not substitute for the owner's final browser or device test.
+
+## Completed activation and live observations
+
+Activated the complete managed package from application commit
+`7e8381bb094cd74ba56cbe3592c00c60ff1a1eae`, release
+`f8818f8713d25eed3cc017e96ecc4990f5bce7f07d1b148291d22a4cd3ac1699`,
+at selection revision 24. The prior release remains available for recovery.
+The existing enrolled password and TLS identity were preserved; the owner
+username is now `admin`. No credential reset was needed.
+
+Fresh installed-package verification passed 892 Python tests, 323 adapter
+tests and 58 frontend tests, plus 60 browser layout combinations and five
+pairing scenarios. Installed camera/device children and daemon lifecycle checks
+passed. The earlier 4,025-test full-source receipt is inherited evidence, not
+a newly rerun full suite. Harness repairs and failed attempts remain in the
+qualification evidence; no application bytes changed during qualification.
+
+The first activation postcheck correctly rejected changed pairing-file bytes.
+Investigation isolated seven changes to HAP's `lastFirmwareVersion` marker,
+from `2.2.3-halo.2` to `2.3.0-halo.1`. Substituting that one field back in memory
+reproduced every original complete-file SHA256. All keys, setup codes,
+identities and paired-client content were therefore preserved. A separately
+reviewed read-only postcheck accepted only this exact marker migration, with
+unchanged inventory and hash checks; it passed. The failed strict postcheck was
+retained rather than overwritten. No pairing file was restored or edited.
+
+Live HTTPS certificate/index/assets match the package, and anonymous pairing
+access remains rejected. The real paired-camera reveal now returns
+`pairing_not_available` promptly, without exposing a setup code. This refusal
+comes from Halo's HomeKit pairing policy, not Ring. The real server projection
+passes the current frontend validator before and after device discovery. These
+checks do not establish the owner's authenticated browser experience; a reload
+and owner acceptance test are still required.
+
+Read-only monitoring was enabled with the current account scope and policy
+revision. The account returned 28 noncamera records: 14 contact sensors, two
+Chimes, one motion sensor, one smoke/CO listener, one security panel, one keypad,
+one range extender, two base-station records, three hub records, and two unknown
+records. These are provider inventory records, not a claim of 28 distinct
+physical products. The two unknown types are `access-code` and
+`access-code.vault`; neither has a supported HomeKit mapping. Their contents
+were not inspected. Seventeen records have eligible bridge mappings; the
+combined smoke/CO listener supplies two services.
+
+Twenty-seven records report online. A REST `base_station_v1` record has no
+connection observation and correctly remains unknown. One online panel keeps
+`alarm_state` and `alarm_signal` stale because Ring has not supplied the field
+receipts required by Halo. Its mode/connection/siren/tamper observations have
+current receipts. This makes the aggregate inventory partial, even though the
+28 records are displayed. Unknown status must not be converted into an assumed
+safe alarm state. Qualify the missing-field semantics before enabling physical
+alarm control; do not solve the partial flag by inventing timestamps.
+
+All seven cameras remain selected, paired and published. Camera recording
+preferences stayed unchanged and no recording source was enabled. Halo Bridge
+publication and all noncamera control grants remain off. Monitoring did not
+arm/disarm, play Chimes, operate lights or enable panic/dispatch. Bridge import,
+publication/pairing and physical acceptance remain separate owner-visible steps.
+
+Local package/deployment evidence is under
+`work/halo-server-full-console-2026-11-14/`, including qualification,
+the retained strict and reviewed migration postchecks, public HTTPS checks,
+read-only monitoring results and sanitized discovery health. Application and
+documentation commits are local only; no push was performed.
