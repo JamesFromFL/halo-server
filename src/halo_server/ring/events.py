@@ -304,7 +304,9 @@ class EventListener:
                         if self._stop.is_set():
                             break
                         run_state = _listener_run_state(listener)
-                        if run_state == "STOPPED":
+                        # The SDK leaves failed receivers in STOPPING after
+                        # terminating their tasks; they cannot reconnect themselves.
+                        if run_state in {"STOPPING", "STOPPED"}:
                             _log.warning("Ring event listener dropped; reconnecting")
                             break
                         if run_state == "STARTED":

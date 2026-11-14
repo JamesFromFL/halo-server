@@ -351,3 +351,112 @@ def test_malformed_event_is_ignored_without_invoking_callback():
     listener._emit(_event(id=None))
 
     assert received == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("terminal_state", ["STOPPING", "STOPPED"])
+@pytest.mark.parametrize("owner_shutdown", [False, True], ids=["recover", "owner-shutdown"])
+async def test_listener_restarts_terminal_receiver_unless_owner_stops(
+    monkeypatch, terminal_state, owner_shutdown
+):
+    instances = []
+    operations = []
+    received = []
+    original_credentials = {"gcm": {"android_id": "original"}}
+    replacement_credentials = {"gcm": {"android_id": "replacement"}}
+
+    class FakeSdkListener:
+        def __init__(self, _ring, credentials, credentials_updated, *, config):
+            self.index = len(instances)
+            self.credentials = credentials
+            self.credentials_updated = credentials_updated
+            self._receiver = SimpleNamespace(run_state=SimpleNamespace(name=terminal_state))
+            instances.append(self)
+            operations.append((self.index, "create"))
+
+        def add_notification_callback(self, callback):
+            self.callback = callback
+
+        async def start(self):
+            operations.append((self.index, "start"))
+            if self.index == 0:
+                self.credentials_updated(replacement_credentials)
+                if owner_shutdown:
+                    listener._stop.set()
+            else:
+                self.callback(_event())
+                listener._stop.set()
+            return True
+
+        async def stop(self):
+            operations.append((self.index, "stop"))
+
+    monkeypatch.setattr(ring_doorbell, "RingEventListener", FakeSdkListener)
+    monkeypatch.setattr("halo_server.ring.events.MONITOR_INTERVAL", 0.001)
+    listener = EventListener(
+        SimpleNamespace(ring="ring"), received.append, credentials=original_credentials
+    )
+
+    await asyncio.wait_for(listener._run(), timeout=1)
+
+    expected_count = 1 if owner_shutdown else 2
+    assert operations == [
+        (index, action) for index in range(expected_count) for action in ("create", "start", "stop")
+    ]
+    assert instances[0].credentials == original_credentials
+    if not owner_shutdown:
+        assert instances[1].credentials == replacement_credentials
+        assert [event.type for event in received] == [RingEventType.MOTION]
+    else:
+        assert not received
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "transient_state", ["STARTING_TASKS", "STARTING_CONNECTION", "STARTING_LOGIN", "RESETTING"]
+)
+async def test_listener_keeps_receiver_during_transient_reconnect(monkeypatch, transient_state):
+    instances = []
+    states = []
+    polls = 0
+
+    class FakeSdkListener:
+        def __init__(self, _ring, _credentials, _credentials_updated, *, config):
+            self._receiver = SimpleNamespace(run_state=SimpleNamespace(name=transient_state))
+            self.stopped = False
+            instances.append(self)
+
+        def add_notification_callback(self, _callback):
+            pass
+
+        async def start(self):
+            return True
+
+        async def stop(self):
+            self.stopped = True
+
+    async def monitor_tick(_duration):
+        nonlocal polls
+        polls += 1
+        assert len(instances) == 1
+        if polls == 2:
+            instances[0]._receiver.run_state.name = "STARTED"
+        elif polls == 3:
+            listener._stop.set()
+        await asyncio.sleep(0)
+
+    monkeypatch.setattr(ring_doorbell, "RingEventListener", FakeSdkListener)
+    listener = EventListener(SimpleNamespace(ring="ring"), lambda _event: None, states.append)
+    monkeypatch.setattr(listener, "_sleep_until_stopped", monitor_tick)
+
+    await asyncio.wait_for(listener._run(), timeout=1)
+
+    assert polls == 3
+    assert len(instances) == 1 and instances[0].stopped
+    assert states == [
+        EventConnectionState.CONNECTING,
+        EventConnectionState.CONNECTED,
+        EventConnectionState.CONNECTING,
+        EventConnectionState.CONNECTED,
+        EventConnectionState.OFFLINE,
+    ]
