@@ -168,6 +168,34 @@ class AdminClient:
             enabled=enabled,
         )
 
+    async def devices_bridge_set(
+        self,
+        *,
+        profile_id: str,
+        account_generation: int,
+        expected_revision: int,
+        enabled: bool,
+        auto_import: bool,
+        included_devices: list[str],
+        excluded_devices: list[str],
+        excluded_locations: list[str],
+        excluded_kinds: list[str],
+        excluded_mappings: list[str],
+    ) -> dict[str, Any]:
+        return await self._object(
+            "devices_bridge_set",
+            profile_id=profile_id,
+            account_generation=account_generation,
+            expected_revision=expected_revision,
+            enabled=enabled,
+            auto_import=auto_import,
+            included_devices=included_devices,
+            excluded_devices=excluded_devices,
+            excluded_locations=excluded_locations,
+            excluded_kinds=excluded_kinds,
+            excluded_mappings=excluded_mappings,
+        )
+
     async def logout(self, *, expected_epoch: str | None = None) -> dict[str, Any]:
         result = await self.request(
             "logout", **({"expected_epoch": expected_epoch} if expected_epoch is not None else {})

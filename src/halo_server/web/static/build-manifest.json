@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "source_hash": "39997b85cf79dd799f69e8f2eb7b78f0d3e3012c366890d5799232e3e9bb1e5a",
+  "source_hash": "8d43337b5db00b1fe75864d2820e4d1f2c947cac4c34a39d59427f6a408fcdd6",
   "source_files": [
     {
       "path": ".prettierignore",
@@ -48,11 +48,15 @@
     },
     {
       "path": "scripts/noncamera-smoke.mjs",
-      "sha256": "b80c1fc2d835b2e76ac7ba7575caee1b87dc3058aaea7c4bbeb96672bcd28db2"
+      "sha256": "d183d74a9042a52d18eb22722cb850fe2758292afc1975ad322197e6ab52bb9a"
     },
     {
       "path": "src/App.svelte",
       "sha256": "c0636577c00215fbc675230f1f2c97e683b151072472b8eb2ea5e9daa255f712"
+    },
+    {
+      "path": "src/components/BridgePreferences.svelte",
+      "sha256": "1286f44cabfd8dc1bf112331e09ee01f33398e1f917cedc817dfd6a40d44c02c"
     },
     {
       "path": "src/components/Confirm.svelte",
@@ -64,11 +68,11 @@
     },
     {
       "path": "src/components/NoncameraDevices.svelte",
-      "sha256": "ea94f14a0cb057234105c091d07fbc5aba86896644aaea83140e13e06bb4e653"
+      "sha256": "09edbcdc463cdc7224798bf9a0832ffa40b923dcb225dbfa23d4a7e7c88a206c"
     },
     {
       "path": "src/components/OperationStatus.svelte",
-      "sha256": "fae5b65f9bb6fb06686ecff75086f54d358b3d4c4ae24c5a0b4ddd9d3813c177"
+      "sha256": "212449f7427cdcfc633d82232a4811d1bd245a628f73018908067cc625a00daa"
     },
     {
       "path": "src/components/PairingCode.svelte",
@@ -87,12 +91,16 @@
       "sha256": "d3d1a7fddf35905277b5ded70ed3078cc0be1ae4b70629795f9ba673f3a157a8"
     },
     {
+      "path": "src/lib/bridge.ts",
+      "sha256": "94855793147287fa41de48a3ef62d34869274aafa021a564acb01c20635ce55f"
+    },
+    {
       "path": "src/lib/model.ts",
       "sha256": "c6477dedc47182c9da6a7dadfcc70cb8fffc81e2c92e3b20c77dd6b76b7ea57a"
     },
     {
       "path": "src/lib/noncamera.ts",
-      "sha256": "660ad1ae3fe63880866a54f89fe8ff12fc15a9459293ad78a119f0927b9474ef"
+      "sha256": "d7ca324416c13e043746d64c82eb492ead41f19de8ecae782b8f0c1f4ad8eec5"
     },
     {
       "path": "src/lib/password.ts",
@@ -100,7 +108,7 @@
     },
     {
       "path": "src/lib/types.ts",
-      "sha256": "2670337d866f8fc68bdc105550935ae38143f96976e0463107db6d404b3da8fc"
+      "sha256": "e1c63530b2a3ec2bc563cdadfc89a136de7a7367dadea3a32f5d5e1fa7bcba10"
     },
     {
       "path": "src/main.ts",
@@ -147,6 +155,10 @@
       "sha256": "7af2e423e61a6fd330b063d3dd3f4c6b2b831cdcf82ddf487b29f72d6ae69842"
     },
     {
+      "path": "tests/bridge.test.ts",
+      "sha256": "320abd3a203d44d557e3498c189c69f38e48e440ce06e320c4b9c411f1561671"
+    },
+    {
       "path": "tests/model.test.ts",
       "sha256": "deacc957c7233d3885db2dfbc5eb802446cc5d06a1106ddd54c7a76cbd44570a"
     },
@@ -173,12 +185,12 @@
       "sha256": "27b3a540203dab45ee90ade440f4840b513dd2055969a84a9ebccb561fd14799"
     },
     {
-      "path": "assets/index-4S1YW0cu.css",
-      "sha256": "486aed483196afca5f90a85def1a7970415a345d05108a04b4fb8d78aafdd037"
+      "path": "assets/index-C45iICtS.js",
+      "sha256": "c16b2267fed54e707c0b7143744180b5d13d669445e4acaa7167dd651913d672"
     },
     {
-      "path": "assets/index-BBG_2Xad.js",
-      "sha256": "e7c8c37d4d74a410942312da8fe37af4ec1c6a2a92f52caf0193e561f58309e8"
+      "path": "assets/index-Co6tdB5G.css",
+      "sha256": "8e65e49d96e27b135a2103b9609166a547e1fa4e81dc655e920f84f99346931a"
     },
     {
       "path": "halo.png",
@@ -186,7 +198,7 @@
     },
     {
       "path": "index.html",
-      "sha256": "04bcfe1bbebf75a6837c527ef10c6edcf8bd98f0734ac58540a1c9a2b459b8e3"
+      "sha256": "782f4b60bd9168bde969f65674d09e3b8fb1d685d684560e2486309c386e66cb"
     }
   ]
 }

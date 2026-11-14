@@ -13,6 +13,11 @@ if (output && !output.startsWith('/')) throw new Error('HALO_BROWSER_OUTPUT must
 if (output) await mkdir(output, { recursive: true });
 const requests = [];
 const mutations = [];
+const bridgeMutations = [];
+let uncertainBridgeSave = false;
+let delayBridgeSave = false;
+let finishDelayedSave;
+let delayedOperationId;
 const subscribers = new Set();
 const errors = [];
 const checks = [];
@@ -31,8 +36,61 @@ const sensor = {
   supported: true,
   unsupported_reason: null,
 };
+const bridge = {
+  revision: 4,
+  configured: true,
+  enabled: true,
+  auto_import: true,
+  accessory_uuid: 'bridge-one',
+  username: 'CA:FE:00:00:00:01',
+  capacity: 149,
+  selected_count: 2,
+  retained_count: 2,
+  overflow_count: 0,
+  included_devices: [],
+  excluded_devices: ['missing-device'],
+  excluded_locations: ['missing-location'],
+  excluded_kinds: ['missing-kind'],
+  excluded_mappings: ['smoke'],
+  publication: 'not_implemented',
+  status: 'ready',
+  truncated: false,
+  devices: [
+    {
+      id: 'sensor-one',
+      accessory_uuid: 'sensor-identity',
+      mappings: ['contact'],
+      selected: true,
+      excluded: false,
+      eligible: true,
+      reason: null,
+      present: true,
+    },
+    {
+      id: 'motion-one',
+      accessory_uuid: 'motion-identity',
+      mappings: ['motion'],
+      selected: true,
+      excluded: false,
+      eligible: true,
+      reason: null,
+      present: true,
+    },
+    {
+      id: 'panic-one',
+      accessory_uuid: null,
+      mappings: [],
+      selected: false,
+      excluded: false,
+      eligible: false,
+      reason: 'unsupported-mapping',
+      present: true,
+    },
+  ],
+};
 const monitoring = {
   schema: 1,
+  bridge,
   revision: 8,
   policy_revision: 3,
   scope: { profile_id: 'test-profile', account_generation: 2 },
@@ -162,6 +220,52 @@ const server = createServer(async (request, response) => {
     publish();
     return send({ operation_id: value.operation_id, status: 'completed' });
   }
+  if (path === '/api/web/v1/devices/bridge' && request.method === 'POST') {
+    let body = '';
+    for await (const chunk of request) body += chunk;
+    const value = JSON.parse(body);
+    bridgeMutations.push(value);
+    assert.equal(request.headers['x-halo-csrf'], 'test-csrf');
+    assert.equal(value.expected_revision, bridge.revision);
+    assert.equal(value.profile_id, monitoring.scope.profile_id);
+    assert.equal(value.account_generation, monitoring.scope.account_generation);
+    assert.ok(value.excluded_devices.includes('missing-device'));
+    assert.ok(value.excluded_locations.includes('missing-location'));
+    assert.ok(value.excluded_kinds.includes('missing-kind'));
+    assert.ok(value.excluded_mappings.includes('smoke'));
+    if (delayBridgeSave) {
+      delayedOperationId = value.operation_id;
+      await new Promise((resolve) => (finishDelayedSave = resolve));
+      return send({ operation_id: value.operation_id, status: 'completed' });
+    }
+    if (uncertainBridgeSave)
+      return send({ operation_id: value.operation_id, status: 'unknown', possibly_sent: true });
+    for (const key of [
+      'enabled',
+      'auto_import',
+      'included_devices',
+      'excluded_devices',
+      'excluded_locations',
+      'excluded_kinds',
+      'excluded_mappings',
+    ])
+      bridge[key] = value[key];
+    bridge.revision++;
+    for (const entry of bridge.devices) {
+      const device = monitoring.devices.find((item) => item.id === entry.id);
+      entry.excluded =
+        bridge.excluded_devices.includes(entry.id) ||
+        bridge.excluded_locations.includes(device.location_id) ||
+        bridge.excluded_kinds.includes(device.kind);
+      entry.selected =
+        entry.eligible &&
+        !entry.excluded &&
+        (bridge.auto_import || bridge.included_devices.includes(entry.id));
+    }
+    bridge.selected_count = bridge.devices.filter((entry) => entry.selected).length;
+    publish();
+    return send({ operation_id: value.operation_id, status: 'completed' });
+  }
   if (/^\/api\/web\/v1\/(selection|pairing|recording|controls)$/.test(path))
     return send({
       ...monitoring.scope,
@@ -237,6 +341,68 @@ try {
   checks.push(
     'location and type filtering; unknown battery distinct from zero; stale motion hidden; generic detail makes no camera RPCs',
   );
+  await page.getByRole('link', { name: 'Back to devices', exact: true }).click();
+  await page.getByRole('switch', { name: 'Prepare Halo Bridge', exact: true }).waitFor();
+  assert.equal(await page.getByText('Not available yet', { exact: true }).count(), 1);
+  await page.getByRole('switch', { name: 'Automatically include supported sensors' }).click();
+  await page.getByText('0 of 149 selected', { exact: true }).waitFor();
+  assert.equal(bridge.auto_import, false);
+  await page.locator('.device-link').filter({ hasText: 'Front door' }).click();
+  await page.getByRole('switch', { name: 'Include Front door in Halo Bridge' }).click();
+  await page.getByText('Selected for future publication', { exact: true }).waitFor();
+  assert.deepEqual(bridge.included_devices, ['sensor-one']);
+  await page.getByRole('switch', { name: 'Include Front door in Halo Bridge' }).click();
+  await page.getByText('Excluded', { exact: true }).waitFor();
+  assert.deepEqual(bridge.excluded_devices, ['missing-device', 'sensor-one']);
+  await page.getByRole('link', { name: 'Back to devices', exact: true }).click();
+  await page.locator('summary').filter({ hasText: 'Import exclusions' }).click();
+  await page.getByLabel('Location to exclude from Halo Bridge').selectOption('home');
+  await page.getByRole('button', { name: 'Exclude location', exact: true }).click();
+  await page
+    .getByRole('button', { name: 'Remove location exclusion for Home', exact: true })
+    .waitFor();
+  await page.getByLabel('Device type to exclude from Halo Bridge').selectOption('motion-sensor');
+  await page.getByRole('button', { name: 'Exclude type', exact: true }).click();
+  await page
+    .getByRole('button', { name: 'Remove device type exclusion for motion sensor', exact: true })
+    .waitFor();
+  await page.getByRole('switch', { name: 'Include contact capability in Halo Bridge' }).click();
+  await page.waitForFunction(
+    () =>
+      !document.querySelector('[aria-label="Include contact capability in Halo Bridge"]').checked,
+  );
+  assert.deepEqual(bridge.excluded_mappings, ['contact', 'smoke']);
+  assert.equal(cameraRequests().length, 0);
+  checks.push(
+    'scoped bridge CAS preferences preserve missing devices, locations, types and capability exclusions; no actuation or camera RPCs',
+  );
+  await page.locator('.device-link').filter({ hasText: 'Front door' }).click();
+  assert.equal(
+    await page.getByRole('switch', { name: 'Include Front door in Halo Bridge' }).isDisabled(),
+    true,
+  );
+  await page.getByRole('link', { name: 'Back to devices', exact: true }).click();
+  await page.getByRole('switch', { name: 'Automatically include supported sensors' }).waitFor();
+  uncertainBridgeSave = true;
+  const bridgeSavesBefore = bridgeMutations.length;
+  await page.getByRole('switch', { name: 'Automatically include supported sensors' }).click();
+  await page.getByRole('button', { name: 'Check outcome' }).waitFor();
+  assert.equal(
+    await page.getByRole('switch', { name: 'Prepare Halo Bridge', exact: true }).isDisabled(),
+    true,
+  );
+  assert.equal(
+    await page
+      .getByRole('switch', { name: 'Automatically include supported sensors' })
+      .isDisabled(),
+    true,
+  );
+  await page.waitForTimeout(100);
+  assert.equal(bridgeMutations.length, bridgeSavesBefore + 1);
+  uncertainBridgeSave = false;
+  checks.push(
+    'uncertain bridge saves disable follow-on edits and are not automatically retried; broader exclusions block per-device overrides',
+  );
   for (const theme of ['light', 'dark']) {
     await page.evaluate((theme) => (document.documentElement.dataset.theme = theme), theme);
     for (const width of [320, 390, 768, 1440]) {
@@ -248,6 +414,10 @@ try {
       ]) {
         await page.evaluate((route) => (location.hash = `/${route}`), route);
         await page.waitForTimeout(80);
+        if (route === 'devices') {
+          const details = page.locator('.bridge-exclusions');
+          if (await details.count()) await details.evaluate((element) => (element.open = true));
+        }
         const dimensions = await page.evaluate(() => ({
           scroll: document.documentElement.scrollWidth,
           width: innerWidth,
@@ -307,6 +477,106 @@ try {
   checks.push(
     'non-camera monitoring and observations remain usable with no ready camera inventory',
   );
+  await page.evaluate(() => (location.hash = '/devices'));
+  await page.getByRole('switch', { name: 'Prepare Halo Bridge', exact: true }).waitFor();
+  delayBridgeSave = true;
+  await page.getByRole('switch', { name: 'Prepare Halo Bridge', exact: true }).click();
+  for (let attempt = 0; !finishDelayedSave && attempt < 50; attempt++)
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.ok(finishDelayedSave);
+  monitoring.scope = { profile_id: 'new-account', account_generation: 5 };
+  state.epoch = 'new-account';
+  monitoring.bridge = {
+    ...bridge,
+    configured: false,
+    enabled: false,
+    revision: 0,
+    devices: [],
+    included_devices: [],
+    excluded_devices: [],
+    excluded_locations: [],
+    excluded_kinds: [],
+    excluded_mappings: [],
+    selected_count: 0,
+    retained_count: 0,
+  };
+  publish();
+  await page
+    .getByText('Prepare the bridge to save its first configuration.', { exact: true })
+    .waitFor();
+  finishDelayedSave();
+  await page.waitForTimeout(100);
+  assert.equal(
+    await page.getByText(`Operation: ${delayedOperationId}`, { exact: true }).count(),
+    0,
+  );
+  assert.equal(
+    await page.getByRole('switch', { name: 'Prepare Halo Bridge', exact: true }).isChecked(),
+    false,
+  );
+  checks.push(
+    'late successful preference reply from previous Ring account cannot update the new account panel',
+  );
+  delete monitoring.bridge;
+  publish();
+  await page.evaluate(() => (location.hash = '/devices'));
+  await page.getByRole('heading', { name: 'Other Ring devices', exact: true }).waitFor();
+  assert.equal(
+    await page.getByRole('switch', { name: 'Prepare Halo Bridge', exact: true }).count(),
+    0,
+  );
+  checks.push('older backend without bridge projection retains non-camera monitoring');
+  if (process.env.HALO_BRIDGE_FIXTURE) {
+    const backend = JSON.parse(await readFile(process.env.HALO_BRIDGE_FIXTURE, 'utf8'));
+    assert.equal(backend.bridge.status, 'ready');
+    assert.equal(backend.bridge.selected_count, 1);
+    state.noncamera = backend;
+    state.scope = backend.scope;
+    state.epoch = 'actual-backend-projection';
+    publish();
+    await page.getByText('1 of 149 selected', { exact: true }).waitFor();
+    await page.locator('.device-link').filter({ hasText: backend.devices[0].name }).click();
+    await page.getByText('Selected for future publication', { exact: true }).waitFor();
+    assert.equal(
+      await page
+        .getByRole('switch', { name: `Include ${backend.devices[0].name} in Halo Bridge` })
+        .isChecked(),
+      true,
+    );
+    assert.equal(cameraRequests().length, 4);
+    checks.push(
+      'actual Python catalog and registry projection with UUID/hash identities renders and selects correctly',
+    );
+    backend.bridge.excluded_mappings = ['contact'];
+    backend.bridge.devices[0].mappings = [];
+    backend.bridge.devices[0].selected = false;
+    backend.bridge.devices[0].excluded = true;
+    backend.bridge.devices[0].reason = 'mappings-excluded';
+    backend.bridge.selected_count = 0;
+    publish();
+    await page.getByText('All eligible capabilities excluded', { exact: true }).waitFor();
+    const include = page.getByRole('switch', {
+      name: `Include ${backend.devices[0].name} in Halo Bridge`,
+    });
+    assert.equal(await include.isChecked(), false);
+    assert.equal(await include.isDisabled(), true);
+    await page
+      .getByText('All eligible sensor capabilities are excluded.', { exact: false })
+      .waitFor();
+    backend.bridge.overflow_count = 1;
+    backend.bridge.devices[0].reason = 'registry-capacity';
+    publish();
+    await page.getByRole('link', { name: 'Back to devices', exact: true }).click();
+    await page
+      .getByText(
+        'Exclusions do not remove retained identities or resolve the retained-identity limit.',
+        { exact: false },
+      )
+      .waitFor();
+    checks.push(
+      'all excluded capabilities disable the device include switch; overflow guidance distinguishes retained identities from selection slots',
+    );
+  }
   assert.deepEqual(errors, []);
   const receipt = {
     status: 'passed',
@@ -314,6 +584,7 @@ try {
     page_errors: errors,
     mutations: mutations.length,
     camera_reads: cameraRequests().length,
+    bridge_mutations: bridgeMutations.length,
   };
   if (output) await writeFile(`${output}/receipt.json`, JSON.stringify(receipt, null, 2) + '\n');
   console.log(JSON.stringify(receipt, null, 2));

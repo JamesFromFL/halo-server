@@ -16,6 +16,7 @@
   import Icon from './Icon.svelte';
   import Row from './Row.svelte';
   import OperationStatus from './OperationStatus.svelte';
+  import BridgePreferences from './BridgePreferences.svelte';
 
   let {
     monitoring,
@@ -138,14 +139,18 @@
         No qualified observations are available for this device yet.
       </div>{/each}
   </div>
-  <h3>HomeKit</h3>
-  <div class="group">
-    <Row
-      title="Halo Bridge"
-      subtitle="HomeKit publication for these devices is planned for a later update."
-      ><span>Not available yet</span></Row
-    >
-  </div>
+  {#if monitoring?.bridge}
+    <BridgePreferences {monitoring} {device} {fresh} {generation} {notify} {refresh} />
+  {:else}
+    <h3>HomeKit</h3>
+    <div class="group">
+      <Row
+        title="Halo Bridge"
+        subtitle="HomeKit publication for these devices is planned for a later update."
+        ><span>Not available yet</span></Row
+      >
+    </div>
+  {/if}
   <p class="inline-note">
     This device is read-only in Halo. Device commands, panic actions, and emergency dispatch are
     blocked by the server.
@@ -204,6 +209,13 @@
         >Disable device monitoring</button
       >
     </div>{/if}
+  {#if monitoring?.bridge}<BridgePreferences
+      {monitoring}
+      {fresh}
+      {generation}
+      {notify}
+      {refresh}
+    />{/if}
   {#if monitoring?.truncated}<p class="notice">
       This device summary has reached its display limit. More devices may be present in the
       inventory.

@@ -58,6 +58,39 @@ export interface NoncameraDevice {
   supported: boolean;
   unsupported_reason: string | null;
 }
+export interface BridgePreferences {
+  enabled: boolean;
+  auto_import: boolean;
+  included_devices: string[];
+  excluded_devices: string[];
+  excluded_locations: string[];
+  excluded_kinds: string[];
+  excluded_mappings: string[];
+}
+export interface BridgeDevice {
+  id: string;
+  accessory_uuid: string | null;
+  mappings: string[];
+  selected: boolean;
+  excluded: boolean;
+  eligible: boolean;
+  reason: string | null;
+  present: boolean;
+}
+export interface BridgeState extends BridgePreferences {
+  revision: number;
+  configured: boolean;
+  accessory_uuid: string | null;
+  username: string | null;
+  capacity: number;
+  selected_count: number;
+  retained_count: number;
+  overflow_count: number;
+  publication: 'not_implemented';
+  status: 'ready' | 'loading' | 'error' | 'offline';
+  devices: BridgeDevice[];
+  truncated: boolean;
+}
 export interface NoncameraState {
   schema: 1;
   revision: number;
@@ -73,6 +106,7 @@ export interface NoncameraState {
     emergency_dispatch_enabled: false;
   };
   enabled: boolean;
+  bridge?: BridgeState;
   truncated?: boolean;
 }
 export interface OwnerState {

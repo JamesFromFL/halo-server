@@ -83,6 +83,26 @@ class ServerPaths:
     def homekit_runtime_directory(self) -> Path:
         return self.runtime_directory / "homekit"
 
+    @property
+    def homekit_device_directory(self) -> Path:
+        return self.homekit_directory / "devices"
+
+    @property
+    def homekit_device_registry_file(self) -> Path:
+        return self.homekit_device_directory / "registry.json"
+
+    @property
+    def homekit_device_pairing_directory(self) -> Path:
+        return self.homekit_device_directory / "pairings"
+
+    @property
+    def homekit_device_pairing_maintenance_file(self) -> Path:
+        return self.homekit_device_directory / "pairing-maintenance.json"
+
+    @property
+    def homekit_device_runtime_directory(self) -> Path:
+        return self.homekit_runtime_directory / "devices"
+
     def prepare(self) -> None:
         ensure_private_directory(self.state_directory)
         ensure_private_directory(self.runtime_directory)
@@ -94,6 +114,21 @@ class ServerPaths:
             self.homekit_directory,
             self.homekit_pairing_directory,
             self.homekit_runtime_directory,
+        ):
+            ensure_private_directory(path)
+
+    def prepare_homekit_devices(self) -> None:
+        """Prepare the separate bridge subtree without opening camera stores.
+
+        HAP pairing ownership uses a lock in the pairing directory's parent.
+        Nesting under ``devices`` gives the future bridge child its own lock and
+        storage root. Preparing paths does not publish a bridge or create keys.
+        """
+        self.prepare()
+        for path in (
+            self.homekit_device_directory,
+            self.homekit_device_pairing_directory,
+            self.homekit_device_runtime_directory,
         ):
             ensure_private_directory(path)
 

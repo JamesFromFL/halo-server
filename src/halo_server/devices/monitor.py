@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 
 from halo_server.account_scope import AccountScope
 from halo_server.api.admin import AdminProtocolError
+from halo_server.devices.bridge import DeviceBridge
 from halo_server.devices.catalog import CatalogError, DeviceCatalog
 from halo_server.devices.policy import (
     DevicePolicy,
@@ -39,6 +40,7 @@ class DeviceMonitor:
         self.service = service
         self.store = DevicePolicyStore(service.paths.state_directory / "devices" / "policy.json")
         self.policy = DevicePolicy()
+        self.bridge = DeviceBridge(service)
         self._loaded = False
         self._factory = provider_factory
         self._clock = clock
@@ -68,8 +70,10 @@ class DeviceMonitor:
         """Fence queued callbacks immediately; async retirement follows separately."""
         if self._binding is not None:
             self._binding.active.clear()
+        self.bridge.invalidate()
 
     async def reconcile(self):
+        await self.bridge.reconcile()
         async with self._lock:
             try:
                 if not self._loaded:
@@ -141,6 +145,7 @@ class DeviceMonitor:
             self._state = "error"
             return
         self._state = "ready" if batch["complete"] else "partial"
+        self.bridge.observe(binding.scope, self._catalog.records(present_only=True))
 
     async def _retire(self):
         binding = self._binding
@@ -148,6 +153,7 @@ class DeviceMonitor:
             return
         binding.active.clear()
         self._catalog = None
+        self.bridge.invalidate()
 
         async def close():
             if binding.provider is not None:
@@ -162,9 +168,12 @@ class DeviceMonitor:
 
     async def close(self):
         self.invalidate()
-        async with self._lock:
-            await self._retire()
-            self._state = "disabled" if not self.policy.enabled else "offline"
+        try:
+            async with self._lock:
+                await self._retire()
+                self._state = "disabled" if not self.policy.enabled else "offline"
+        finally:
+            await self.bridge.close()
 
     async def set_enabled(self, *, profile_id, account_generation, expected_revision, enabled):
         if (
@@ -257,4 +266,5 @@ class DeviceMonitor:
                 "account_generation": scope.generation if scope else None,
             },
             "safety": safety_snapshot(),
+            "bridge": self.bridge.snapshot(),
         }

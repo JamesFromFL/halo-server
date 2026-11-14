@@ -125,6 +125,18 @@ class DeviceCatalog:
         self.complete = complete if source_keys is None else False
         self.observed_at = observed_at
 
+    def records(self, *, present_only: bool = False) -> tuple[DeviceRecord, ...]:
+        """Validated identity metadata for durable enrollment, never live state.
+
+        Retained missing records are intentional: temporary absence cannot erase
+        a paired accessory. Consumers must use snapshot() for current observations.
+        """
+        return tuple(
+            entry.record
+            for _, entry in sorted(self._entries.items())
+            if not present_only or entry.present
+        )
+
     def snapshot(self, *, now: float, max_age: float = 300.0) -> dict[str, Any]:
         if not valid_timestamp(now) or not valid_timestamp(max_age) or max_age == 0:
             raise CatalogError("invalid catalog freshness clock")

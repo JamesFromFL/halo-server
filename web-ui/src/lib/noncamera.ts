@@ -1,4 +1,5 @@
 import type { Device, NoncameraDevice, NoncameraState, StateEnvelope } from './types.ts';
+import { validBridge } from './bridge.ts';
 
 const ROUTE_PREFIX = 'noncamera:';
 const STATES = new Set(['disabled', 'starting', 'ready', 'partial', 'offline', 'error']);
@@ -14,6 +15,7 @@ export function validNoncamera(value: unknown): value is NoncameraState {
   const state = value as NoncameraState;
   return (
     state.schema === 1 &&
+    (state.bridge === undefined || validBridge(state.bridge)) &&
     revision(state.revision) &&
     revision(state.policy_revision) &&
     !!state.scope &&

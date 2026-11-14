@@ -127,6 +127,9 @@ def project_owner_state(service):
             removed = result["noncamera"]["devices"].pop()
             result["noncamera"]["truncated"] = True
             result["noncamera"]["complete"] = False
+        elif result["noncamera"].get("bridge", {}).get("devices"):
+            removed = result["noncamera"]["bridge"]["devices"].pop()
+            result["noncamera"]["bridge"]["truncated"] = True
         elif devices:
             removed = devices.pop()
         else:

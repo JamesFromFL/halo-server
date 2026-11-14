@@ -555,6 +555,32 @@ class WebConsole:
             )
         )
 
+    async def devices_bridge(self, request):
+        from halo_server.devices.bridge import PREFERENCE_FIELDS, validate_preferences
+
+        value = await body(
+            request,
+            tuple(PREFERENCE_FIELDS)
+            + ("profile_id", "account_generation", "expected_revision", "operation_id"),
+        )
+        text(value["profile_id"], maximum=36)
+        integer(value["account_generation"], minimum=1)
+        integer(value["expected_revision"])
+        try:
+            validate_preferences({key: value[key] for key in PREFERENCE_FIELDS})
+        except ValueError as error:
+            raise WebError("bad_request", "Bridge preferences are invalid") from error
+        identifier = operation_id(value["operation_id"])
+        params = {key: item for key, item in value.items() if key != "operation_id"}
+        return success(
+            await self.operations.run(
+                identifier,
+                "configuration",
+                {"target": "device_bridge", **value},
+                lambda: self.pool.call(self.client.devices_bridge_set, **params),
+            )
+        )
+
     async def configuration(self, request):
         value = await body(request, ("configuration", "expected_revision", "operation_id"))
         fields(
@@ -780,6 +806,7 @@ def create_application(console, *, static_root=None):
         web.get(PREFIX + "/state", console.snapshot),
         web.get(PREFIX + "/devices", console.devices),
         web.post(PREFIX + "/devices/monitoring", console.devices_monitoring),
+        web.post(PREFIX + "/devices/bridge", console.devices_bridge),
         web.get(PREFIX + "/events", console.events),
         web.get(PREFIX + "/{read:selection|controls|recording|configuration}", console.read_owner),
         web.get(PREFIX + "/pairing", console.pairing_list),

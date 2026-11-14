@@ -23,6 +23,7 @@ class OwnerAdministration:
         {
             "owner_state",
             "devices_monitoring_set",
+            "devices_bridge_set",
             "configuration_get",
             "configuration_set",
             "camera_control_list",
@@ -58,6 +59,14 @@ class OwnerAdministration:
             return project_owner_state(self.service)
         if method.startswith("stream_capture_"):
             return await self.stream_capture.handle(method, params)
+        if method == "devices_bridge_set":
+            from halo_server.devices.bridge import PREFERENCE_FIELDS
+
+            required = PREFERENCE_FIELDS | {"profile_id", "account_generation", "expected_revision"}
+            _only(params, required)
+            if set(params) != required:
+                raise AdminProtocolError("bad_params", "Bridge preferences are required")
+            return await self.service._device_monitor.bridge.configure(**params)
         if method == "devices_monitoring_set":
             _only(params, {"profile_id", "account_generation", "expected_revision", "enabled"})
             required = {"profile_id", "account_generation", "expected_revision", "enabled"}

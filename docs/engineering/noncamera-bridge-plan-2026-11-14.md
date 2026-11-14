@@ -1,13 +1,16 @@
 # Halo Bridge: non-camera Ring integration
 
-Date: November 14, 2026. Status: researched design with isolated feasibility
-checks; production implementation and physical-device acceptance are pending.
+Date: November 14, 2026. Status: researched design; provider/catalog and durable
+registry waves are implemented locally. Bridge publication and physical-device
+acceptance are pending. See the [wave 1](noncamera-wave1-2026-11-14.md) and
+[wave 2](noncamera-wave2-2026-11-14.md) implementation records.
 
 The subsequent [Scrypted, Homebridge and Home Assistant comparison](ring-project-comparison-2026-11-14.md)
 is complete. It expands the configuration, provider-recovery and control acceptance
 requirements below. The [subscription-free alarm feasibility report](ring-alarm-subscription-feasibility-2026-11-14.md)
 distinguishes permitted regional/legacy cloud control from a separate local alarm
-architecture. No production implementation has begun for this feature.
+architecture. The implementation records distinguish completed local work from
+installed and physical qualification.
 
 ## Product decision
 

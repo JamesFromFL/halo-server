@@ -1,5 +1,9 @@
 # Halo Server engineering
 
+[Non-camera implementation wave 2](noncamera-wave2-2026-11-14.md) records durable
+account-bound bridge identities, import preferences, capacity handling, private
+storage isolation and failure/recovery tests. Publication and pairing are next.
+
 [Non-camera implementation wave 1](noncamera-wave1-2026-11-14.md) records the opt-in
 read-only discovery/catalog, shared-auth ownership, backend command denial, owner
 interface and qualification boundaries. HomeKit bridge publication remains pending.
