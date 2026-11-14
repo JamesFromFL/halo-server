@@ -1418,19 +1418,26 @@ async def test_plugin_camera_control_rechecks_sdk_capability_and_contains_failur
 
 
 @pytest.mark.asyncio
-async def test_plugin_camera_controls_complete_in_request_order_per_camera(tmp_path):
+@pytest.mark.parametrize("control", ["light", "siren"])
+async def test_plugin_camera_controls_use_reservation_or_ordering_per_control(tmp_path, control):
     sessions = FakeSessions()
     started = asyncio.Event()
     release = asyncio.Event()
     order = []
 
     class OrderedDevice(FakeAccessoryDevice):
-        async def async_set_light(self, value):
+        async def _set_ordered(self, value):
             order.append(("start", value))
             if value:
                 started.set()
                 await release.wait()
             order.append(("end", value))
+
+        async def async_set_light(self, value):
+            await self._set_ordered(value)
+
+        async def async_set_siren(self, value):
+            await self._set_ordered(value)
 
     class LoopClient(FakeAccessoryClient):
         def __init__(self, device, loop):
@@ -1438,6 +1445,7 @@ async def test_plugin_camera_controls_complete_in_request_order_per_camera(tmp_p
             self.loop = loop
 
         def submit(self, coroutine):
+            self.submissions += 1
             return asyncio.run_coroutine_threadsafe(coroutine, self.loop)
 
     device = OrderedDevice()
@@ -1447,23 +1455,54 @@ async def test_plugin_camera_controls_complete_in_request_order_per_camera(tmp_p
     service._media_client = client
     service._account_integrations_ready = True
 
-    first = asyncio.create_task(service._set_plugin_camera_control("42", "light", True))
-    await asyncio.wait_for(started.wait(), timeout=1)
-    second = asyncio.create_task(service._set_plugin_camera_control("42", "light", False))
-    await asyncio.sleep(0)
+    first_value = True if control == "light" else SIREN_ON_DURATION_SECONDS
+    second_value = False if control == "light" else 0
+    first = asyncio.create_task(service._set_plugin_camera_control("42", control, True))
+    second = None
+    try:
+        await asyncio.wait_for(started.wait(), timeout=1)
+        if control == "light":
+            # Lighting also overlaps groups/Beams, so it must not queue an
+            # opposite command behind the in-flight shared reservation.
+            with pytest.raises(PluginCameraOperationError) as raised:
+                await asyncio.wait_for(
+                    service._set_plugin_camera_control("42", control, False), timeout=1
+                )
+            assert raised.value.code == "lighting_busy"
+            assert raised.value.status == 409
+        else:
+            requested = asyncio.Event()
 
-    assert order == [("start", True)]
-    assert second.done() is False
+            async def queued_siren():
+                requested.set()
+                await service._set_plugin_camera_control("42", control, False)
 
-    release.set()
-    await asyncio.gather(first, second)
+            second = asyncio.create_task(queued_siren())
+            await asyncio.wait_for(requested.wait(), timeout=1)
+            assert not second.done()
 
-    assert order == [
-        ("start", True),
-        ("end", True),
-        ("start", False),
-        ("end", False),
-    ]
+        assert order == [("start", first_value)]
+        assert client.submissions == 1
+        release.set()
+        await asyncio.wait_for(first, timeout=1)
+        if control == "light":
+            # The rejected request was not retained for automatic replay.
+            assert order == [("start", first_value), ("end", first_value)]
+            assert client.submissions == 1
+            await service._set_plugin_camera_control("42", control, False)
+        else:
+            await asyncio.wait_for(second, timeout=1)
+
+        assert client.submissions == 2
+        assert order == [
+            ("start", first_value),
+            ("end", first_value),
+            ("start", second_value),
+            ("end", second_value),
+        ]
+    finally:
+        release.set()
+        await asyncio.gather(*(task for task in (first, second) if task), return_exceptions=True)
 
 
 @pytest.mark.asyncio
