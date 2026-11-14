@@ -12,6 +12,7 @@ OWNER_ACTIONS = frozenset(
         "login",
         "logout",
         "configuration_set",
+        "devices_monitoring_set",
         "camera_control",
         "homekit_select",
         "homekit_recording_warm",

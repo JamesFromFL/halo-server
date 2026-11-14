@@ -157,6 +157,17 @@ class AdminClient:
             raise AdminClientError("bad_response", "Daemon returned an invalid login result")
         return result
 
+    async def devices_monitoring_set(
+        self, *, profile_id: str, account_generation: int, expected_revision: int, enabled: bool
+    ) -> dict[str, Any]:
+        return await self._object(
+            "devices_monitoring_set",
+            profile_id=profile_id,
+            account_generation=account_generation,
+            expected_revision=expected_revision,
+            enabled=enabled,
+        )
+
     async def logout(self, *, expected_epoch: str | None = None) -> dict[str, Any]:
         result = await self.request(
             "logout", **({"expected_epoch": expected_epoch} if expected_epoch is not None else {})

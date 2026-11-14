@@ -22,6 +22,7 @@ class OwnerAdministration:
     methods = frozenset(
         {
             "owner_state",
+            "devices_monitoring_set",
             "configuration_get",
             "configuration_set",
             "camera_control_list",
@@ -57,6 +58,12 @@ class OwnerAdministration:
             return project_owner_state(self.service)
         if method.startswith("stream_capture_"):
             return await self.stream_capture.handle(method, params)
+        if method == "devices_monitoring_set":
+            _only(params, {"profile_id", "account_generation", "expected_revision", "enabled"})
+            required = {"profile_id", "account_generation", "expected_revision", "enabled"}
+            if set(params) != required:
+                raise AdminProtocolError("bad_params", "Device monitoring parameters are required")
+            return await self.service._device_monitor.set_enabled(**params)
         if method.startswith("configuration_"):
             return await self._configuration(method, params)
         if method == "camera_control_list":

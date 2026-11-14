@@ -1,5 +1,9 @@
 # Halo Server engineering
 
+[Non-camera implementation wave 1](noncamera-wave1-2026-11-14.md) records the opt-in
+read-only discovery/catalog, shared-auth ownership, backend command denial, owner
+interface and qualification boundaries. HomeKit bridge publication remains pending.
+
 [Non-camera Halo Bridge research and implementation plan](noncamera-bridge-plan-2026-11-14.md)
 records the pair-once bridge topology, standalone camera preservation, device
 capability matrix, Python provider reuse, isolated feasibility results, and eight

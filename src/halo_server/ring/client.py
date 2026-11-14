@@ -79,7 +79,17 @@ class RingClient:
         self._inventory_refresh_lock = asyncio.Lock()
         self._snapshot_transport: SnapshotHttpSession | None = None
         self._snapshot_reader: SnapshotReader | None = None
+        self._session_resources: set[Any] = set()
         self._stopped = False
+
+    def register_session_resource(self, resource) -> None:
+        """Register on the Ring loop; retire before credentials or that loop close."""
+        if self._stopped or not self.is_authenticated:
+            raise SessionSupersededError("Ring session is no longer active")
+        self._session_resources.add(resource)
+
+    def unregister_session_resource(self, resource) -> None:
+        self._session_resources.discard(resource)
 
     @property
     def ring(self):
@@ -296,6 +306,9 @@ class RingClient:
                 self._capture_auth_token,
                 http_client_session=transport,
             )
+            from halo_server.ring.auth_refresh import install_serialized_auth_refresh
+
+            install_serialized_auth_refresh(auth)
             token = await auth.async_fetch_token(username, password, otp_code)
             if self._pending_auth_token is None:
                 self._capture_auth_token(token)
@@ -323,6 +336,9 @@ class RingClient:
                 self._capture_auth_token,
                 http_client_session=transport,
             )
+            from halo_server.ring.auth_refresh import install_serialized_auth_refresh
+
+            install_serialized_auth_refresh(auth)
             ring = Ring(auth)
             await self._async_update_inventory(ring)
             self._finish_authentication(auth, ring, transport)
@@ -448,8 +464,19 @@ class RingClient:
         self._snapshot_reader = None
         self._snapshot_transport = None
         try:
-            if reader is not None:
-                await reader.close()
+            resources = tuple(self._session_resources)
+            self._session_resources.clear()
+            try:
+                if resources:
+                    results = await asyncio.gather(
+                        *(resource.close() for resource in resources), return_exceptions=True
+                    )
+                    failures = [result for result in results if isinstance(result, Exception)]
+                    if failures:
+                        raise ExceptionGroup("Ring integration retirement failed", failures)
+            finally:
+                if reader is not None:
+                    await reader.close()
         finally:
             try:
                 await ring.auth.async_close()

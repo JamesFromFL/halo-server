@@ -20,6 +20,8 @@
     refresh: 'M20 7v5h-5 M4 17v-5h5 M5 7a8 8 0 0 1 14 0 M19 17a8 8 0 0 1-14 0',
     light: 'M8 17h8 M9 21h6 M8 14a6 6 0 1 1 8 0v3H8z',
     bell: 'M5 17h14l-2-3V9a5 5 0 0 0-10 0v5z M10 21h4',
+    shield: 'M12 3l8 3v6c0 5-8 9-8 9s-8-4-8-9V6z M8 12l3 3 5-6',
+    contact: 'M4 3h10v18H4z M18 5h3v14h-3z M11 12h.01',
   };
 </script>
 

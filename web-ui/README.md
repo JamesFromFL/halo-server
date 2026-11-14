@@ -54,3 +54,12 @@ without printing them. Use `--installed` to test the installed wheel instead.
 
 Physical iPhone Safari certificate onboarding and live seven-camera regression
 checks remain separate deployment acceptance gates.
+
+`npm run test:devices` starts its own loopback-only synthetic HTTP server and
+tests the built non-camera device interface. It requires the same isolated
+Playwright browser cache; `HALO_BROWSER_OUTPUT` optionally records screenshots
+and a receipt. It checks location/type filtering, stale and unknown observations,
+the scoped monitoring disable operation, the absence of device actuation controls,
+and that non-camera detail pages never request camera administration. It also
+checks 24 desktop/mobile/theme layouts. This fixture is not evidence of real Ring
+device support or live HomeKit behavior.

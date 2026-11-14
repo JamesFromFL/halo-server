@@ -3,6 +3,7 @@
   import Status from '../components/Status.svelte';
   import Icon from '../components/Icon.svelte';
   import { pretty, when } from '../lib/model.ts';
+  import { monitoringStatus } from '../lib/noncamera.ts';
   import type { StateEnvelope } from '../lib/types.ts';
   let { snapshot, fresh }: { snapshot: StateEnvelope | null; fresh: boolean } = $props();
   const state = $derived(snapshot?.state);
@@ -81,6 +82,15 @@
     subtitle="Publication does not confirm pairing or stream quality"
     ><span>{fresh ? (state?.homekit.published_count ?? 'Unknown') : 'Unknown'}</span></Row
   >
+  {#if state?.noncamera}
+    <Row
+      title="Other Ring devices"
+      subtitle={monitoringStatus(state.noncamera, fresh)}
+      icon="devices"
+    >
+      <span>{state.noncamera.devices.length}</span>
+    </Row>
+  {/if}
 </div>
 {#if state?.truncated}<p class="notice">
     This summary has reached its display limit. The inventory may contain more devices.

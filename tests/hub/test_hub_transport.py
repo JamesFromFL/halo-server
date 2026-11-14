@@ -1,0 +1,344 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Adapted from JamesFromFL/halo-gtk c2f99aa3c8da3f75181a23201c53fcb972203309.
+"""Fixture-only tests for the native Ring Alarm WebSocket transport."""
+
+import asyncio
+import json
+from types import SimpleNamespace
+from urllib.parse import parse_qs, urlsplit
+
+import aiohttp
+import pytest
+
+from halo_server.ring.hub.protocol import DeviceInfoDocList
+from halo_server.ring.hub.provider import (
+    AlarmLocationSeed,
+    AlarmRequestError,
+)
+from halo_server.ring.hub.transport import AlarmTransportError, RingAlarmTransport
+
+
+def _ticket(*, token="short-lived-ticket", host="alarm.example.test", assets=None):
+    return {
+        "ticket": token,
+        "host": host,
+        "assets": assets
+        or [
+            {
+                "uuid": "asset-1",
+                "kind": "base_station_v1",
+                "status": "online",
+                "onBattery": False,
+            }
+        ],
+    }
+
+
+def _device_list_frame(asset_id="asset-1"):
+    return json.dumps(
+        {
+            "channel": "message",
+            "msg": {
+                "msg": "DeviceInfoDocGetList",
+                "src": asset_id,
+                "body": [
+                    {
+                        "general": {"v2": {"zid": "panel-1", "name": "Panel"}},
+                        "device": {"v1": {"zid": "panel-1", "deviceType": "security-panel"}},
+                    }
+                ],
+            },
+        }
+    )
+
+
+class _Gateway:
+    def __init__(self, *responses):
+        self.responses = list(responses)
+        self.calls = []
+
+    async def request_json(self, url, **kwargs):
+        self.calls.append((url, kwargs))
+        response = self.responses.pop(0)
+        if isinstance(response, BaseException):
+            raise response
+        return response
+
+
+class _WebSocket:
+    def __init__(self, frames=()):
+        self.frames = list(frames)
+        self.sent = []
+        self.closed = False
+
+    async def receive(self):
+        if self.frames:
+            return self.frames.pop(0)
+        return SimpleNamespace(type=aiohttp.WSMsgType.CLOSED, data=None)
+
+    async def send_str(self, frame):
+        self.sent.append(frame)
+
+    async def close(self):
+        self.closed = True
+
+
+class _StallingModeWebSocket(_WebSocket):
+    def __init__(self):
+        super().__init__()
+        self.inventory_sent = asyncio.Event()
+        self.mode_send_started = asyncio.Event()
+        self.receive_released = asyncio.Event()
+
+    async def receive(self):
+        await self.receive_released.wait()
+        return SimpleNamespace(type=aiohttp.WSMsgType.CLOSED, data=None)
+
+    async def send_str(self, frame):
+        if not self.sent:
+            self.sent.append(frame)
+            self.inventory_sent.set()
+            return
+        self.mode_send_started.set()
+        await asyncio.Event().wait()
+
+    async def close(self):
+        self.closed = True
+        self.receive_released.set()
+
+
+class _FailingModeWebSocket(_StallingModeWebSocket):
+    async def send_str(self, frame):
+        if not self.sent:
+            await super().send_str(frame)
+            return
+        self.mode_send_started.set()
+        raise RuntimeError("raw-send-failure")
+
+
+class _Session:
+    def __init__(self, *websockets):
+        self.websockets = list(websockets)
+        self.urls = []
+        self.closed = False
+
+    async def ws_connect(self, url, **kwargs):
+        self.urls.append((url, kwargs))
+        return self.websockets.pop(0)
+
+    async def close(self):
+        self.closed = True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("shutdown", ["close", "stop"])
+async def test_handshake_finishing_after_shutdown_closes_socket_without_publishing(shutdown):
+    websocket = _WebSocket()
+    handshake_started = asyncio.Event()
+    handshake_finished = asyncio.Event()
+
+    class DelayedSession(_Session):
+        async def ws_connect(self, url, **kwargs):
+            handshake_started.set()
+            await handshake_finished.wait()
+            return await super().ws_connect(url, **kwargs)
+
+    session = DelayedSession(websocket)
+    transport = RingAlarmTransport(
+        _Gateway(_ticket()),
+        AlarmLocationSeed("location-1"),
+        session_factory=lambda: session,
+    )
+    opened = []
+    stop = asyncio.Event()
+    connection = asyncio.create_task(
+        transport.connect_once(
+            epoch=1,
+            stop_event=stop,
+            on_open=opened.append,
+            on_message=lambda _message: None,
+        )
+    )
+    await handshake_started.wait()
+    if shutdown == "close":
+        await transport.close()
+    else:
+        stop.set()
+    handshake_finished.set()
+    await connection
+
+    assert opened == []
+    assert websocket.sent == []
+    assert websocket.closed is True
+    assert transport.connected_epoch is None
+    assert transport.assets == ()
+    await transport.close()
+    assert session.closed is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [[], {}, None, 1])
+async def test_unrecognized_ticket_status_does_not_abort_valid_inventory(status):
+    ticket = _ticket()
+    ticket["assets"][0]["status"] = status
+    websocket = _WebSocket()
+    session = _Session(websocket)
+    transport = RingAlarmTransport(
+        _Gateway(ticket),
+        AlarmLocationSeed("location-1"),
+        session_factory=lambda: session,
+    )
+    stop = asyncio.Event()
+    opened = []
+
+    def on_open(assets):
+        opened.extend(assets)
+        stop.set()
+
+    await transport.connect_once(
+        epoch=1,
+        stop_event=stop,
+        on_open=on_open,
+        on_message=lambda _message: None,
+    )
+    assert opened[0].status == "unknown"
+    await transport.close()
+
+
+@pytest.mark.asyncio
+async def test_transport_uses_authenticated_ticket_and_owned_wss_session():
+    gateway = _Gateway(_ticket())
+    websocket = _WebSocket(
+        [SimpleNamespace(type=aiohttp.WSMsgType.TEXT, data=_device_list_frame())]
+    )
+    session = _Session(websocket)
+    transport = RingAlarmTransport(
+        gateway,
+        AlarmLocationSeed("location/one"),
+        session_factory=lambda: session,
+        receive_poll_interval=0.01,
+    )
+    stop = asyncio.Event()
+    received = []
+
+    async def on_message(message):
+        received.append(message)
+        stop.set()
+
+    await transport.connect_once(
+        epoch=1,
+        stop_event=stop,
+        on_open=lambda _assets: None,
+        on_message=on_message,
+    )
+    await transport.close()
+
+    ticket_url, ticket_kwargs = gateway.calls[0]
+    assert urlsplit(ticket_url).scheme == "https"
+    assert urlsplit(ticket_url).hostname == "prd-api-us.prd.rings.solutions"
+    assert urlsplit(ticket_url).path == "/api/v1/clap/tickets"
+    assert parse_qs(urlsplit(ticket_url).query) == {
+        "locationID": ["location/one"],
+        "enableExtendedEmergencyCellUsage": ["true"],
+        "requestedTransport": ["ws"],
+    }
+    assert ticket_kwargs == {"timeout": 20.0}
+    wss_url, connect_kwargs = session.urls[0]
+    parsed = urlsplit(wss_url)
+    assert (parsed.scheme, parsed.hostname, parsed.path) == (
+        "wss",
+        "alarm.example.test",
+        "/ws",
+    )
+    assert parse_qs(parsed.query) == {"authcode": ["short-lived-ticket"], "ack": ["false"]}
+    assert connect_kwargs["max_msg_size"] == 1_048_576
+    assert isinstance(received[0], DeviceInfoDocList)
+    assert json.loads(websocket.sent[0])["msg"] == {
+        "msg": "DeviceInfoDocGetList",
+        "dst": "asset-1",
+        "seq": 1,
+    }
+    assert websocket.closed is True
+    assert session.closed is True
+
+
+@pytest.mark.asyncio
+async def test_transport_rejects_untrusted_ticket_host_without_leaking_values():
+    secret = "do-not-report-this-ticket"
+    gateway = _Gateway(_ticket(token=secret, host="good.example/ws@evil.example"))
+    transport = RingAlarmTransport(
+        gateway,
+        AlarmLocationSeed("location-1"),
+        session_factory=lambda: pytest.fail("session must not be created"),
+    )
+
+    with pytest.raises(AlarmTransportError) as raised:
+        await transport.connect_once(
+            epoch=1,
+            stop_event=asyncio.Event(),
+            on_open=lambda _assets: None,
+            on_message=lambda _message: None,
+        )
+
+    assert raised.value.code == "invalid-ticket-host"
+    assert secret not in str(raised.value)
+    assert "evil.example" not in str(raised.value)
+
+
+@pytest.mark.asyncio
+async def test_transport_propagates_bounded_retry_after_without_error_details():
+    gateway = _Gateway(AlarmRequestError("rate-limited", retry_after=900))
+    transport = RingAlarmTransport(gateway, AlarmLocationSeed("location-1"))
+
+    with pytest.raises(AlarmTransportError) as raised:
+        await transport.connect_once(
+            epoch=1,
+            stop_event=asyncio.Event(),
+            on_open=lambda _assets: None,
+            on_message=lambda _message: None,
+        )
+
+    assert raised.value.code == "rate-limited"
+    assert raised.value.retry_after == 300
+
+
+@pytest.mark.asyncio
+async def test_transport_bounds_invalid_frames_and_never_reports_raw_data():
+    raw_secret = "raw-household-payload"
+    frames = [
+        SimpleNamespace(type=aiohttp.WSMsgType.TEXT, data=raw_secret),
+        SimpleNamespace(type=aiohttp.WSMsgType.TEXT, data=raw_secret),
+    ]
+    websocket = _WebSocket(frames)
+    session = _Session(websocket)
+    transport = RingAlarmTransport(
+        _Gateway(_ticket()),
+        AlarmLocationSeed("location-1"),
+        session_factory=lambda: session,
+        max_invalid_frames=2,
+    )
+
+    with pytest.raises(AlarmTransportError) as raised:
+        await transport.connect_once(
+            epoch=1,
+            stop_event=asyncio.Event(),
+            on_open=lambda _assets: None,
+            on_message=lambda _message: None,
+        )
+
+    assert raised.value.code == "invalid-frame-limit"
+    assert raw_secret not in str(raised.value)
+    await transport.close()
+
+
+@pytest.mark.asyncio
+async def test_default_wss_session_has_no_auth_cookies_or_proxy_environment():
+    session = RingAlarmTransport._new_session()
+    try:
+        assert isinstance(session.cookie_jar, aiohttp.DummyCookieJar)
+        assert not session.headers and session._default_auth is None
+        assert session.trust_env is False
+        session.cookie_jar.update_cookies({"private": "must-not-be-forwarded"})
+        assert not session.cookie_jar.filter_cookies("https://alarm.example.test")
+    finally:
+        await session.close()

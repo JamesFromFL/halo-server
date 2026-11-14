@@ -1,0 +1,325 @@
+/** Isolated browser fixture: no Ring credentials, HomeKit publication, or physical commands. */
+import { chromium } from '@playwright/test';
+import assert from 'node:assert/strict';
+import { createServer } from 'node:http';
+import { readFile, mkdir, writeFile } from 'node:fs/promises';
+import { resolve, dirname, extname, relative } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const staticRoot = resolve(root, '../src/halo_server/web/static');
+const output = process.env.HALO_BROWSER_OUTPUT;
+if (output && !output.startsWith('/')) throw new Error('HALO_BROWSER_OUTPUT must be absolute');
+if (output) await mkdir(output, { recursive: true });
+const requests = [];
+const mutations = [];
+const subscribers = new Set();
+const errors = [];
+const checks = [];
+const sensor = {
+  id: 'sensor-one',
+  name: 'Front door',
+  kind: 'contact-sensor',
+  model: 'Contact Sensor',
+  location_id: 'home',
+  location_name: 'Home',
+  capabilities: ['contact'],
+  observed: { contact_open: false, battery_percent: null, tampered: false },
+  available: true,
+  stale: false,
+  observed_at: Date.now() / 1000,
+  supported: true,
+  unsupported_reason: null,
+};
+const monitoring = {
+  schema: 1,
+  revision: 8,
+  policy_revision: 3,
+  scope: { profile_id: 'test-profile', account_generation: 2 },
+  state: 'partial',
+  complete: false,
+  observed_at: Date.now() / 1000,
+  devices: [
+    sensor,
+    {
+      ...sensor,
+      id: 'motion-one',
+      name: 'Garage motion',
+      kind: 'motion-sensor',
+      model: 'Motion Sensor',
+      location_id: 'garage',
+      location_name: 'Garage',
+      observed: { motion_detected: true },
+      stale: true,
+    },
+    {
+      ...sensor,
+      id: 'panic-one',
+      name: 'Panic button',
+      kind: 'panic-button',
+      model: 'Panic Button',
+      observed: {},
+      supported: false,
+      unsupported_reason: 'Control is disabled in this release.',
+    },
+  ],
+  safety: { read_only: true, panic_enabled: false, emergency_dispatch_enabled: false },
+  enabled: true,
+};
+const state = {
+  schema: 1,
+  epoch: 'test-account',
+  observed_at: Date.now() / 1000,
+  daemon: {
+    boot_id: 'daemon-test',
+    version: 'fixture',
+    uptime_seconds: 10,
+    stopping: false,
+    release: { managed: false },
+  },
+  ring: { authenticated: true, restoring: false, events: 'connected', inventory_complete: true },
+  scope: monitoring.scope,
+  homekit: {
+    enabled: true,
+    adapter_boot_id: 'adapter-test',
+    state: 'published',
+    registry_revision: 1,
+    selected_count: 1,
+    published_count: 1,
+    recording_revision: 1,
+  },
+  devices: [
+    {
+      id: 'camera-one',
+      camera_id: '42',
+      name: 'Floodlight',
+      model: 'Floodlight Camera',
+      source: 'ring',
+      kind: 'camera',
+      scope: { ...monitoring.scope, device_generation: 1 },
+      capabilities: [],
+      observed: { source_available: true, battery_percent: null, light: false, siren: false },
+      homekit: {
+        selected: true,
+        published: true,
+        paired: true,
+        owner_warm: false,
+        recording_active: false,
+        recording_audio_active: false,
+      },
+    },
+  ],
+  noncamera: monitoring,
+  activity: { epoch: 'activity', cursor: 0, capacity: 256, entries: [], truncated: false },
+  truncated: false,
+};
+const snapshot = () => ({
+  schema: 1,
+  web: { boot_id: 'web-test', observed_at: Date.now() / 1000 },
+  daemon: { available: true, stale: false, observed_at: Date.now() / 1000, error: null },
+  state,
+  cursor: String(Date.now()),
+});
+const publish = () => {
+  for (const response of subscribers)
+    response.write(`event: state\ndata: ${JSON.stringify(snapshot())}\n\n`);
+};
+const server = createServer(async (request, response) => {
+  const path = new URL(request.url, 'http://localhost').pathname;
+  requests.push({ method: request.method, path });
+  const send = (result, status = 200) => {
+    response.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+    response.end(JSON.stringify({ ok: status < 400, result }));
+  };
+  if (path === '/api/web/v1/session')
+    return send({
+      authenticated: true,
+      setup_required: false,
+      csrf_token: 'test-csrf',
+      reauthenticated: true,
+      session_id: 'test-session',
+    });
+  if (path === '/api/web/v1/state') return send(snapshot());
+  if (path === '/api/web/v1/events') {
+    response.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store' });
+    subscribers.add(response);
+    publish();
+    request.on('close', () => subscribers.delete(response));
+    return;
+  }
+  if (path === '/api/web/v1/devices/monitoring' && request.method === 'POST') {
+    let body = '';
+    for await (const chunk of request) body += chunk;
+    const value = JSON.parse(body);
+    mutations.push(value);
+    assert.equal(request.headers['x-halo-csrf'], 'test-csrf');
+    assert.equal(value.expected_revision, monitoring.policy_revision);
+    assert.equal(value.profile_id, monitoring.scope.profile_id);
+    assert.equal(value.account_generation, monitoring.scope.account_generation);
+    monitoring.enabled = value.enabled;
+    monitoring.state = value.enabled ? 'partial' : 'disabled';
+    monitoring.policy_revision++;
+    publish();
+    return send({ operation_id: value.operation_id, status: 'completed' });
+  }
+  if (/^\/api\/web\/v1\/(selection|pairing|recording|controls)$/.test(path))
+    return send({
+      ...monitoring.scope,
+      boot_id: 'adapter-test',
+      revision: 1,
+      registry_revision: 1,
+      cameras: [],
+    });
+  if (path.startsWith('/api/')) return send({}, 404);
+  const file = resolve(staticRoot, `.${path === '/' ? '/index.html' : path}`);
+  if (relative(staticRoot, file).startsWith('..')) {
+    response.writeHead(404);
+    response.end();
+    return;
+  }
+  try {
+    const body = await readFile(file);
+    response.writeHead(200, {
+      'Content-Type':
+        { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png' }[
+          extname(file)
+        ] ?? 'text/plain',
+    });
+    response.end(body);
+  } catch {
+    response.writeHead(404);
+    response.end();
+  }
+});
+await new Promise((resolve, reject) => {
+  server.once('error', reject);
+  server.listen(0, '127.0.0.1', resolve);
+});
+const timer = setInterval(publish, 1000);
+const browser = await chromium.launch({ headless: true });
+const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+const page = await context.newPage();
+page.on('pageerror', (error) => errors.push(error.message));
+const cameraRequests = () =>
+  requests.filter((request) =>
+    /^\/api\/web\/v1\/(selection|pairing|recording|controls)$/.test(request.path),
+  );
+try {
+  await page.goto(`http://127.0.0.1:${server.address().port}/#/devices`);
+  await page.getByRole('heading', { name: 'Other Ring devices', exact: true }).waitFor();
+  await page.getByText('Some sources unavailable', { exact: true }).waitFor();
+  assert.equal(await page.locator('.device-link').count(), 4);
+  assert.equal(cameraRequests().length, 0);
+  assert.equal(await page.getByRole('button', { name: /panic|arm|unlock|siren/i }).count(), 0);
+  checks.push('camera plus non-camera inventory; partial source status; no actuation controls');
+  await page.getByLabel('Filter other devices by location').selectOption('garage');
+  assert.equal(await page.locator('.device-link').count(), 2);
+  await page.getByLabel('Filter other devices by location').selectOption('');
+  await page.getByLabel('Filter other devices by type').selectOption('contact-sensor');
+  assert.equal(await page.locator('.device-link').count(), 2);
+  await page.getByLabel('Filter other devices by type').selectOption('');
+  await page.locator('.device-link').filter({ hasText: 'Front door' }).click();
+  await page.getByRole('heading', { name: 'Observations', exact: true }).waitFor();
+  assert.equal(await page.getByText('Closed', { exact: true }).count(), 1);
+  assert.equal(await page.getByText('Unknown', { exact: true }).count(), 1);
+  assert.equal(await page.getByRole('heading', { name: 'Recording', exact: true }).count(), 0);
+  assert.equal(cameraRequests().length, 0, 'generic details never request camera administration');
+  await page.getByRole('link', { name: 'Back to devices', exact: true }).click();
+  await page.locator('.device-link').filter({ hasText: 'Garage motion' }).click();
+  await page.getByText('Current device state is unavailable.', { exact: false }).waitFor();
+  assert.equal(
+    await page.getByText('Detected', { exact: true }).count(),
+    0,
+    'stale true motion is not a current event',
+  );
+  assert.equal(await page.getByText('Unknown', { exact: true }).count(), 1);
+  assert.equal(cameraRequests().length, 0);
+  checks.push(
+    'location and type filtering; unknown battery distinct from zero; stale motion hidden; generic detail makes no camera RPCs',
+  );
+  for (const theme of ['light', 'dark']) {
+    await page.evaluate((theme) => (document.documentElement.dataset.theme = theme), theme);
+    for (const width of [320, 390, 768, 1440]) {
+      await page.setViewportSize({ width, height: 1000 });
+      for (const route of [
+        'devices',
+        'devices/noncamera%3Asensor-one',
+        'devices/noncamera%3Amotion-one',
+      ]) {
+        await page.evaluate((route) => (location.hash = `/${route}`), route);
+        await page.waitForTimeout(80);
+        const dimensions = await page.evaluate(() => ({
+          scroll: document.documentElement.scrollWidth,
+          width: innerWidth,
+        }));
+        assert.ok(
+          dimensions.scroll <= dimensions.width,
+          `${theme} ${width} ${route} horizontal overflow`,
+        );
+        if (output && [390, 1440].includes(width))
+          await page.screenshot({
+            path: `${output}/${theme}-${width}-${route.replaceAll('/', '-')}.png`,
+            fullPage: true,
+          });
+      }
+    }
+  }
+  checks.push('24 layout combinations: 320/390/768/1440px, light/dark, list/current/stale details');
+  await page.evaluate(() => (location.hash = '/devices'));
+  const toggle = page.getByRole('switch', { name: 'Enable other Ring device monitoring' });
+  await toggle.waitFor();
+  await toggle.click();
+  await page.getByText('Disabled', { exact: true }).waitFor();
+  assert.equal(mutations.length, 1);
+  assert.equal(mutations[0].enabled, false);
+  assert.equal(cameraRequests().length, 0);
+  checks.push(
+    'monitoring disable sends exactly one scoped policy mutation and no camera or device command',
+  );
+  await page.locator('.device-link').filter({ hasText: 'Floodlight' }).click();
+  await page.getByRole('heading', { name: 'Recording', exact: true }).waitFor();
+  assert.equal(cameraRequests().length, 4, 'camera administration remains available');
+  publish();
+  await page.waitForTimeout(100);
+  assert.equal(
+    cameraRequests().length,
+    4,
+    'ordinary state updates do not refetch camera administration',
+  );
+  checks.push('camera details retain exactly their four administration reads');
+  state.scope = { profile_id: null, account_generation: null };
+  state.devices = [];
+  state.ring.authenticated = false;
+  monitoring.enabled = true;
+  monitoring.state = 'partial';
+  publish();
+  await page.evaluate(() => (location.hash = '/devices'));
+  await page.getByRole('heading', { name: 'Other Ring devices', exact: true }).waitFor();
+  assert.equal(await page.locator('.device-link').count(), 3);
+  assert.equal(
+    await page.getByRole('switch', { name: 'Enable other Ring device monitoring' }).isEnabled(),
+    true,
+  );
+  await page.locator('.device-link').filter({ hasText: 'Front door' }).click();
+  await page.getByRole('heading', { name: 'Observations', exact: true }).waitFor();
+  assert.equal(await page.getByText('Closed', { exact: true }).count(), 1);
+  assert.equal(cameraRequests().length, 4);
+  checks.push(
+    'non-camera monitoring and observations remain usable with no ready camera inventory',
+  );
+  assert.deepEqual(errors, []);
+  const receipt = {
+    status: 'passed',
+    checks,
+    page_errors: errors,
+    mutations: mutations.length,
+    camera_reads: cameraRequests().length,
+  };
+  if (output) await writeFile(`${output}/receipt.json`, JSON.stringify(receipt, null, 2) + '\n');
+  console.log(JSON.stringify(receipt, null, 2));
+} finally {
+  clearInterval(timer);
+  await browser.close();
+  for (const response of subscribers) response.end();
+  await new Promise((resolve) => server.close(resolve));
+}

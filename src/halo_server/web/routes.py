@@ -529,6 +529,32 @@ class WebConsole:
             )
         )
 
+    async def devices_monitoring(self, request):
+        value = await body(
+            request,
+            (
+                "profile_id",
+                "account_generation",
+                "expected_revision",
+                "enabled",
+                "operation_id",
+            ),
+        )
+        text(value["profile_id"], maximum=36)
+        integer(value["account_generation"], minimum=1)
+        integer(value["expected_revision"])
+        boolean(value["enabled"])
+        identifier = operation_id(value["operation_id"])
+        params = {key: item for key, item in value.items() if key != "operation_id"}
+        return success(
+            await self.operations.run(
+                identifier,
+                "configuration",
+                {"target": "device_monitoring", **value},
+                lambda: self.pool.call(self.client.devices_monitoring_set, **params),
+            )
+        )
+
     async def configuration(self, request):
         value = await body(request, ("configuration", "expected_revision", "operation_id"))
         fields(
@@ -753,6 +779,7 @@ def create_application(console, *, static_root=None):
         web.get(PREFIX + "/access", console.access),
         web.get(PREFIX + "/state", console.snapshot),
         web.get(PREFIX + "/devices", console.devices),
+        web.post(PREFIX + "/devices/monitoring", console.devices_monitoring),
         web.get(PREFIX + "/events", console.events),
         web.get(PREFIX + "/{read:selection|controls|recording|configuration}", console.read_owner),
         web.get(PREFIX + "/pairing", console.pairing_list),

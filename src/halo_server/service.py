@@ -242,6 +242,9 @@ class HaloService:
         from halo_server.owner_activity import OwnerActivity
 
         self._owner_activity = OwnerActivity(self._current_account_scope)
+        from halo_server.devices.monitor import DeviceMonitor
+
+        self._device_monitor = DeviceMonitor(self)
         self._event_state = EventConnectionState.OFFLINE
         self._incidents: dict[str, IncidentCoordinator] = {}
         self._recent_events: deque[dict[str, Any]] = deque(maxlen=RECENT_EVENT_LIMIT)
@@ -296,6 +299,7 @@ class HaloService:
         return {}
 
     def _retire_account_observations(self) -> None:
+        self._device_monitor.invalidate()
         self._incidents.clear()
         self._recent_events.clear()
         self._recent_actions.clear()
@@ -417,6 +421,7 @@ class HaloService:
                 await initial_restore
         if self._account_tasks:
             await asyncio.gather(*tuple(self._account_tasks), return_exceptions=True)
+        await attempt("Ring device monitoring", self._device_monitor.close())
         if self._rtsp_gateway is not None:
             await attempt("RTSP gateway", asyncio.to_thread(self._rtsp_gateway.stop))
         self._accept_events = False
@@ -503,6 +508,8 @@ class HaloService:
 
     async def _reconcile_account_integrations(self, client) -> bool:
         """Bring media registration and Ring events in line with an authenticated client."""
+        # Hub discovery has its own health and does not require camera readiness.
+        await self._device_monitor.reconcile()
         self._account_integrations_ready = False
         if self._media_client is not client:
             self._media_epoch += 1
@@ -1130,6 +1137,7 @@ class HaloService:
                     _log.exception("Account resource cleanup failed during logout")
 
             await retire(self.homekit.detach())
+            await retire(self._device_monitor.close())
             listener = self._listener
             self._listener = None
             if listener is not None:
@@ -1392,6 +1400,7 @@ class HaloService:
                 return
             except TimeoutError:
                 pass
+            await self._device_monitor.reconcile()
             await self._refresh_active_inventory()
 
     async def _refresh_active_inventory(self) -> None:

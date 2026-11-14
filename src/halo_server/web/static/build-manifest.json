@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "source_hash": "a345212543204f49f46fbb8f90a5698a81145d89049588fe0ee7683fe9936470",
+  "source_hash": "39997b85cf79dd799f69e8f2eb7b78f0d3e3012c366890d5799232e3e9bb1e5a",
   "source_files": [
     {
       "path": ".prettierignore",
@@ -12,7 +12,7 @@
     },
     {
       "path": "README.md",
-      "sha256": "be006fbc337a2b72c76ad77c97e4e906319100fc82f241844b047fbea4482a52"
+      "sha256": "e021aa4887b5f1ec056f6ae17e63db8d68bcdb2f3d75142add2db37c612726e7"
     },
     {
       "path": "index.html",
@@ -24,7 +24,7 @@
     },
     {
       "path": "package.json",
-      "sha256": "bfbd510633bd20b6e79c591d866f5326585528ed32866fe524a55037c3b6550b"
+      "sha256": "ce0a470f05bd484e708da1075053af08cf1bbeaca5c295a556d54462c638b77f"
     },
     {
       "path": "public/THIRD_PARTY_NOTICES.txt",
@@ -47,6 +47,10 @@
       "sha256": "8ddb7b83a22aeaa6a9ca00cb9abfa075d9db2b04c907bbd81a363d9456915cb2"
     },
     {
+      "path": "scripts/noncamera-smoke.mjs",
+      "sha256": "b80c1fc2d835b2e76ac7ba7575caee1b87dc3058aaea7c4bbeb96672bcd28db2"
+    },
+    {
       "path": "src/App.svelte",
       "sha256": "c0636577c00215fbc675230f1f2c97e683b151072472b8eb2ea5e9daa255f712"
     },
@@ -56,7 +60,11 @@
     },
     {
       "path": "src/components/Icon.svelte",
-      "sha256": "b32ca93c297d70869397ac207922c390a616534fe54a4523fae134813d5eacaf"
+      "sha256": "b01bc5b8265cd3e81b3f32b4ee6513fb639527eb4ade2f4818613c1bac897400"
+    },
+    {
+      "path": "src/components/NoncameraDevices.svelte",
+      "sha256": "ea94f14a0cb057234105c091d07fbc5aba86896644aaea83140e13e06bb4e653"
     },
     {
       "path": "src/components/OperationStatus.svelte",
@@ -80,7 +88,11 @@
     },
     {
       "path": "src/lib/model.ts",
-      "sha256": "58e2681ddf6cc1540dc74ca3ec7b639345961f05e58d6c0e7a2b7d60f9e54202"
+      "sha256": "c6477dedc47182c9da6a7dadfcc70cb8fffc81e2c92e3b20c77dd6b76b7ea57a"
+    },
+    {
+      "path": "src/lib/noncamera.ts",
+      "sha256": "660ad1ae3fe63880866a54f89fe8ff12fc15a9459293ad78a119f0927b9474ef"
     },
     {
       "path": "src/lib/password.ts",
@@ -88,7 +100,7 @@
     },
     {
       "path": "src/lib/types.ts",
-      "sha256": "dc31a4330e848737f080d7fea8a9f441e49d21482f357e554444170a04f58bc4"
+      "sha256": "2670337d866f8fc68bdc105550935ae38143f96976e0463107db6d404b3da8fc"
     },
     {
       "path": "src/main.ts",
@@ -100,7 +112,7 @@
     },
     {
       "path": "src/pages/Devices.svelte",
-      "sha256": "ce83bd6e5c5cd266ca01e481d3a3d6f8d350f5a3868e09751afec04782da5d82"
+      "sha256": "6aaf0f66fa77a4c3e158558e217a8675637f910072559f42c97197602b1e6950"
     },
     {
       "path": "src/pages/Diagnostics.svelte",
@@ -112,7 +124,7 @@
     },
     {
       "path": "src/pages/Overview.svelte",
-      "sha256": "1dc0130402b32f6ffc815c7171a39f6a9165e97723ec0d344dca83855d4290fb"
+      "sha256": "6d04fe522e145ef92dcb8a683d7140e16858269a402dfea2afb8fa88b974fa75"
     },
     {
       "path": "src/pages/Settings.svelte",
@@ -139,6 +151,10 @@
       "sha256": "deacc957c7233d3885db2dfbc5eb802446cc5d06a1106ddd54c7a76cbd44570a"
     },
     {
+      "path": "tests/noncamera.test.ts",
+      "sha256": "8aa13734338b795ed7dded99fc6fd40e0dff4ab650cc9cafb22fb407611ab773"
+    },
+    {
       "path": "tests/password.test.ts",
       "sha256": "aec04526ca50003fb7a277b15fb5b7817064de2d2992a5d1906bc1f5e3fa0ca7"
     },
@@ -157,12 +173,12 @@
       "sha256": "27b3a540203dab45ee90ade440f4840b513dd2055969a84a9ebccb561fd14799"
     },
     {
-      "path": "assets/index-BZPF6Fbe.js",
-      "sha256": "596dc54f9f79ae865608a3ecb86e5b1c556bc7f2324a3b125810cf63c3a5ab27"
+      "path": "assets/index-4S1YW0cu.css",
+      "sha256": "486aed483196afca5f90a85def1a7970415a345d05108a04b4fb8d78aafdd037"
     },
     {
-      "path": "assets/index-DeDQZVdt.css",
-      "sha256": "5f5d0e5662b7b93f8c4517d01d491e2e01606c439939c8cf5800dd2622a62d9a"
+      "path": "assets/index-BBG_2Xad.js",
+      "sha256": "e7c8c37d4d74a410942312da8fe37af4ec1c6a2a92f52caf0193e561f58309e8"
     },
     {
       "path": "halo.png",
@@ -170,7 +186,7 @@
     },
     {
       "path": "index.html",
-      "sha256": "152c41c0ce95eb212b321a6886a7b215ee1a5f7ff9e8150323dea5a5f929cffd"
+      "sha256": "04bcfe1bbebf75a6837c527ef10c6edcf8bd98f0734ac58540a1c9a2b459b8e3"
     }
   ]
 }

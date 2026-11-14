@@ -6,6 +6,7 @@ import type {
   PairingCamera,
   StateEnvelope,
 } from './types.ts';
+import { validNoncamera } from './noncamera.ts';
 export const tri = (value: boolean | null | undefined, yes = 'Yes', no = 'No') =>
   value == null ? 'Unknown' : value ? yes : no;
 export function pretty(value: unknown): string {
@@ -64,6 +65,11 @@ export function validState(value: unknown): value is StateEnvelope {
     typeof state.homekit.state !== 'string' ||
     !Array.isArray(state.devices) ||
     state.devices.length > 256 ||
+    (state.noncamera !== undefined &&
+      (!validNoncamera(state.noncamera) ||
+        (state.scope.profile_id !== null &&
+          (state.noncamera.scope.profile_id !== state.scope.profile_id ||
+            state.noncamera.scope.account_generation !== state.scope.account_generation)))) ||
     !state.activity ||
     !Array.isArray(state.activity.entries) ||
     state.activity.entries.length > 256

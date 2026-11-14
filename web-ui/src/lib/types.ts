@@ -43,6 +43,38 @@ export interface Activity {
   outcome: string;
   camera_id: string | null;
 }
+export interface NoncameraDevice {
+  id: string;
+  name: string;
+  kind: string;
+  model: string;
+  location_id: string;
+  location_name: string;
+  capabilities: string[];
+  observed: Record<string, Json>;
+  available: boolean | null;
+  stale: boolean;
+  observed_at: number | null;
+  supported: boolean;
+  unsupported_reason: string | null;
+}
+export interface NoncameraState {
+  schema: 1;
+  revision: number;
+  policy_revision: number;
+  scope: { profile_id: string | null; account_generation: number | null };
+  state: 'disabled' | 'starting' | 'ready' | 'partial' | 'offline' | 'error';
+  complete: boolean;
+  observed_at: number | null;
+  devices: NoncameraDevice[];
+  safety: {
+    read_only: true;
+    panic_enabled: false;
+    emergency_dispatch_enabled: false;
+  };
+  enabled: boolean;
+  truncated?: boolean;
+}
 export interface OwnerState {
   schema: 1;
   epoch: string;
@@ -71,6 +103,7 @@ export interface OwnerState {
     recording_revision: number | null;
   };
   devices: Device[];
+  noncamera?: NoncameraState;
   activity: {
     epoch: string;
     cursor: number;

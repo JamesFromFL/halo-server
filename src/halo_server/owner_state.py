@@ -107,6 +107,7 @@ def project_owner_state(service):
         "scope": scope,
         "homekit": homekit,
         "devices": devices,
+        "noncamera": service._device_monitor.snapshot(),
         "activity": activity,
         "truncated": False,
     }
@@ -122,6 +123,10 @@ def project_owner_state(service):
         if activity["entries"]:
             removed = activity["entries"].pop(0)
             activity["truncated"] = True
+        elif result["noncamera"]["devices"]:
+            removed = result["noncamera"]["devices"].pop()
+            result["noncamera"]["truncated"] = True
+            result["noncamera"]["complete"] = False
         elif devices:
             removed = devices.pop()
         else:

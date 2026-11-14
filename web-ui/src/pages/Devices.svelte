@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy } from 'svelte';
+  import { onDestroy, untrack } from 'svelte';
   import { api, ApiError, errorMessage, operationId } from '../lib/api.ts';
   import {
     canResumeReset,
@@ -8,6 +8,7 @@
     selectionBody,
     tri,
   } from '../lib/model.ts';
+  import { cameraDetailTarget, noncameraDevice } from '../lib/noncamera.ts';
   import type {
     StateEnvelope,
     CameraPage,
@@ -21,6 +22,7 @@
   import Confirm from '../components/Confirm.svelte';
   import PairingCode from '../components/PairingCode.svelte';
   import OperationStatus from '../components/OperationStatus.svelte';
+  import NoncameraDevices from '../components/NoncameraDevices.svelte';
   let {
     snapshot,
     fresh,
@@ -53,9 +55,10 @@
   let serial = 0;
   let destroyed = false;
   let operationDevice = '';
-  const device = $derived(
-    snapshot?.state?.devices.find((d) => d.id === deviceId || d.camera_id === deviceId),
-  );
+  const device = $derived(cameraDetailTarget(snapshot, deviceId));
+  const cameraKey = $derived(device?.camera_id ?? '');
+  const noncamera = $derived(snapshot?.state?.noncamera);
+  const otherDevice = $derived(noncameraDevice(noncamera, deviceId));
   const matches = $derived(
     (snapshot?.state?.devices ?? []).filter(
       (d) =>
@@ -72,17 +75,22 @@
   const unsettled = $derived(operation?.status === 'unknown' || operation?.status === 'pending');
   const disabled = $derived(!fresh || busy || loading || unsettled);
   $effect(() => {
-    const key = deviceId;
+    const key = cameraKey;
     const epoch = generation;
     if (operationDevice !== key) {
       operation = null;
       operationDevice = key;
     }
-    if (key && epoch) void load();
+    if (key && epoch) void untrack(load);
     else {
       serial++;
       secret = null;
       pairing = null;
+      selection = null;
+      recording = null;
+      controls = null;
+      loading = false;
+      confirmation = null;
     }
   });
   $effect(() => {
@@ -97,6 +105,7 @@
     secret = null;
   });
   async function load() {
+    if (!device) return;
     const token = ++serial;
     secret = null;
     pairing = null;
@@ -253,7 +262,7 @@
 {#if !deviceId}
   <div class="page-intro">
     <h2>Devices</h2>
-    <p>Your discovered Ring cameras and their current integration state.</p>
+    <p>Your Ring cameras, other devices, and their current integration state.</p>
   </div>
   <div class="searchbar">
     <input
@@ -266,6 +275,7 @@
       ><option value="unselected">Not selected</option></select
     >
   </div>
+  <h3>Cameras</h3>
   <div class="group">
     {#each matches as item (item.id)}<a
         class="device-link"
@@ -288,9 +298,18 @@
   </div>
   <p class="inline-note">
     Historical HomeKit accessories remain in <a href="#/integrations">Integrations</a> if a source device
-    is temporarily missing. Contact sensors, motion sensors, and chimes will appear when their backend
-    support is added.
+    is temporarily missing.
   </p>
+  <NoncameraDevices monitoring={noncamera} {search} {fresh} {generation} {notify} {refresh} />
+{:else if otherDevice}
+  <NoncameraDevices
+    monitoring={noncamera}
+    device={otherDevice}
+    {fresh}
+    {generation}
+    {notify}
+    {refresh}
+  />
 {:else if !device}<a href="#/devices">← Devices</a>
   <div class="empty">
     <h2>Device is no longer available</h2>
