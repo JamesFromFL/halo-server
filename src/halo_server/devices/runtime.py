@@ -404,7 +404,10 @@ class DeviceBridgeRuntime:
             raise
         except Exception:
             self._fail_pending("Device bridge channel closed")
-            await self._terminate()
+            # Graceful shutdown closes control before the child finishes exiting.
+            # The stop owner retains its bounded wait and termination fallback.
+            if not self._stopping.is_set():
+                await self._terminate()
 
     def _accept_publication(self, publication):
         expired = bool(

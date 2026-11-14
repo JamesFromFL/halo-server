@@ -311,6 +311,67 @@ async def test_real_subprocess_handshake_publication_backpressure_and_joined_sto
 
 
 @pytest.mark.asyncio
+async def test_graceful_shutdown_eof_allows_child_to_finish_before_exit(tmp_path, monkeypatch):
+    release_exit = tmp_path / "release-child-exit"
+    before = (
+        """
+control.removeAllListeners('close');
+control.on('finish', () => {
+  control.destroy();
+  const release = """
+        + json.dumps(str(release_exit))
+        + """;
+  setInterval(() => {
+    if (require('node:fs').existsSync(release)) process.exit(0);
+  }, 5);
+});
+"""
+    )
+    child = runtime(tmp_path, entry=fake_child(tmp_path, before=before))
+    read = child._read
+
+    async def release_after_eof(reader):
+        try:
+            await read(reader)
+        finally:
+            # Hold the child alive until the reader has handled its shutdown EOF.
+            # A premature termination therefore cannot race a natural exit.
+            release_exit.write_text("release")
+
+    monkeypatch.setattr(child, "_read", release_after_eof)
+    try:
+        await child.start()
+        process = child._process
+        await asyncio.wait_for(child.stop(), 2)
+        assert release_exit.is_file()
+        assert process.returncode == 0
+        assert child.state == "stopped" and not child.retirement_pending
+        assert child.pid is None and not child._pending
+    finally:
+        await child.stop()
+
+
+@pytest.mark.asyncio
+async def test_unexpected_control_eof_terminates_child_and_fails_pending_request(tmp_path):
+    script = fake_child(
+        tmp_path,
+        before="control.removeAllListeners('close'); setInterval(() => {}, 1000);",
+        ping="control.destroy(); continue;",
+    )
+    child = runtime(tmp_path, entry=script, max_restarts=0)
+    try:
+        await child.start()
+        process = child._process
+        with pytest.raises(DeviceBridgeRuntimeError, match="channel closed"):
+            await child.request("ping", {})
+        await wait_state(child, "failed")
+        assert process.returncode == -signal.SIGTERM
+        assert not child.retirement_pending and not child._pending
+    finally:
+        await child.stop()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "change",
     [
