@@ -145,7 +145,7 @@ async def test_listener_normalizes_events_and_reports_state(monkeypatch):
             self.stopped = True
 
     monkeypatch.setattr(ring_doorbell, "RingEventListenerConfig", FakeConfig)
-    monkeypatch.setattr(ring_doorbell, "RingEventListener", FakeSdkListener)
+    monkeypatch.setattr("halo_server.ring.push.create_ring_event_listener", FakeSdkListener)
     client = SimpleNamespace(ring="ring")
     listener = EventListener(client, received.append, states.append)
 
@@ -197,7 +197,7 @@ async def test_listener_retries_failed_start_and_stops_each_sdk_listener(monkeyp
             self.stopped = True
 
     monkeypatch.setattr(ring_doorbell, "RingEventListenerConfig", FakeConfig)
-    monkeypatch.setattr(ring_doorbell, "RingEventListener", FakeSdkListener)
+    monkeypatch.setattr("halo_server.ring.push.create_ring_event_listener", FakeSdkListener)
     monkeypatch.setattr("halo_server.ring.events.RECONNECT_MIN", 0)
     client = SimpleNamespace(ring="ring")
     listener = EventListener(client, lambda _event: None, states.append)
@@ -252,7 +252,7 @@ async def test_listener_retains_updated_credentials_when_persistence_fails(monke
         raise RuntimeError("must-not-appear-secret")
 
     monkeypatch.setattr(ring_doorbell, "RingEventListenerConfig", FakeConfig)
-    monkeypatch.setattr(ring_doorbell, "RingEventListener", FakeSdkListener)
+    monkeypatch.setattr("halo_server.ring.push.create_ring_event_listener", FakeSdkListener)
     monkeypatch.setattr("halo_server.ring.events.RECONNECT_MIN", 0)
     listener = EventListener(
         SimpleNamespace(ring="ring"),
@@ -391,7 +391,7 @@ async def test_listener_restarts_terminal_receiver_unless_owner_stops(
         async def stop(self):
             operations.append((self.index, "stop"))
 
-    monkeypatch.setattr(ring_doorbell, "RingEventListener", FakeSdkListener)
+    monkeypatch.setattr("halo_server.ring.push.create_ring_event_listener", FakeSdkListener)
     monkeypatch.setattr("halo_server.ring.events.MONITOR_INTERVAL", 0.001)
     listener = EventListener(
         SimpleNamespace(ring="ring"), received.append, credentials=original_credentials
@@ -445,7 +445,7 @@ async def test_listener_keeps_receiver_during_transient_reconnect(monkeypatch, t
             listener._stop.set()
         await asyncio.sleep(0)
 
-    monkeypatch.setattr(ring_doorbell, "RingEventListener", FakeSdkListener)
+    monkeypatch.setattr("halo_server.ring.push.create_ring_event_listener", FakeSdkListener)
     listener = EventListener(SimpleNamespace(ring="ring"), lambda _event: None, states.append)
     monkeypatch.setattr(listener, "_sleep_until_stopped", monitor_tick)
 

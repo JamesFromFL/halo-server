@@ -259,7 +259,9 @@ class EventListener:
 
     async def _run(self) -> None:
         try:
-            from ring_doorbell import RingEventListener, RingEventListenerConfig
+            from ring_doorbell import RingEventListenerConfig
+
+            from halo_server.ring.push import create_ring_event_listener
 
             ring = self._client.ring
             if ring is None:
@@ -277,7 +279,7 @@ class EventListener:
                         if self._credentials is not None
                         else None
                     )
-                listener = RingEventListener(
+                listener = create_ring_event_listener(
                     ring,
                     credentials,
                     self._credentials_updated,
