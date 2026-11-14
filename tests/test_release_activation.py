@@ -91,8 +91,17 @@ async def test_activate_rollback_and_uninstall_never_restore_mutable_snapshots(t
         "pairing-maintenance.json",
         "AccessoryInfo.json",
         "write-intent-deny.json",
+        "devices/policy.json",
+        "devices/alarm.json",
+        "devices/light.json",
+        "devices/chime.json",
+        "homekit/devices/registry.json",
+        "homekit/devices/publication.json",
+        "homekit/devices/pairings/AccessoryInfo.json",
+        "homekit/devices/pairings/IdentifierCache.json",
     ):
         path = state / name
+        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         path.write_text(
             json.dumps(ServerConfiguration(mode=ServerMode.HOMEKIT).as_dict())
             if name == "configuration.json"

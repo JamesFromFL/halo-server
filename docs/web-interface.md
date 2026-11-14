@@ -151,9 +151,9 @@ warm-source opt-in from Apple Home's recording and audio preferences.
 ## Scope
 
 The interface manages cameras, non-camera monitoring, Halo Bridge imports,
-guarded Ring Alarm mode controls and individual Ring Smart Lighting controls.
-Lighting groups, brightness, Chime controls, other device families and additional
-ecosystems are follow-on integrations. It does not automatically preview or play video,
+guarded Ring Alarm mode controls, individual Ring Smart Lighting, optional lighting
+groups and qualified Chime settings/actions. Brightness, additional hardware
+families and other ecosystems require further qualification. It does not automatically preview or play video,
 browse arbitrary files, expose raw logs, or provide browser-driven software updates.
 
 ## Halo Bridge for non-camera devices
@@ -219,5 +219,43 @@ command is never automatically resent. **Check outcome** retrieves the existing
 operation; use newer observed state to resolve an old receipt only when Halo
 offers that action. Disabling controls preserves monitoring and HomeKit identity.
 
-Lighting groups, brightness and camera-integrated lights do not use these new
-controls. Existing camera controls keep their own interface.
+Brightness is not exposed by this wave. Camera-integrated lights keep their own
+interface; camera, individual and group lighting commands share one account-wide
+guard against overlapping writes.
+
+## Lighting groups
+
+Groups appear separately from individual lights. **Allow light controls** uses
+the same finite On duration preferences, but **Turn off group** sends Ring's group
+Off request. It does not disable future motion, schedules or linked behavior.
+The displayed state is Ring's group aggregate, not a claim that every member
+agrees. Halo obtains a fresh group report to confirm a command and never copies a
+group result into camera or individual-light observations.
+
+Every member needs an exact current ownership match before group control is
+available. Missing or mixed ownership remains read-only. Groups need explicit
+individual inclusion in Halo Bridge even when auto-import is enabled, avoiding
+automatic duplicate physical-light and group tiles. Import and control permission
+are independent. Changed membership or authority invalidates an older command.
+
+## Chimes
+
+Open a qualified legacy Chime in Devices and enable **Allow Chime controls** after
+password confirmation. Volume, snooze/clear and automatic nightlight preferences
+apply only when submitted. Missing source values remain unknown. Automatic
+nightlight enables Ring's ambient-light behavior; it is not a report of lamp power.
+These settings are managed in Halo, with no fabricated HomeKit accessory control.
+
+Sound tests require their own permission, a deliberate confirmation and recent
+password authentication. An accepted request means Ring accepted the HTTP request,
+not that playback finished. After listening, acknowledge that the sound stopped
+to release Halo's session-scoped sound latch. This acknowledgement is local and
+does not send another sound request. A restart cannot prove playback completion.
+
+Saving permissions, discovery and pairing never play a sound. Submitted commands
+are not automatically replayed after connection loss; use the existing operation
+and current observed state to inspect an uncertain outcome. Tone changes and
+newer Chime models require additional qualification.
+
+See the [deployment and acceptance guide](noncamera-acceptance.md) for the first
+server/device pilot and remaining qualification boundaries.

@@ -677,9 +677,7 @@ async def test_request_middleware_rechecks_authority_and_rejects_changed_destina
         async def request(self, method, url, *, middlewares, **_kwargs):
             await asyncio.sleep(0)
             allowed[0] = not revoked
-            request = SimpleNamespace(
-                url=url if revoked else "https://evil.test/", method=method
-            )
+            request = SimpleNamespace(url=url if revoked else "https://evil.test/", method=method)
 
             async def send(request):
                 sent.append(request)
@@ -692,7 +690,5 @@ async def test_request_middleware_rechecks_authority_and_rejects_changed_destina
         device_url(7), method="PUT", json=VOLUME, admission=lambda: allowed[0]
     )
     assert receipt.outcome == "uncertain" and receipt.possibly_sent
-    assert receipt.code == (
-        "admission-denied" if revoked else "token-preparation-changed-endpoint"
-    )
+    assert receipt.code == ("admission-denied" if revoked else "token-preparation-changed-endpoint")
     assert not sent

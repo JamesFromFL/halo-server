@@ -137,6 +137,7 @@ async def local_doctor(
         ("state-directory", paths.state_directory),
         ("runtime-directory", paths.runtime_directory),
         ("pairing-directory", paths.homekit_pairing_directory),
+        ("device-pairing-directory", paths.homekit_device_pairing_directory),
     ):
         try:
             path.lstat()
@@ -151,15 +152,18 @@ async def local_doctor(
         except (OSError, PathSecurityError):
             check(name, "fail", "unsafe-path")
         else:
-            if name == "pairing-directory":
+            if name in {"pairing-directory", "device-pairing-directory"}:
+                storage_check = (
+                    "device-pairing-storage" if name.startswith("device-") else "pairing-storage"
+                )
                 try:
                     os.stat(".hap-storage-intent", dir_fd=descriptor, follow_symlinks=False)
                 except FileNotFoundError:
-                    check("pairing-storage", "pass", "no-recovery-marker")
+                    check(storage_check, "pass", "no-recovery-marker")
                 except OSError:
-                    check("pairing-storage", "fail", "storage-unavailable")
+                    check(storage_check, "fail", "storage-unavailable")
                 else:
-                    check("pairing-storage", "fail", "storage-recovery-required")
+                    check(storage_check, "fail", "storage-recovery-required")
             os.close(descriptor)
             check(name, "pass", "private")
     if resources is None:
@@ -183,6 +187,19 @@ async def local_doctor(
         "adapter-resources",
         "pass" if available else "fail",
         "present" if available else "unavailable",
+    )
+    device_available = False
+    if available:
+        try:
+            device_entry = resources.entry.with_name("device-main.js")
+            device_stat = device_entry.lstat()
+            device_available = stat.S_ISREG(device_stat.st_mode) and device_stat.st_size > 0
+        except OSError:
+            pass
+    check(
+        "device-adapter-resources",
+        "pass" if device_available else "fail",
+        "present" if device_available else "unavailable",
     )
     if probe:
         if available:

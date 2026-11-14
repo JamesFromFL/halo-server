@@ -90,3 +90,48 @@ def test_managed_state_directory_override_is_bound_to_actual_inherited_gate(tmp_
         monkeypatch.setenv("HALO_RELEASE_STATE_DIRECTORY", str(tmp_path / "other"))
         with pytest.raises(ReleaseGuardError):
             ServerPaths.from_environment()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["file", "symlink"])
+async def test_doctor_reports_device_pairing_recovery_without_reading_secret(tmp_path, kind):
+    paths = ServerPaths(tmp_path / "state", tmp_path / "runtime")
+    ensure_private_directory(paths.homekit_device_pairing_directory)
+    marker = paths.homekit_device_pairing_directory / ".hap-storage-intent"
+    secret = tmp_path / "private"
+    secret.write_text("device-pairing-secret-canary")
+    if kind == "file":
+        marker.write_text("device-pairing-secret-canary")
+    else:
+        marker.symlink_to(secret)
+    entry = tmp_path / "main.js"
+    entry.write_text("// camera")
+    (tmp_path / "device-main.js").write_text("// bridge")
+    import sys
+
+    result = await local_doctor(paths, resources=AdapterResources(Path(sys.executable), entry))
+    checks = {item["name"]: item for item in result["checks"]}
+    assert checks["device-pairing-storage"]["code"] == "storage-recovery-required"
+    assert checks["device-adapter-resources"]["status"] == "pass"
+    assert "secret-canary" not in json.dumps(result)
+    assert marker.lstat() and secret.read_text() == "device-pairing-secret-canary"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["missing", "symlink", "empty"])
+async def test_doctor_invalid_device_child_is_not_ready(tmp_path, kind):
+    import sys
+
+    entry = tmp_path / "main.js"
+    entry.write_text("// camera")
+    paths = ServerPaths(tmp_path / "state", tmp_path / "runtime")
+    if kind == "symlink":
+        (tmp_path / "device-main.js").symlink_to(entry)
+    elif kind == "empty":
+        (tmp_path / "device-main.js").touch()
+    result = await local_doctor(paths, resources=AdapterResources(Path(sys.executable), entry))
+    assert {
+        "name": "device-adapter-resources",
+        "status": "fail",
+        "code": "unavailable",
+    } in result["checks"]

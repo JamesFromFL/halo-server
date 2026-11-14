@@ -18,6 +18,11 @@ The plugin/RTSP path remains available as optional compatibility mode. See the
 [direct HomeKit engineering status](docs/direct-homekit-status.md) for validation boundaries.
 The [web interface guide](docs/web-interface.md) covers the browser console, local owner
 enrollment, certificate trust, managed companion service, and recovery.
+Non-camera discovery and Halo Bridge are implemented locally with qualified sensor
+mappings, guarded normal Alarm controls, individual/group lighting and legacy Chime
+controls. See the [non-camera acceptance guide](docs/noncamera-acceptance.md) before
+the first server pilot. Monitoring, bridge publication and control grants are
+separate opt-ins; physical model and Apple Home qualification remains pending.
 
 Implemented:
 
@@ -45,11 +50,17 @@ Implemented:
 - independent HTTPS owner console with camera management, HomeKit pairing, diagnostics,
   bounded recent activity, session management, and saved/applied settings
 - the proven Halo Ring WebRTC video and audio compatibility layer
+- account-scoped non-camera inventory, hub events and stable Halo Bridge identities
+- read-only contact, motion, leak, smoke/CO and Alarm observations with explicit faults
+- separately permitted normal Alarm modes, finite individual/group lighting requests,
+  and legacy Chime settings with deliberate sound tests
 
 Not implemented yet:
 
 - TLS-protected remote plugin and media access
 - real Ring/Apple Home hub acceptance and measured end-to-end performance
+- additional non-camera model qualification, including brightness, generic switches,
+  locks, newer Chimes and access-control products
 
 ## Platform Support
 

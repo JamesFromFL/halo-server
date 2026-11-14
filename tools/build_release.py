@@ -231,7 +231,20 @@ def install_python(wheel, wheelhouse, work):
     )
 
 
+def validate_adapter_entries(adapter):
+    """Reject a stale camera-only build before creating a deployment artifact.
+
+    Keep the existing manifest entry schema readable by installed launchers;
+    all child files are already covered by the immutable file census and hashes.
+    """
+    for name in ("main.js", "device-main.js", "pairing-reset.js"):
+        path = adapter / "dist/src" / name
+        if path.is_symlink() or not path.is_file() or path.stat().st_size == 0:
+            raise ValueError("adapter build is missing a required production entry")
+
+
 def install_adapter(adapter, npm_tool, npm_cache, work):
+    validate_adapter_entries(adapter)
     npm_archive = npm_tool.parent / "npm-12.2.1.tgz"
     if digest(npm_archive) != NPM_ARCHIVE_SHA256:
         raise ValueError("npm archive differs from qualified registry input")

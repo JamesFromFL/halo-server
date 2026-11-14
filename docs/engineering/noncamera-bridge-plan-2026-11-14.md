@@ -1,12 +1,17 @@
 # Halo Bridge: non-camera Ring integration
 
 Date: November 14, 2026. Status: provider/catalog, durable registry, sensor bridge
-publication, guarded normal Alarm controls and individual Smart Lighting controls
-are implemented locally. Installed and physical-device acceptance remain pending.
+publication, guarded normal Alarm controls, individual/group Smart Lighting and
+qualified legacy Chime controls are implemented locally. Physical-device
+acceptance remains pending; release qualification is tracked separately.
 See the [wave 1](noncamera-wave1-2026-11-14.md),
 [wave 2](noncamera-wave2-2026-11-14.md), [wave 3](noncamera-wave3-2026-11-14.md),
 [wave 4](noncamera-wave4-2026-11-14.md) and
-[wave 5](noncamera-wave5-2026-11-14.md) implementation records.
+[wave 5](noncamera-wave5-2026-11-14.md),
+[wave 6](noncamera-wave6-2026-11-14.md),
+[wave 7](noncamera-wave7-2026-11-14.md),
+[wave 8](noncamera-wave8-2026-11-14.md) and
+[wave 9](noncamera-wave9-2026-11-14.md) implementation records.
 
 The subsequent [Scrypted, Homebridge and Home Assistant comparison](ring-project-comparison-2026-11-14.md)
 is complete. It expands the configuration, provider-recovery and control acceptance
@@ -254,17 +259,20 @@ lights: observed binary state, bounded On requests, return to automatic, HomeKit
 Lightbulb publication and per-device control preferences. These controls require
 an exact bridge/asset match and explicit owner role; shared-user lighting control
 is a remaining qualification task, not a claim that Ring forbids it.
-All changes remain local pending installed and physical qualification. Lighting
-groups, brightness, chimes and other control families remain future work.
+[Wave 6](noncamera-wave6-2026-11-14.md) qualifies shared-session REST writes,
+including the HTTP client's otherwise hidden PUT retry. [Wave 7](noncamera-wave7-2026-11-14.md)
+adds exact legacy Chime volume, snooze, automatic nightlight and separately
+permitted sound tests in Halo, using actual connectivity and fresh readback.
+[Wave 8](noncamera-wave8-2026-11-14.md) adds optional REST lighting groups,
+exact CLAP aliases and one lighting reservation shared with camera/Beams commands.
+Groups require deliberate inclusion even with auto-import, and group reports
+never synthesize individual lamp state. [Wave 9](noncamera-wave9-2026-11-14.md)
+covers packaging/installed qualification and the server pilot handoff.
 
-Next control work needs the bounded shared-session REST write path: lighting
-groups require REST/CLAP deduplication and arbitration with overlapping camera
-lights, while Chime actions/settings use REST instead of the new hub command.
-Qualify Chime connectivity from `alerts.connection` before exposing controls;
-the existing discovery checks do not yet handle that field. Start Chimes in
-Halo's interface with known-model volume and explicit sound tests, then qualify
-snooze, tones and automatic nightlight configuration separately. Do not create
-constant-state HomeKit action switches or imply nightlight settings are lamp state.
+Tone changes, brightness and additional actuator families remain model-specific
+qualification work. Unknown devices stay visible without a generic writable
+fallback. Complete the [first physical pilot](../noncamera-acceptance.md) before
+expanding claims to models or account roles not exercised on real hardware.
 
 Each slice should have meaningful regression checks and a reviewable commit.
 Physical acceptance and deployment are distinct from fixture success.
