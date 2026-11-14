@@ -22,12 +22,20 @@ export class ApiClient {
   clear() {
     this.csrf = '';
   }
-  async session(): Promise<Session> {
-    const value = await this.get<Session>('session');
+  private rememberSession(value: Session): Session {
     if (typeof value.csrf_token !== 'string' || typeof value.authenticated !== 'boolean')
       throw new ApiError('bad_response', 'Halo returned an invalid session.');
     this.csrf = value.csrf_token;
     return value;
+  }
+  async session(signal?: AbortSignal): Promise<Session> {
+    const value = await this.get<Session>('session', signal);
+    if (signal?.aborted)
+      throw new ApiError('session_changed', 'This session refresh is no longer current.');
+    return this.rememberSession(value);
+  }
+  async reauthenticate(password: string): Promise<Session> {
+    return this.rememberSession(await this.post<Session>('reauth', { password }));
   }
   get<T>(path: string, signal?: AbortSignal): Promise<T> {
     return this.request<T>(path, 'GET', undefined, signal);

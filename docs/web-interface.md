@@ -38,10 +38,15 @@ never opens media. With the pinned Playwright Chromium installed:
 
 ```sh
 python scripts/check_web_browser.py --output /tmp/halo-browser-evidence
+python scripts/check_web_pairing_browser.py --output /tmp/halo-pairing-evidence
 ```
 
 Use `--installed` with an isolated environment containing the built wheel to
-exercise the installed package. This harness does not use a real Ring account.
+exercise the installed package. The pairing regression uses real HTTPS, password
+verification and status events with synthetic pairing metadata. It checks that
+a password-confirmed reveal survives session rotation and still clears when
+visibility, navigation or authentication changes. Neither harness uses a real
+Ring account.
 
 Prepare loopback-only access from the local owner's terminal:
 

@@ -39,6 +39,9 @@
   let toastTimer: ReturnType<typeof setTimeout> | undefined;
   let disposed = false;
   let feedGeneration = 0;
+  let feedSession: AbortController | undefined;
+  let feedReady: ((ready: boolean) => void) | undefined;
+  let feedTimeout: ReturnType<typeof setTimeout> | undefined;
   let reauthOpen = $state(false);
   let reauthPassword = $state('');
   let reauthError = $state('');
@@ -73,7 +76,15 @@
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => (toast = ''), 6000);
   }
+  function finishFeed(ready: boolean) {
+    clearTimeout(feedTimeout);
+    feedReady?.(ready);
+    feedReady = undefined;
+  }
   function stopFeed() {
+    finishFeed(false);
+    feedSession?.abort();
+    feedSession = undefined;
     feedGeneration++;
     stream?.close();
     stream = null;
@@ -84,11 +95,12 @@
     if (!validState(value)) {
       connected = false;
       problem = 'Halo returned an invalid state. Refresh to try again.';
-      return;
+      return false;
     }
     snapshot = value;
     connected = !document.hidden;
     problem = '';
+    return isFresh(value, connected);
   }
   async function refresh() {
     try {
@@ -99,16 +111,20 @@
       problem = errorMessage(error);
     }
   }
-  function startFeed() {
+  function startFeed(): Promise<boolean> {
     stopFeed();
-    if (!session?.authenticated || document.hidden || disposed) return;
+    if (!session?.authenticated || document.hidden || disposed) return Promise.resolve(false);
     const expected = feedGeneration;
+    const ready = new Promise<boolean>((resolve) => {
+      feedReady = resolve;
+      feedTimeout = setTimeout(() => finishFeed(false), 15_000);
+    });
     stream = new EventSource(`${API}/events`);
     for (const name of ['state', 'resync'])
       stream.addEventListener(name, (event) => {
         if (expected !== feedGeneration) return;
         try {
-          accept(JSON.parse((event as MessageEvent).data));
+          if (accept(JSON.parse((event as MessageEvent).data))) finishFeed(true);
         } catch {
           connected = false;
           problem = 'State updates were interrupted.';
@@ -118,9 +134,14 @@
       if (expected !== feedGeneration) return;
       stopFeed();
       problem = 'Connection interrupted. Displayed observations may be out of date.';
+      const recoveryGeneration = feedGeneration;
       reconnect = setTimeout(async () => {
+        if (disposed || recoveryGeneration !== feedGeneration) return;
+        const request = new AbortController();
+        feedSession = request;
         try {
-          const current = await api.session();
+          const current = await api.session(request.signal);
+          if (disposed || recoveryGeneration !== feedGeneration) return;
           if (!current.authenticated) {
             session = current;
             snapshot = null;
@@ -130,10 +151,13 @@
           session = current;
           startFeed();
         } catch {
-          if (!disposed) startFeed();
+          if (!disposed && recoveryGeneration === feedGeneration) void startFeed();
+        } finally {
+          if (feedSession === request) feedSession = undefined;
         }
       }, 5000);
     };
+    return ready;
   }
   async function bootstrap() {
     starting = true;
@@ -180,16 +204,31 @@
   }
   async function doReauth(event: SubmitEvent) {
     event.preventDefault();
+    if (reauthBusy || !reauthResolve) return;
+    const request = reauthResolve;
     reauthBusy = true;
+    // The password check rotates the cookie. Retire its old SSE connection
+    // before rotation, then require fresh state on the replacement connection.
+    stopFeed();
     try {
-      await api.post('reauth', { password: reauthPassword });
-      session = await api.session();
+      const current = await api.reauthenticate(reauthPassword);
+      if (disposed) return;
+      session = current;
+      const ready = await startFeed();
+      await tick();
+      if (reauthResolve !== request) return;
+      if (!ready || !fresh)
+        throw new Error(
+          'Halo could not refresh its live status. Wait for it to reconnect, then confirm again.',
+        );
       closeReauth(true);
     } catch (error) {
-      reauthError = errorMessage(error);
+      if (!disposed && reauthResolve === request) reauthError = errorMessage(error);
     } finally {
-      reauthPassword = '';
+      if (reauthResolve === request) reauthPassword = '';
       reauthBusy = false;
+      // A rejected password retains the original session and must restore its feed.
+      if (!disposed && !stream) void startFeed();
     }
   }
   async function closeDrawer() {

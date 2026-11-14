@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "source_hash": "2a250beb029e82a35e305530e3015332427afa4184a789685306cb859050028b",
+  "source_hash": "d0ac0f7465885848c33019180d3976bfd498098504c681130b3d0719c563261c",
   "source_files": [
     {
       "path": ".prettierignore",
@@ -36,11 +36,11 @@
     },
     {
       "path": "scripts/alarm-smoke.mjs",
-      "sha256": "73aab10db119a007e21d8a04207cf2e52fbd27356ac7e7592e6ac017b83695e0"
+      "sha256": "4f2dba7f1ab93c3391f84eb48a7b4c6f067711e7584cabd142626eada3a84211"
     },
     {
       "path": "scripts/bridge-homekit-smoke.mjs",
-      "sha256": "5bdc4e7086296ee354553ff0a2e810de5b0787347510516218135e6f517412c3"
+      "sha256": "d8df30cb7e301e995968dc3643330d9f177f074baa39155de4aa4eba5d3b1e33"
     },
     {
       "path": "scripts/browser-smoke.mjs",
@@ -52,7 +52,7 @@
     },
     {
       "path": "scripts/chime-smoke.mjs",
-      "sha256": "dc0ba015b9fd6f720f0fa209a10622637718ec19f02b1651ee0a5d0d8a9071dc"
+      "sha256": "a89a8b738c88aae8f99b48b709b2f01f90c208f790fdc493caa734003368b95c"
     },
     {
       "path": "scripts/group-smoke.mjs",
@@ -64,15 +64,19 @@
     },
     {
       "path": "scripts/light-smoke.mjs",
-      "sha256": "802634ac2d849c8bca6b4866bf98794ea02e8c57fb1c750a3df66f9438a11980"
+      "sha256": "a5e519288b044848541d44fed5cecac2d5b2dd854022b48530d2695c395887af"
     },
     {
       "path": "scripts/noncamera-smoke.mjs",
       "sha256": "65c7d6f858853572b586a567642c16b3d7322ae2c2faa63cea53bd7699dd2372"
     },
     {
+      "path": "scripts/pairing-smoke.mjs",
+      "sha256": "54a38aba6f1f714f38e9b4a403a3fbebe913a9bff5623ab059a6e64e8d3be7ec"
+    },
+    {
       "path": "src/App.svelte",
-      "sha256": "fabdb81e70dfbd5ded72bff99eb414e6be3f6c69ff87581c1d412e81dc1248e9"
+      "sha256": "fe0f6fccd486be260f6199e82801028504370a6c4b92237ea04b4c8c48f30805"
     },
     {
       "path": "src/components/AlarmControls.svelte",
@@ -128,7 +132,7 @@
     },
     {
       "path": "src/lib/api.ts",
-      "sha256": "d3d1a7fddf35905277b5ded70ed3078cc0be1ae4b70629795f9ba673f3a157a8"
+      "sha256": "da17689635fb0954260b3d7e8874711c1bdd18cf94d2f21387cfbd791ad501e2"
     },
     {
       "path": "src/lib/auth.ts",
@@ -212,7 +216,7 @@
     },
     {
       "path": "tests/api.test.ts",
-      "sha256": "492b228c7131fbdb15fffc284dfe3a247051f733260f8f2439fc4405635f091a"
+      "sha256": "f17344608a46ca5e955f2a72403400b1b5f7fc911dd2432e85274de03a9a9f1c"
     },
     {
       "path": "tests/bridge-homekit.test.ts",
@@ -257,12 +261,12 @@
       "sha256": "27b3a540203dab45ee90ade440f4840b513dd2055969a84a9ebccb561fd14799"
     },
     {
-      "path": "assets/index-BCn9O6S-.js",
-      "sha256": "77d94e4ab169063ae4cbeb31c66d795b61015ded4d6c4a7ff165e23f8cc0e14d"
-    },
-    {
       "path": "assets/index-B_958Fvz.css",
       "sha256": "74c07fd75608d0526505de5411debfe75ff1470d48bf57dcd3da8b5e31b92ff0"
+    },
+    {
+      "path": "assets/index-CMbdgPhR.js",
+      "sha256": "ddff4a1070da126c67f8471efa7094227452663b77fe0b1ff7d6d2fe9a1c90fb"
     },
     {
       "path": "halo.png",
@@ -270,7 +274,7 @@
     },
     {
       "path": "index.html",
-      "sha256": "6dc397a708b523bb74f2adef690e959604ee37451d8f8592acf3b5c9ee36d61c"
+      "sha256": "be6917d0e549474144e5a97bde8896d3add511c8caedc2bea39b83b50859100f"
     }
   ]
 }

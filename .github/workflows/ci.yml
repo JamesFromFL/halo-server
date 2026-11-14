@@ -60,8 +60,8 @@ jobs:
           npm run check
           npm test
           npm run build
-      - run: .venv/bin/ruff check --no-cache src tests scripts/check_web_browser.py
-      - run: .venv/bin/ruff format --check --no-cache src tests scripts/check_web_browser.py
+      - run: .venv/bin/ruff check --no-cache src tests scripts/check_web_browser.py scripts/check_web_pairing_browser.py
+      - run: .venv/bin/ruff format --check --no-cache src tests scripts/check_web_browser.py scripts/check_web_pairing_browser.py
       - run: .venv/bin/pytest -q -p pytest_asyncio.plugin -p no:cacheprovider
       - name: Audit locked runtime and tooling separately
         run: |
@@ -152,6 +152,8 @@ jobs:
         run: npm exec -- playwright install --with-deps chromium
       - name: Exercise installed HTTPS console with synthetic cameras
         run: .artifact-venv/bin/python scripts/check_web_browser.py --installed --output browser-evidence
+      - name: Exercise pairing reveal across real session rotation and live updates
+        run: .artifact-venv/bin/python scripts/check_web_pairing_browser.py --installed --output browser-evidence/pairing
       - name: Preserve synthetic browser verification
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

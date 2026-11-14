@@ -195,7 +195,13 @@ const server = createServer(async (request, response) => {
     if (path === '/api/web/v1/reauth') {
       assert.equal(value.password, 'fixture-password-123');
       reauths++;
-      return send({ authenticated: true });
+      return send({
+        authenticated: true,
+        setup_required: false,
+        csrf_token: 'fixture-csrf',
+        reauthenticated: true,
+        session_id: 'fixture-session',
+      });
     }
     if (path === '/api/web/v1/devices/bridge/publication') {
       assert.equal(value.profile_id, monitoring.scope.profile_id);

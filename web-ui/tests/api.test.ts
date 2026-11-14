@@ -136,3 +136,65 @@ for (const path of ['setup', 'login']) {
     assert.deepEqual(JSON.parse(String(calls[0].init.body)), credentials);
   });
 }
+
+test('reauthentication installs rotated CSRF directly before the sensitive action', async () => {
+  const calls: { url: string; init: RequestInit }[] = [];
+  const rotated = {
+    ...session,
+    csrf_token: 'rotated-csrf',
+    session_id: 'rotated-session',
+    reauthenticated: true,
+  };
+  const client = new ApiClient(async (url, init) => {
+    calls.push({ url: String(url), init: init! });
+    if (String(url).endsWith('/session')) return ok(session);
+    if (String(url).endsWith('/reauth')) return ok(rotated);
+    return ok({});
+  });
+  await client.session();
+  assert.deepEqual(await client.reauthenticate('test-only-password'), rotated);
+  await client.post('pairing/reveal', {});
+  assert.deepEqual(
+    calls.map((call) => call.url),
+    ['/api/web/v1/session', '/api/web/v1/reauth', '/api/web/v1/pairing/reveal'],
+  );
+  assert.equal(
+    (calls[1].init.headers as Record<string, string>)['X-Halo-CSRF'],
+    session.csrf_token,
+  );
+  assert.equal(
+    (calls[2].init.headers as Record<string, string>)['X-Halo-CSRF'],
+    rotated.csrf_token,
+  );
+  assert.deepEqual(JSON.parse(String(calls[1].init.body)), { password: 'test-only-password' });
+});
+
+test('retiring a delayed reconnect cannot overwrite the rotated session token', async () => {
+  let release!: (value: Response) => void;
+  let reads = 0;
+  let sent = '';
+  const client = new ApiClient(async (url, init) => {
+    if (String(url).endsWith('/session')) {
+      if (++reads === 1) return ok(session);
+      // Deliberately ignore AbortSignal, as if the old response already arrived.
+      return new Promise<Response>((resolve) => {
+        release = resolve;
+      });
+    }
+    if (String(url).endsWith('/reauth')) return ok({ ...session, csrf_token: 'new-csrf' });
+    sent = (init!.headers as Record<string, string>)['X-Halo-CSRF'];
+    return ok({});
+  });
+  await client.session();
+  const reconnect = new AbortController();
+  const pending = client.session(reconnect.signal);
+  reconnect.abort();
+  await client.reauthenticate('test-only-password');
+  release(ok(session));
+  await assert.rejects(
+    pending,
+    (error: unknown) => error instanceof ApiError && error.code === 'session_changed',
+  );
+  await client.post('pairing/reveal', {});
+  assert.equal(sent, 'new-csrf');
+});
