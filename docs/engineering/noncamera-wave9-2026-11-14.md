@@ -82,11 +82,30 @@ Evidence and reusable local qualification scripts are under:
 `/home/james/Documents/Codex/2026-10-25/he/work/halo-server-noncamera-wave9-2026-11-14/`.
 
 The package is qualified **locally only**, against desktop Python 3.14.10 and its
-recorded host-library hashes. The previous server observation was 3.14.9. A
-desktop-qualified artifact is not a fresh server ABI proof. The final read-only
-SSH check still returned `Permission denied (publickey,password)`; the owner is
-restoring access. Fresh remote qualification, and a target-specific rebuild if
-needed, remain required before deployment. Nothing was pushed or deployed.
+recorded host-library hashes. A desktop-qualified artifact is not a fresh server
+ABI proof. Fresh remote qualification, and a target-specific rebuild if needed,
+remain required before deployment. Nothing was pushed or deployed.
+
+### SSH follow-up, November 14
+
+The earlier `Permission denied (publickey,password)` checks used the desktop's
+default identity, not Halo's existing deployment key. The dedicated key remained
+accepted: access had not been lost for that identity. It is referenced by
+`work/halo-server-web-deployment-2026-11-14/deploy_web.py` and stored privately at
+`work/halo-server-deployment-2026-10-28/deploy_ed25519`; do not copy it into source
+or qualification reports.
+
+The desktop SSH configuration now selects that identity with `IdentityAgent none`
+and `IdentitiesOnly yes` for `192.168.1.136` and `james-server`, before the existing
+global 1Password agent setting. Strict host verification stays enabled; unrelated
+hosts retain their existing settings. The original configuration was backed up
+privately under `work/halo-server-ssh-recovery-2026-11-14/`.
+
+Fresh BatchMode connections by IP and alias succeeded as `james` on `James-Server`.
+The server reports Python **3.14.9**, and both `halo-server.service` and
+`halo-server-web.service` are active. This verifies access and service activity,
+not the complete target library/ABI proof or physical-device acceptance. No
+server configuration, running service or installed Halo package was changed.
 
 The current adapter pins HAP `2.3.0-halo.1`, versus the last recorded deployed
 `2.2.3-halo.2`. Both camera and device children are rebuilt and qualified afresh;
