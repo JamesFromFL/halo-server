@@ -57,3 +57,34 @@ Local evidence: `work/halo-server-pairing-reveal-2026-11-14/` and
 `work/halo-web-pairing-regression-2026-11-14/` in the Codex task workspace. See the
 final deployment receipt for the shipped backport identifier and preservation
 checks. No GitHub push is part of this repair.
+
+## Deployed result
+
+Source repair committed as `2396944088bc82ea774e323fe3fcde4b6678ba51`.
+The focused backport was activated on james-server at selection revision 23:
+
+- Release: `52e72da89552bc0efe3c652c9d15406233f5ca543bf829eb299e6d792988e402`.
+- Manifest SHA256: `5c9b8069b47410a102927281a51170b508a200a974d32369dec45a0701638b43`.
+- Archive SHA256: `3f5735c0df323ac1e2d9b9d0f107ee8408029f306955de751e899998f46fb8ae`.
+
+Fresh backport verification passed 17 frontend tests, type/format checks and the
+actual installed package's real HTTPS/session/SSE regression. Main's final
+regression also passed. Backend, media, third-party dependencies, adapter and
+runtime match the previous active release byte for byte. Broader backend tests
+were inherited only for those unchanged bytes, not reported as rerun.
+
+Deployment prepare, stage, activation and postcheck passed. All seven camera
+pairings, enrolled owner authentication, policies, recording settings, TLS
+identity and startup intent were preserved; HKSV remains off. The previous
+release remains available for recovery. The public HTTPS index, JavaScript and
+CSS exactly match the qualified package, the owner remains enrolled, and an
+unauthenticated pairing request returns 401. No live password or pairing code
+was collected. The owner's final retry in their browser remains unobserved.
+
+Two preliminary package attempts were retained: the first preceded the delayed
+reconnect fix; the next exposed unrelated installed RECORD metadata differences
+from a different builder path. Reusing the original builder path restored exact
+non-static identity without relaxing the accepted runtime changes.
+
+The task workspace's `work/halo-server-pairing-reveal-2026-11-14/deployment-summary.json`
+binds the deployed result to its local package, HTTPS and SSH phase evidence.
