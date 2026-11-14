@@ -40,6 +40,9 @@ or pairing state. Cameras have separate stores.
 2. Confirm all existing camera names and pairings survived. Check snapshots and
    one established live camera before enabling any new family. Record any change
    from the last accepted stream behavior separately from non-camera findings.
+   Confirm Ring's push channel reaches connected and an ordinary camera motion
+   event arrives. Healthy services and working snapshots alone do not prove push
+   delivery; the deployment candidate includes push decoding/recovery repairs.
 3. Enable device monitoring in Halo. Compare device and location counts to Ring;
    capture sanitized kind/capability structures for unsupported devices. Unknown
    fields must remain unknown, and an offline location must not block healthy ones.

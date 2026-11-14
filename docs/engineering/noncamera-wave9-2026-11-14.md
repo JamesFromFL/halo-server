@@ -112,3 +112,12 @@ The current adapter pins HAP `2.3.0-halo.1`, versus the last recorded deployed
 the previous static-only release's adapter-equivalence receipt is not reused as
 proof. Physical Apple/Ring acceptance and the seven cameras' live coexistence
 remain server-side gates after installation.
+
+### Completed target qualification
+
+The subsequent [server-target qualification](noncamera-target-qualification-2026-11-14.md)
+completed the fresh runtime proof, fixed two Ring push issues and a device bridge
+shutdown race, and verified the final candidate in the server cache. It is ready
+for controlled deployment and physical acceptance; the running release remains
+unchanged. The earlier local-only artifact above is retained as historical
+qualification evidence rather than the current deployment candidate.

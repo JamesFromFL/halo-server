@@ -78,3 +78,8 @@ Evidence is retained privately in
 non-camera package remains cache-staged and inactive; it predates these fixes.
 The replacement candidate must pass target qualification before activation.
 Synthetic tests establish compatibility and recovery, not live Ring delivery.
+
+The combined [final target qualification](noncamera-target-qualification-2026-11-14.md)
+now records the passing source/installed checks and actual-server cache
+verification, including the separately discovered device shutdown repair.
+Live push acceptance remains a post-activation gate.
