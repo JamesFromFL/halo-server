@@ -1,0 +1,65 @@
+{
+  "schema": 1,
+  "name": "@homebridge/hap-nodejs",
+  "version": "2.3.0-halo.2",
+  "upstream": {
+    "repository": "https://github.com/homebridge/HAP-NodeJS",
+    "commit": "bd7a01b889cf1c74cbfcc4a4e5efdfa53fc3532b",
+    "version": "2.3.0"
+  },
+  "archive": {
+    "file": "hap-nodejs-2.3.0-halo.2.tgz",
+    "sha256": "7a850315b8cdf5a15c5fcbd4637f663aaf8e7242516a25bd041ae6b082699634",
+    "integrity": "sha512-yUpcZlWKILaz2x3Mgbew7au7BLz1p3OmbwXgB2VEFuF8Nr/aQgQC57b9E5TPlpeGi27/DWQPBHOVj1fuqw/d7w=="
+  },
+  "patch": {
+    "file": "hap-nodejs-2.3.0-halo.2.patch",
+    "sha256": "2bb48b31012a97caaefcb3bb5572c3e6660786e2740be3cb0f451f5984e140f8"
+  },
+  "license": {
+    "id": "Apache-2.0",
+    "file": "HAP-NodeJS-LICENSE",
+    "sha256": "59899c6091b540582ed617e8eeaac4919dc985ccfc35459ee9752b699be5205b"
+  },
+  "toolchain": {
+    "node": "26.12.1",
+    "npm": "12.2.1",
+    "typescript": "6.0.3",
+    "python": "3.14.10",
+    "zlib": "1.4"
+  },
+  "reproducible": {
+    "clean_builds": 2,
+    "byte_identical": true,
+    "normalized_tar_metadata": true,
+    "gzip_mtime": 0,
+    "install_payload_matches_archive": true,
+    "installed_files_verified": 283,
+    "lock_sha512_verified": true
+  },
+  "scope": "Retain the complete 2.3.0-halo.1 transport/storage patch; add only SecuritySystemCurrentState to immediate HAP event delivery. Ordinary event batching, encryption, pairing and stored state format unchanged.",
+  "delta_from_previous": {
+    "version": "2.3.0-halo.1",
+    "provenance_sha256": "5dc9b17257d68c1161a409deeb10ea3c88cab2ec6730ade8e36e1daab83b192d",
+    "changed_archive_files": [
+      "package/dist/lib/Accessory.d.ts.map",
+      "package/dist/lib/Accessory.js",
+      "package/dist/lib/Accessory.js.map",
+      "package/package.json"
+    ],
+    "all_other_archive_files_byte_identical": true
+  },
+  "tests": {
+    "adapter_tests": 328,
+    "alarm_notification_tests": 5,
+    "adapter_network_attempts": 0,
+    "adapter_typecheck": "pass",
+    "dependency_production_typecheck": "pass in both clean builds",
+    "complete_upstream_suite": "Not rerun for this narrow change; prior 2.3.0-halo.1 qualification retained separately. Actual installed alarm event dispatch, queue and serialization exercised by new guarded adapter tests.",
+    "physical_receiver_acceptance": "not performed; no live bridge, alarm events or device commands"
+  },
+  "retained_qualification": {
+    "file": "hap-nodejs-2.3.0-halo.1.provenance.json",
+    "crypto_transport_storage_payload_unchanged": true
+  }
+}

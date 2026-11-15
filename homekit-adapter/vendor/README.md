@@ -1,6 +1,6 @@
 # Halo's bounded HAP transport and durable storage dependency
 
-`hap-nodejs-2.3.0-halo.1.tgz` is a private, immutable build of official
+`hap-nodejs-2.3.0-halo.2.tgz` is a private, immutable build of official
 [`@homebridge/hap-nodejs` 2.3.0](https://github.com/homebridge/HAP-NodeJS/releases/tag/v2.3.0),
 based on commit `bd7a01b889cf1c74cbfcc4a4e5efdfa53fc3532b`. It is installed by
 the adapter's ordinary `npm ci` through a local file dependency and lock integrity.
@@ -12,6 +12,27 @@ storage extension onto upstream 2.3.0, including its ESM loading, HAP/HDS input
 validation and encrypted TCP frame fixes. The older 2.2.3-halo.2 artifacts remain
 available for rollback review; rollback of a deployed release still requires
 compatible paired-state and release ownership checks.
+
+The `halo.2` revision adds one notification scheduling change: observed
+`SecuritySystemCurrentState` transitions use immediate HAP event delivery.
+Other status events retain upstream's 250 ms batching. Duplicate unchanged
+alarm observations stay quiet; distinct transitions retain their order even
+while an HTTP response temporarily prevents event writes. The permission and
+subscription checks are unchanged. This reduces local delivery delay; it does
+not select Apple notification severity or prove a notification reached a phone.
+Home app notification permissions, home hub connectivity, and Apple delivery
+remain outside the bridge's control. Entry delay is not presented as a triggered
+alarm, and unavailable observations remain faults rather than safe states.
+
+Two clean offline builds of `halo.2` matched exactly. Its archive differs from
+`halo.1` only in package version, `Accessory.js`, and that module's two source
+maps; every other installed file is byte-identical. All 328 adapter tests pass
+with zero network attempts, including five new regressions through the installed
+bridge dispatch, event queue, and EVENT/1.0 serializer using inert socket fixtures.
+The complete upstream test suite was not rerun for this one-condition change;
+the detailed upstream qualification below belongs to the retained `halo.1`
+provenance. No physical alarm action, live bridge event, or Apple alert test was
+performed. Both older immutable archives remain available for recovery review.
 
 Upstream 2.3.0 replaces tweetnacl pairing crypto with native Node X25519/Ed25519.
 The stored secret remains the existing 32-byte seed plus 32-byte public key.

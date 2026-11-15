@@ -7,7 +7,9 @@ import { resolve, dirname, extname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const staticRoot = resolve(root, '../src/halo_server/web/static');
+const staticRoot = resolve(
+  process.env.HALO_STATIC_ROOT || resolve(root, '../src/halo_server/web/static'),
+);
 const output = process.env.HALO_BROWSER_OUTPUT;
 if (output && !output.startsWith('/')) throw new Error('HALO_BROWSER_OUTPUT must be absolute');
 if (output) await mkdir(output, { recursive: true });
@@ -309,7 +311,7 @@ try {
   alarm.phase = 'entry-delay';
   alarm.observed_revision++;
   publish();
-  await page.getByText('Entry delay', { exact: true }).waitFor();
+  await page.getByText('Entry countdown', { exact: true }).waitFor();
   await password();
   await page
     .getByText('Alarm state changed. Review its current state before trying again.', {
@@ -320,7 +322,7 @@ try {
   alarm.phase = 'idle';
   alarm.observed_revision++;
   publish();
-  await page.getByText('Idle', { exact: true }).waitFor();
+  await page.getByText('Stable', { exact: true }).waitFor();
   checks.push(
     'mode confirmation and changed source state during reauthentication never send a stale command',
   );

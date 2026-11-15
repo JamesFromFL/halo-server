@@ -176,7 +176,11 @@
     >
       <span class="status">{current ? alarmModeLabel(alarm.mode) : 'Unknown'}</span>
     </Row>
-    <Row title="Alarm phase"><span>{current ? alarmPhaseLabel(alarm.phase) : 'Unknown'}</span></Row>
+    <Row
+      title="Alarm phase"
+      subtitle="Entry and exit countdowns are temporary phases. A countdown is not a triggered alarm."
+      ><span>{current ? alarmPhaseLabel(alarm.phase) : 'Unknown'}</span></Row
+    >
     <Row title="Alarm signal"
       ><span>{current ? alarmSignalLabel(alarm.signal) : 'Unknown'}</span></Row
     >
@@ -264,6 +268,18 @@
       >
     {/each}
   </div>
+  <div class="group">
+    <Row
+      title="HomeKit alarm alerts"
+      subtitle="Confirmed alarms are sent immediately through Halo Bridge, even when normal alarm controls are disabled. Pair the bridge and enable notifications for the security system in Apple Home."
+      icon="bell"><span>Observed alarms only</span></Row
+    >
+  </div>
+  <p class="inline-note">
+    Apple Home and your device settings control critical alerts, sound, and Focus behavior. Halo
+    cannot enable those permissions or confirm delivery to your phone. Entry and exit countdowns do
+    not send a triggered-alarm event.
+  </p>
   <p class="inline-note">
     Each mode change from this page requires confirmation and your Halo password. Panic, emergency
     dispatch, sensor bypass, and Night mode are unavailable.

@@ -20,7 +20,7 @@ remains a separate device qualification gate.
 ## Pinned toolchain
 
 - Node **26.12.1**; npm **12.2.1**.
-- `@homebridge/hap-nodejs` **2.3.0-halo.1** (Apache-2.0), immutable vendored tarball and lock integrity. [Patch, license and provenance](vendor/) accompany the dependency; `tools/build_hap_dependency.py` rebuilds the exact official source pin plus patch.
+- `@homebridge/hap-nodejs` **2.3.0-halo.2** (Apache-2.0), immutable vendored tarball and lock integrity. [Patch, license and provenance](vendor/) accompany the dependency; `tools/build_hap_dependency.py` rebuilds the exact official source pin plus patch.
 - TypeScript **6.0.3** and `@types/node` **26.2.0**.
 
 `package-lock.json` fixes transitive versions and integrity. `.npmrc` disables lifecycle scripts, automatic audit/network extras and floating direct saves. A normal daemon launch never runs npm or resolves dependencies. The current package is private development groundwork, not a complete release installer or a bundled Node binary.

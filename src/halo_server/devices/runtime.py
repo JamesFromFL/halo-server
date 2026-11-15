@@ -41,6 +41,10 @@ class DeviceBridgeRuntimeError(RuntimeError):
     """The isolated bridge is unavailable; camera processes remain independent."""
 
 
+class DeviceBridgeAdmissionRejected(DeviceBridgeRuntimeError):
+    """The caller's admission fence rejected this request before any write."""
+
+
 class _ArtifactsUnavailable(DeviceBridgeRuntimeError):
     pass
 
@@ -251,10 +255,13 @@ class DeviceBridgeRuntime:
                         or boot != self._boot_id
                         or self._stopping.is_set()
                         and kind != "shutdown"
-                        or admission is not None
-                        and not admission()
                     ):
                         raise DeviceBridgeRuntimeError("Device bridge request was retired")
+                    if admission is not None and not admission():
+                        # Only this branch proves rejection by the caller before
+                        # writer.write. Other failures can be ambiguous and must
+                        # never be treated as permission to replay a request.
+                        raise DeviceBridgeAdmissionRejected("Device bridge request was retired")
                     sent = True
                     writer.write(frame)
                     await writer.drain()

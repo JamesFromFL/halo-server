@@ -511,7 +511,7 @@ def test_panel_transition_is_normalized_and_remains_technically_ready():
 
     assert location.mode is AlarmMode.HOME
     assert location.phase is AlarmPhase.EXIT_DELAY
-    assert location.transition_deadline is None  # Upstream does not establish timestamp units.
+    assert location.transition_deadline is None  # Local timer expiry is not a panel observation.
     assert location.triggered is TriState.INACTIVE
     assert location.can_set_mode is True
     assert location.command_unavailable_reason is None
@@ -521,7 +521,10 @@ def test_panel_transition_is_normalized_and_remains_technically_ready():
     ("raw_state", "signal"),
     [
         ("burglar-alarm", AlarmSignal.BURGLAR),
+        ("user-verified-burglar-alarm", AlarmSignal.BURGLAR),
+        ("burglar-accelerated-alarm", AlarmSignal.BURGLAR),
         ("fire-alarm", AlarmSignal.FIRE),
+        ("fire-accelerated-alarm", AlarmSignal.FIRE),
         ("co-alarm", AlarmSignal.CARBON_MONOXIDE),
         ("user-verified-co-or-fire-alarm", AlarmSignal.FIRE_OR_CARBON_MONOXIDE),
         ("panic", AlarmSignal.PANIC),
@@ -601,7 +604,7 @@ def test_future_panel_alarm_state_is_unknown_triggered_and_read_only():
     assert location.command_unavailable_reason == "panel-state-unknown"
 
 
-@pytest.mark.parametrize("alarm_info", [None, {}, {"state": None}, {"state": ""}])
+@pytest.mark.parametrize("alarm_info", [False, 0, "clear", [], {}, {"state": None}, {"state": ""}])
 def test_malformed_panel_alarm_info_is_unknown_and_read_only(alarm_info):
     store, epoch = _registered_store("base-station")
     snapshot = store.apply_message(
@@ -1188,3 +1191,52 @@ def test_inventory_receipt_uses_monotonic_time_without_rewriting_semantic_age():
     store.begin_epoch("loc")
     assert store.snapshot.locations[0].assets[0].inventory_monotonic is None
     assert store.snapshot.locations[0].assets[0].power_observed_monotonic is None
+
+
+@pytest.mark.parametrize("deadline", [True, False, -1, "future", {}, [], 2**53, 2**1024])
+def test_malformed_transition_is_preserved_as_unknown_not_coerced_to_clear(deadline):
+    store, epoch = _registered_store("base-station")
+    snapshot = store.apply_message(
+        "location-1",
+        DeviceInfoDocList(
+            "base-station",
+            (
+                _device(
+                    "panel-1", "security-panel", mode="all", transitionDelayEndTimestamp=deadline
+                ),
+            ),
+        ),
+        epoch,
+    )
+    location = snapshot.find_location("location-1")
+    assert location.phase is AlarmPhase.UNKNOWN
+    assert location.triggered is TriState.UNKNOWN
+    assert location.can_set_mode is False
+    assert location.command_unavailable_reason == "panel-state-unknown"
+
+
+@pytest.mark.parametrize(
+    "state", ["entry-delay", "burglar-alarm", "fire-alarm", "co-alarm", "panic"]
+)
+def test_explicit_alarm_evidence_dominates_malformed_transition(state):
+    store, epoch = _registered_store("base-station")
+    snapshot = store.apply_message(
+        "location-1",
+        DeviceInfoDocList(
+            "base-station",
+            (
+                _device(
+                    "panel-1",
+                    "security-panel",
+                    mode="all",
+                    alarmInfo={"state": state},
+                    transitionDelayEndTimestamp={},
+                ),
+            ),
+        ),
+        epoch,
+    )
+    location = snapshot.find_location("location-1")
+    assert location.phase is (
+        AlarmPhase.ENTRY_DELAY if state == "entry-delay" else AlarmPhase.ALARMING
+    )

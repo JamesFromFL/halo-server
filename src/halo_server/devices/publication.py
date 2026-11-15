@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 import re
 import time
+from collections import deque
+from copy import deepcopy
 from uuid import uuid4
 
 from halo_server.account_scope import AccountScope, valid_profile_id
@@ -16,7 +19,11 @@ from halo_server.devices.publication_policy import (
     PublicationPolicy,
     PublicationStore,
 )
-from halo_server.devices.runtime import DeviceBridgeRuntime, device_resources
+from halo_server.devices.runtime import (
+    DeviceBridgeAdmissionRejected,
+    DeviceBridgeRuntime,
+    device_resources,
+)
 from halo_server.homekit.pairing_maintenance import MaintenanceOwner
 from halo_server.media.manager import owned_thread, settle_owned
 
@@ -27,6 +34,10 @@ SOURCES = {
     "smoke": "smoke_detected",
     "carbon_monoxide": "co_detected",
 }
+LOGGER = logging.getLogger(__name__)
+ALARM_EVENT_LIMIT = 64
+ALARM_EVENT_TTL = 15
+
 PAIRING_FIELDS = frozenset(
     {
         "profile_id",
@@ -72,9 +83,119 @@ class DevicePublisher:
         self._state = "disabled"
         self._reason = None
         self._last_snapshot = None
+        self._alarm_seen = {}
+        self._alarm_events = deque()
+        self._alarm_events_dropped = 0
 
     def notify(self):
+        # Runs synchronously on the daemon loop, before the next provider batch
+        # can overwrite the catalogue. Ordinary sensor snapshots may coalesce;
+        # distinct SecuritySystem transitions must keep their observed order.
+        self._capture_alarm_events()
         self._wake.set()
+
+    def _clear_alarm_events(self):
+        self._alarm_seen.clear()
+        self._alarm_events.clear()
+
+    def _alarm_fence(self, scope, child):
+        monitor = self.service._device_monitor
+        source = monitor.alarm._rows.get(child["device_id"])
+        if source is None or not child["available"]:
+            return None
+        return (
+            scope,
+            self.bridge.registry.revision,
+            self._token,
+            id(monitor._binding),
+            source["epoch"],
+            child["accessory_uuid"],
+            self.runtime.boot_id,
+        )
+
+    def _capture_alarm_events(self):
+        if not self._eligible() or self.runtime is None or self.runtime.state != "ready":
+            self._clear_alarm_events()
+            return
+        scope, profile = self._profile()
+        snapshot = self._snapshot(scope, profile, 0)
+        seen, observations = {}, {}
+        changed = False
+        for child in snapshot["children"]:
+            if child["alarm"] is None:
+                continue
+            identity = child["device_id"]
+            fence = self._alarm_fence(scope, child)
+            if fence is None:
+                continue
+            alarm = child["alarm"]
+            state = (alarm["mode"], alarm["triggered"])
+            seen[identity] = (fence, state)
+            observations[identity] = {**alarm, "control_enabled": False}
+            previous = self._alarm_seen.get(identity)
+            if previous is not None and previous[0] == fence and previous[1] != state:
+                changed = True
+        fences = {identity: value[0] for identity, value in seen.items()}
+        # Retire only the affected panel. A reconnect at one location must not
+        # erase a still-current alarm event from another location.
+        retained = deque()
+        for old_fences, expires, old_observations in self._alarm_events:
+            valid = {key: value for key, value in old_fences.items() if fences.get(key) == value}
+            if valid:
+                retained.append((valid, expires, {key: old_observations[key] for key in valid}))
+        self._alarm_events = retained
+        if changed:
+            if len(self._alarm_events) >= ALARM_EVENT_LIMIT:
+                self._alarm_events.popleft()
+                self._alarm_events_dropped += 1
+                LOGGER.warning("HomeKit alarm transition backlog overflow; oldest event dropped")
+            self._alarm_events.append(
+                (
+                    fences,
+                    time.monotonic() + ALARM_EVENT_TTL,
+                    observations,
+                )
+            )
+        self._alarm_seen = seen
+
+    def _next_alarm_snapshot(self, scope, profile):
+        while self._alarm_events:
+            fences, expires, observations = self._alarm_events.popleft()
+            if expires <= time.monotonic():
+                self._alarm_events_dropped += 1
+                LOGGER.warning("HomeKit alarm transition expired before delivery")
+                continue
+            snapshot = self._snapshot(scope, profile, 0)
+            current = {
+                child["device_id"]: self._alarm_fence(scope, child)
+                for child in snapshot["children"]
+                if child["alarm"] is not None and self._alarm_fence(scope, child) is not None
+            }
+            fences = {key: value for key, value in fences.items() if current.get(key) == value}
+            if not fences:
+                continue
+            # Keep every panel at the same observed instant, including multiple
+            # locations. Using another panel's latest value would reorder its
+            # transitions. History cannot grant alarm control authority or
+            # replace the latest snapshot used to admit a HomeKit command.
+            for child in snapshot["children"]:
+                if child["device_id"] in fences:
+                    child["alarm"] = deepcopy(observations[child["device_id"]])
+            self._sequence += 1
+            snapshot["sequence"] = self._sequence
+            return snapshot, fences, expires
+        return None
+
+    def _alarm_event_admitted(self, scope, profile, fences, expires):
+        if expires <= time.monotonic():
+            return False
+        snapshot = self._snapshot(scope, profile, 0)
+        current = {
+            child["device_id"]: self._alarm_fence(scope, child)
+            for child in snapshot["children"]
+            if child["alarm"] is not None
+        }
+        return all(current.get(key) == value for key, value in fences.items())
 
     def start(self):
         # Logout joins close(), but the daemon reuses this monitor on next login.
@@ -89,6 +210,7 @@ class DevicePublisher:
 
     def invalidate(self):
         self._token += 1
+        self._clear_alarm_events()
         self._published_boot = None
         self._last_snapshot = None
         if self.runtime is not None:
@@ -139,6 +261,7 @@ class DevicePublisher:
         )
 
     async def _retire(self):
+        self._clear_alarm_events()
         if self.runtime is not None:
             await self.runtime.stop()
             self.runtime = None
@@ -218,9 +341,60 @@ class DevicePublisher:
 
         if not admitted():
             return
-        self._sequence += 1
-        snapshot = self._snapshot(scope, profile, self._sequence)
+        self._capture_alarm_events()
         try:
+            # Bound each turn even under a noisy source. Freshly arriving events
+            # remain queued and wake the next turn; no Ring command is involved.
+            for _ in range(ALARM_EVENT_LIMIT):
+                event = self._next_alarm_snapshot(scope, profile)
+                if event is None or not admitted():
+                    break
+                event_snapshot, fences, expires = event
+
+                def event_admitted(fences=fences, expires=expires):
+                    return admitted() and self._alarm_event_admitted(
+                        scope, profile, fences, expires
+                    )
+
+                try:
+                    result = await runtime.publish(event_snapshot, admission=event_admitted)
+                    if result.get("accepted") is not True or not event_admitted():
+                        raise RuntimeError("Alarm transition publication rejected")
+                except DeviceBridgeAdmissionRejected:
+                    # The runtime proves no byte was written. A different
+                    # location may have retired while this frame waited for the
+                    # writer; preserve only still-valid observations, in order.
+                    current_snapshot = self._snapshot(scope, profile, 0)
+                    current = {
+                        child["device_id"]: self._alarm_fence(scope, child)
+                        for child in current_snapshot["children"]
+                        if child["alarm"] is not None
+                    }
+                    valid = {
+                        key: value for key, value in fences.items() if current.get(key) == value
+                    }
+                    if admitted() and expires > time.monotonic() and 0 < len(valid) < len(fences):
+                        observations = {
+                            child["device_id"]: child["alarm"]
+                            for child in event_snapshot["children"]
+                            if child["device_id"] in valid
+                        }
+                        self._alarm_events.appendleft((valid, expires, observations))
+                        continue
+                    self._alarm_events_dropped += 1
+                    LOGGER.warning("HomeKit alarm transition retired before delivery")
+                    raise
+                except Exception:
+                    self._alarm_events_dropped += 1
+                    LOGGER.warning("HomeKit alarm transition delivery could not be confirmed")
+                    raise
+            # If history remains, do not jump to latest and then replay older
+            # states on the next turn. Drain it before the current observation.
+            if self._alarm_events:
+                self._wake.set()
+                return
+            self._sequence += 1
+            snapshot = self._snapshot(scope, profile, self._sequence)
             result = await runtime.publish(snapshot, admission=admitted)
             if result.get("accepted") is True and admitted():
                 self._last_snapshot = snapshot
@@ -522,6 +696,8 @@ class DevicePublisher:
             "published": published,
             "publication_enabled": bool(saved and saved.enabled),
             "publication_revision": self.policy.revision if self._loaded else 0,
+            "alarm_events_pending": len(self._alarm_events),
+            "alarm_events_dropped": self._alarm_events_dropped,
             "reset_pending": pending,
             "reset_operation_id": saved.reset.operation_id if pending else None,
         }

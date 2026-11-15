@@ -123,7 +123,7 @@ test('missing sensor state never means closed, clear, or disarmed', () => {
   assert.equal(noncameraHealth({ ...sensor, available: null }, true), 'Availability unknown');
   assert.equal(noncameraHealth({ ...sensor, available: false }, true), 'Unavailable');
   assert.equal(noncameraHealth({ ...sensor, stale: true }, true), 'Out of date');
-  assert.equal(noncameraHealth(sensor, false), 'Out of date');
+  assert.equal(noncameraHealth(sensor, false), 'Status out of date');
 });
 
 test('partial discovery and disabled monitoring never claim a complete healthy provider', () => {
@@ -192,4 +192,15 @@ test('additive state remains compatible and rejects unsafe or malformed device p
       false,
     );
   }
+});
+
+test('online panels distinguish incomplete readings from an offline source', () => {
+  assert.equal(
+    noncameraHealth({ ...sensor, source_health: 'online', stale: true }, true),
+    'Some readings out of date',
+  );
+  assert.equal(
+    noncameraHealth({ ...sensor, source_health: 'offline', stale: true }, true),
+    'Offline',
+  );
 });

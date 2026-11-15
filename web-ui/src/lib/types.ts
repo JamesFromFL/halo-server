@@ -138,6 +138,8 @@ export interface BridgeDevice {
   present: boolean;
 }
 export interface BridgeRuntime {
+  alarm_events_pending?: number;
+  alarm_events_dropped?: number;
   state: 'disabled' | 'starting' | 'ready' | 'offline' | 'error' | 'reset_pending';
   reason: string | null;
   boot_id: string | null;

@@ -542,3 +542,232 @@ async def test_confirmed_source_removal_is_unavailable_while_other_location_is_o
         assert not instance._retired_records
     finally:
         await instance.close()
+
+
+def alarm_panel(**fields):
+    return DeviceDocument(
+        "panel",
+        {
+            "zid": "panel",
+            "deviceType": "security-panel",
+            "mode": "none",
+            "commStatus": "ok",
+            **fields,
+        },
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["none", "some", "all"])
+async def test_complete_panel_inventory_observes_omitted_optional_alarm_fields(mode):
+    clock = [100.0]
+    instance = provider(
+        Gateway({"base_stations": [{"id": 1, "location_id": "home"}]}), clock=lambda: clock[0]
+    )
+    try:
+        await instance.refresh()
+        transport = instance._runtimes["home"].transport
+        await transport.ready.wait()
+        message = DeviceInfoDocList("asset-home", (alarm_panel(mode=mode),))
+        await transport.message(message)
+        panel = records_by_kind(instance)["security-panel"]
+        for name, value in (("alarm_state", "idle"), ("alarm_signal", "none")):
+            state = observation(panel, name)
+            assert state.value == value
+            assert state.status == "current"
+            assert state.observed_at == 100.0
+        # An unchanged complete inventory is still a new observation.
+        clock[0] = 200.0
+        await transport.message(message)
+        panel = records_by_kind(instance)["security-panel"]
+        assert observation(panel, "alarm_state").observed_at == 200.0
+        assert observation(panel, "alarm_signal").observed_at == 200.0
+    finally:
+        await instance.close()
+
+
+@pytest.mark.asyncio
+async def test_panel_patch_cannot_invent_or_refresh_an_absent_alarm_baseline():
+    clock = [100.0]
+    instance = provider(
+        Gateway({"base_stations": [{"id": 1, "location_id": "home"}]}), clock=lambda: clock[0]
+    )
+    try:
+        await instance.refresh()
+        transport = instance._runtimes["home"].transport
+        await transport.ready.wait()
+        await transport.message(DeviceInfoDocUpdate("asset-home", (alarm_panel(),)))
+        panel = records_by_kind(instance)["security-panel"]
+        for name in ("alarm_state", "alarm_signal"):
+            assert observation(panel, name).observed_at is None
+            assert observation(panel, name).status == "stale"
+        await transport.message(DeviceInfoDocList("asset-home", (alarm_panel(),)))
+        clock[0] = 200.0
+        await transport.message(
+            DeviceInfoDocUpdate(
+                "asset-home",
+                (
+                    DeviceDocument(
+                        "panel",
+                        {
+                            "zid": "panel",
+                            "mode": "all",
+                            "siren": {"state": "off"},
+                            "tamperStatus": "ok",
+                        },
+                    ),
+                ),
+            )
+        )
+        panel = records_by_kind(instance)["security-panel"]
+        assert observation(panel, "alarm_mode").observed_at == 200.0
+        assert observation(panel, "siren_active").observed_at == 200.0
+        assert observation(panel, "alarm_state").observed_at == 100.0
+        assert observation(panel, "alarm_signal").observed_at == 100.0
+    finally:
+        await instance.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"alarmInfo": False},
+        {"alarmInfo": []},
+        {"alarmInfo": "clear"},
+        {"alarmInfo": {}},
+        {"alarmInfo": {"state": "future"}},
+        {"alarmStatus": None},
+        {"alarmStatus": "future"},
+        {"mode": "future"},
+        {"transitionDelayEndTimestamp": {}},
+        {"transitionDelayEndTimestamp": True},
+        {"transitionDelayEndTimestamp": -1},
+    ],
+)
+async def test_complete_panel_does_not_grant_baseline_receipts_to_invalid_state(fields):
+    instance = provider(Gateway({"base_stations": [{"id": 1, "location_id": "home"}]}))
+    try:
+        await instance.refresh()
+        transport = instance._runtimes["home"].transport
+        await transport.ready.wait()
+        await transport.message(DeviceInfoDocList("asset-home", (alarm_panel(**fields),)))
+        panel = records_by_kind(instance)["security-panel"]
+        assert not all(
+            observation(panel, name).status == "current"
+            for name in ("alarm_mode", "alarm_state", "alarm_signal")
+        )
+        assert instance._store.snapshot.find_location("home").can_set_mode is False
+    finally:
+        await instance.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("alarm_state", ["entry-delay", "burglar-alarm", "future-state"])
+async def test_transition_patch_does_not_refresh_or_clear_retained_alarm_evidence(alarm_state):
+    clock = [100.0]
+    instance = provider(
+        Gateway({"base_stations": [{"id": 1, "location_id": "home"}]}), clock=lambda: clock[0]
+    )
+    try:
+        await instance.refresh()
+        transport = instance._runtimes["home"].transport
+        await transport.ready.wait()
+        await transport.message(
+            DeviceInfoDocList("asset-home", (alarm_panel(alarmInfo={"state": alarm_state}),))
+        )
+        before = records_by_kind(instance)["security-panel"]
+        clock[0] = 200.0
+        await transport.message(
+            DeviceInfoDocUpdate(
+                "asset-home",
+                (
+                    DeviceDocument(
+                        "panel",
+                        {"zid": "panel", "mode": "none", "transitionDelayEndTimestamp": None},
+                    ),
+                ),
+            )
+        )
+        after = records_by_kind(instance)["security-panel"]
+        for name in ("alarm_state", "alarm_signal"):
+            assert observation(after, name) == observation(before, name)
+        # Replacement inventory, not a sparse omission, can establish clear.
+        await transport.message(DeviceInfoDocList("asset-home", (alarm_panel(),)))
+        panel = records_by_kind(instance)["security-panel"]
+        assert observation(panel, "alarm_state").value == "idle"
+        assert observation(panel, "alarm_signal").value == "none"
+        assert observation(panel, "alarm_state").observed_at == 200.0
+        assert observation(panel, "alarm_signal").observed_at == 200.0
+    finally:
+        await instance.close()
+
+
+@pytest.mark.asyncio
+async def test_transition_only_patch_observes_phase_without_refreshing_alarm_signal():
+    clock = [100.0]
+    instance = provider(
+        Gateway({"base_stations": [{"id": 1, "location_id": "home"}]}), clock=lambda: clock[0]
+    )
+    try:
+        await instance.refresh()
+        transport = instance._runtimes["home"].transport
+        await transport.ready.wait()
+        await transport.message(DeviceInfoDocList("asset-home", (alarm_panel(mode="all"),)))
+        for tick, deadline, phase in (
+            (200.0, 1_800_000_000_000, "exit-delay"),
+            (210.0, None, "idle"),
+            (220.0, 0, "idle"),
+        ):
+            clock[0] = tick
+            await transport.message(
+                DeviceInfoDocUpdate(
+                    "asset-home",
+                    (
+                        DeviceDocument(
+                            "panel", {"zid": "panel", "transitionDelayEndTimestamp": deadline}
+                        ),
+                    ),
+                )
+            )
+            panel = records_by_kind(instance)["security-panel"]
+            assert observation(panel, "alarm_state").value == phase
+            assert observation(panel, "alarm_state").observed_at == tick
+            assert observation(panel, "alarm_signal").observed_at == 100.0
+    finally:
+        await instance.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("prior", ["burglar-alarm", "entry-delay", "future-state"])
+@pytest.mark.parametrize("message_type", [DeviceInfoDocList, DeviceInfoDocUpdate])
+async def test_exact_null_panel_alarm_info_is_an_observed_clear(prior, message_type):
+    clock = [100.0]
+    instance = provider(
+        Gateway({"base_stations": [{"id": 1, "location_id": "home"}]}), clock=lambda: clock[0]
+    )
+    try:
+        await instance.refresh()
+        transport = instance._runtimes["home"].transport
+        await transport.ready.wait()
+        await transport.message(
+            DeviceInfoDocList("asset-home", (alarm_panel(alarmInfo={"state": prior}),))
+        )
+        clock[0] = 200.0
+        document = (
+            alarm_panel(alarmInfo=None)
+            if message_type is DeviceInfoDocList
+            else DeviceDocument("panel", {"zid": "panel", "alarmInfo": None})
+        )
+        await transport.message(message_type("asset-home", (document,)))
+        panel = records_by_kind(instance)["security-panel"]
+        for name, value in (("alarm_state", "idle"), ("alarm_signal", "none")):
+            state = observation(panel, name)
+            assert state.value == value
+            assert state.status == "current"
+            assert state.observed_at == 200.0
+        normalized = instance._store.snapshot.find_location("home").security_panel
+        assert normalized.faulted_devices_valid is True
+        assert normalized.faulted_device_ids is None  # Clear does not invent bypass safety.
+    finally:
+        await instance.close()

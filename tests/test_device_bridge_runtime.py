@@ -15,7 +15,11 @@ from uuid import uuid4
 import pytest
 
 from halo_server.devices import ipc
-from halo_server.devices.runtime import DeviceBridgeRuntime, DeviceBridgeRuntimeError
+from halo_server.devices.runtime import (
+    DeviceBridgeAdmissionRejected,
+    DeviceBridgeRuntime,
+    DeviceBridgeRuntimeError,
+)
 from halo_server.homekit.storage_owner import PairingDirectoryOwner, PairingStorageError
 
 NODE = shutil.which("node")
@@ -496,11 +500,100 @@ async def test_admission_fence_prevents_queued_snapshot_without_retiring_healthy
     child = runtime(tmp_path)
     try:
         await child.start()
-        with pytest.raises(DeviceBridgeRuntimeError, match="retired"):
+        with pytest.raises(DeviceBridgeAdmissionRejected, match="retired"):
             await child.publish(snapshot(), admission=lambda: False)
         assert await child.request("ping", {}) == {}
     finally:
         await child.stop()
+
+
+def inert_runtime():
+    """Real request implementation, inert writer: no child, socket, or pairing store."""
+    child = DeviceBridgeRuntime(
+        Path("/synthetic/node"), Path("/synthetic/adapter.js"), build_id="test"
+    )
+    child._boot_id = str(uuid4())
+    child._handshake_complete = True
+    child.state = "ready"
+    writes, drains, retirements = [], [], []
+
+    class Writer:
+        def write(self, frame):
+            writes.append(frame)
+            request = ipc.decode_body(frame[4:])
+            child._pending[request["request_id"]].future.set_result({"payload": {"accepted": True}})
+
+        async def drain(self):
+            drains.append(True)
+
+    async def retire():
+        retirements.append(True)
+
+    child._writer = Writer()
+    child._terminate = retire
+    return child, writes, drains, retirements
+
+
+@pytest.mark.asyncio
+async def test_typed_admission_rejection_proves_no_write_and_cleans_pending_future():
+    child, writes, drains, retirements = inert_runtime()
+    allowed = [True]
+    await child._write_lock.acquire()
+    task = asyncio.create_task(child.publish(snapshot(), admission=lambda: allowed[0]))
+    await asyncio.sleep(0)
+    assert len(child._pending) == 1
+    future = next(iter(child._pending.values())).future
+    assert writes == []
+    allowed[0] = False
+    child._write_lock.release()
+    with pytest.raises(DeviceBridgeAdmissionRejected):
+        await task
+    assert writes == drains == retirements == []
+    assert not child._pending and future.cancelled()
+    assert child.state == "ready" and child._handshake_complete
+    assert (await child.publish(snapshot(), admission=lambda: True))["accepted"]
+    assert len(writes) == len(drains) == 1 and retirements == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["writer", "boot", "stopping", "callback", "write"])
+async def test_other_request_failures_do_not_claim_typed_admission_rejection(failure):
+    child, writes, _drains, retirements = inert_runtime()
+    admission_calls = []
+
+    def admission():
+        admission_calls.append(True)
+        if failure == "callback":
+            raise ValueError("Synthetic callback failure")
+        return failure == "write"
+
+    await child._write_lock.acquire()
+    task = asyncio.create_task(child.publish(snapshot(), admission=admission))
+    await asyncio.sleep(0)
+    future = next(iter(child._pending.values())).future
+    if failure == "writer":
+        child._writer = None
+    elif failure == "boot":
+        child._boot_id = str(uuid4())
+    elif failure == "stopping":
+        child._stopping.set()
+    elif failure == "write":
+
+        def fail_write(frame):
+            writes.append(frame)
+            raise ConnectionError("Synthetic ambiguous write")
+
+        child._writer.write = fail_write
+    child._write_lock.release()
+    with pytest.raises((DeviceBridgeRuntimeError, ValueError)) as error:
+        await task
+    assert not isinstance(error.value, DeviceBridgeAdmissionRejected)
+    assert not child._pending and future.cancelled()
+    if failure == "write":
+        assert len(writes) == 1 and retirements == [True]
+    else:
+        assert writes == retirements == []
+        assert admission_calls == ([True] if failure == "callback" else [])
 
 
 @pytest.mark.asyncio

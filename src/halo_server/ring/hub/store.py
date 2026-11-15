@@ -189,7 +189,6 @@ _RETAINED_SCALAR_FIELDS = {
     "on",
     "valveState",
     "mode",
-    "transitionDelayEndTimestamp",
     "alarmStatus",
     "commStatus",
 }
@@ -219,6 +218,10 @@ def _retained_device_patch(document: DeviceDocument) -> dict[str, Any]:
             retained[field_name] = _retained_mapping(data.get(field_name), nested_fields)
     if "components" in data:
         retained["components"] = _retained_components(data.get("components"))
+    if "transitionDelayEndTimestamp" in data:
+        value = data["transitionDelayEndTimestamp"]
+        # Preserve malformed presence: None is a valid explicit transition clear.
+        retained["transitionDelayEndTimestamp"] = value if _valid_transition(value) else "invalid"
     if "alarmInfo" in data:
         retained["alarmInfo"] = _retained_alarm_info(data.get("alarmInfo"))
     return retained
@@ -266,9 +269,11 @@ def _retained_components(value: object) -> dict[str, Any] | None:
 
 
 def _retained_alarm_info(value: object) -> dict[str, Any] | None:
+    if value is None:
+        return None  # Ring explicitly clears this optional panel field with null.
     alarm_info = _mapping(value)
     if alarm_info is None:
-        return None
+        return {}  # Invalid presence must not become an explicit null clear.
     retained: dict[str, Any] = {}
     if "state" in alarm_info:
         retained["state"] = _retained_scalar(alarm_info.get("state"))
@@ -418,6 +423,42 @@ def _mode(value: object) -> AlarmMode:
     }.get(value, AlarmMode.UNKNOWN)
 
 
+def _valid_transition(value: object) -> bool:
+    return value is None or (
+        isinstance(value, int | float)
+        and not isinstance(value, bool)
+        and 0 <= value < 2**53
+        and math.isfinite(value)
+    )
+
+
+def panel_inventory_baseline(data: Mapping[str, Any]) -> bool:
+    """Qualify omitted optional alarm fields in a complete panel inventory.
+
+    Maintained ring-client-api makes alarmInfo/alarmStatus optional; Homebridge
+    and Ring-MQTT use a recognized mode when neither reports an alarm. This is
+    evidence only for a complete DeviceInfoDocList, never for a sparse patch.
+    Explicit values use their own receipts; malformed/future states stay unknown.
+    """
+    return (
+        data.get("deviceType") == "security-panel"
+        and _mode(data.get("mode")) is not AlarmMode.UNKNOWN
+        and "alarmInfo" not in data
+        and "alarmStatus" not in data
+        and _valid_transition(data.get("transitionDelayEndTimestamp"))
+    )
+
+
+def _cleared_alarm_info(data: Mapping[str, Any]) -> bool:
+    # Documented by Hubitat's Ring parser and accepted by Homebridge/Ring-MQTT.
+    # Only exact null on the known panel schema is a clear; other types fail closed.
+    return (
+        data.get("deviceType") == "security-panel"
+        and "alarmInfo" in data
+        and data["alarmInfo"] is None
+    )
+
+
 def _phase(data: Mapping[str, Any]) -> AlarmPhase:
     alarm_info = _mapping(data.get("alarmInfo"))
     has_alarm_info = "alarmInfo" in data
@@ -428,12 +469,16 @@ def _phase(data: Mapping[str, Any]) -> AlarmPhase:
         return AlarmPhase.ALARMING
     if alarm_state == "entry-delay":
         return AlarmPhase.ENTRY_DELAY
-    if "alarmStatus" in data or (has_alarm_info and alarm_info is None):
+    if "alarmStatus" in data or (
+        has_alarm_info and alarm_info is None and not _cleared_alarm_info(data)
+    ):
         return AlarmPhase.UNKNOWN
     if alarm_info is not None and alarm_state not in _SAFE_ALARM_STATES:
         return AlarmPhase.UNKNOWN
     deadline = data.get("transitionDelayEndTimestamp")
-    if isinstance(deadline, int | float) and not isinstance(deadline, bool) and deadline > 0:
+    if not _valid_transition(deadline):
+        return AlarmPhase.UNKNOWN
+    if deadline is not None and deadline > 0:
         return AlarmPhase.EXIT_DELAY
     if data.get("deviceType") == "security-panel":
         return AlarmPhase.IDLE
@@ -441,9 +486,9 @@ def _phase(data: Mapping[str, Any]) -> AlarmPhase:
 
 
 def _deadline(_value: object) -> float | None:
-    # The maintained upstream type declares a number but establishes no units.
-    # Keep the reported transition phase, without inventing an absolute clock
-    # or implying completion when a guessed seconds/milliseconds timer expires.
+    # Ring-MQTT compares this Unix-millisecond timestamp with Date.now(). Keep
+    # our observed phase until a new panel observation confirms completion; a
+    # local timer alone is not evidence that the panel finished arming.
     return None
 
 
@@ -472,7 +517,9 @@ def _signal(data: Mapping[str, Any]) -> AlarmSignal:
         return (
             AlarmSignal.NONE if data.get("deviceType") == "security-panel" else AlarmSignal.UNKNOWN
         )
-    if "alarmStatus" in data or (has_alarm_info and alarm_info is None):
+    if "alarmStatus" in data or (
+        has_alarm_info and alarm_info is None and not _cleared_alarm_info(data)
+    ):
         return AlarmSignal.UNKNOWN
     if isinstance(state, str):
         if state not in _SAFE_ALARM_STATES:
@@ -593,7 +640,7 @@ def _faulted_device_ids(
     alarm_info_value = data.get("alarmInfo")
     alarm_info = _mapping(alarm_info_value)
     if alarm_info is None:
-        return (None, "alarmInfo" not in data)
+        return (None, "alarmInfo" not in data or _cleared_alarm_info(data))
     if "faultedDevices" not in alarm_info:
         return None, True
     value = alarm_info.get("faultedDevices")

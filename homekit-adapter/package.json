@@ -15,7 +15,7 @@
     "check": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@homebridge/hap-nodejs": "file:vendor/hap-nodejs-2.3.0-halo.1.tgz"
+    "@homebridge/hap-nodejs": "file:vendor/hap-nodejs-2.3.0-halo.2.tgz"
   },
   "devDependencies": {
     "@types/node": "26.2.0",

@@ -16,7 +16,7 @@ test("pinned public transport API imports/compiles without publication or pairin
     throw new Error("network publication forbidden");
   });
   const before = existsSync("persist");
-  assert.equal(verifyPublicApi(), "2.3.0-halo.1");
+  assert.equal(verifyPublicApi(), "2.3.0-halo.2");
   const delegate: CameraStreamingDelegate = {
     handleSnapshotRequest(_request, callback) { callback(new Error("synthetic-only")); },
     prepareStream(_request, callback) { callback(new Error("synthetic-only")); },

@@ -117,7 +117,10 @@ export function monitoringBody(state: NoncameraState, enabled: boolean, operatio
 }
 
 export function noncameraHealth(device: NoncameraDevice, fresh: boolean): string {
-  if (!fresh || device.stale) return 'Out of date';
+  if (!fresh) return 'Status out of date';
+  if (device.source_health === 'offline') return 'Offline';
+  if (device.source_health === 'online' && device.stale) return 'Some readings out of date';
+  if (device.stale) return 'Out of date';
   if (device.available === null) return 'Availability unknown';
   return device.available ? 'Available' : 'Unavailable';
 }
@@ -140,7 +143,8 @@ export function deviceIcon(kind: string): string {
   if (kind.includes('light')) return 'light';
   if (kind.includes('chime')) return 'bell';
   if (kind.includes('lock')) return 'lock';
-  if (kind.includes('alarm') || kind.includes('keypad')) return 'shield';
+  if (kind === 'security-panel' || kind.includes('alarm') || kind.includes('keypad'))
+    return 'shield';
   if (kind.includes('contact')) return 'contact';
   if (kind.includes('motion')) return 'activity';
   return 'devices';

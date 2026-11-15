@@ -125,9 +125,9 @@ export function alarmPhaseLabel(value: string | null | undefined): string {
   return (
     (
       {
-        idle: 'Idle',
-        'exit-delay': 'Exit delay',
-        'entry-delay': 'Entry delay',
+        idle: 'Stable',
+        'exit-delay': 'Exit countdown (arming)',
+        'entry-delay': 'Entry countdown',
         alarming: 'Alarm triggered',
       } as Record<string, string>
     )[value ?? ''] ?? 'Unknown'

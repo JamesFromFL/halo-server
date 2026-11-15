@@ -354,6 +354,10 @@
       </button>
     </Row>
   </div>
+  {#if runtime?.alarm_events_dropped}<p class="notice" role="status">
+      {runtime.alarm_events_dropped} alarm state updates could not be forwarded in time during this server
+      run. The current state is refreshed separately; check Ring for alarm history.
+    </p>{/if}
   {#if runtime?.reset_pending}<p class="notice">
       A bridge reset is unfinished. Halo keeps the bridge disconnected until you explicitly resume
       and finish it.

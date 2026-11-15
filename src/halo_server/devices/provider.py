@@ -37,6 +37,7 @@ from halo_server.ring.hub.models import (
     AlarmConnectionStatus,
     AlarmDeviceKind,
     AlarmInventoryStatus,
+    AlarmPhase,
     AlarmWriteAuthorization,
     TriState,
 )
@@ -48,7 +49,7 @@ from halo_server.ring.hub.protocol import (
 )
 from halo_server.ring.hub.provider import AlarmLocationSeed, location_seeds_from_base_stations
 from halo_server.ring.hub.rest import DEVICES_ENDPOINT, LOCATIONS_ENDPOINT, RingAlarmRestGateway
-from halo_server.ring.hub.store import AlarmStateStore
+from halo_server.ring.hub.store import AlarmStateStore, panel_inventory_baseline
 from halo_server.ring.hub.transport import AlarmTransportError, RingAlarmTransport
 from halo_server.ring.lighting import LightingReservation
 
@@ -725,6 +726,23 @@ class NoncameraProvider:
             for name, source_fields in _OBSERVATION_FIELDS.items():
                 if source_fields.intersection(document.data):
                     receipts[name] = now
+            if isinstance(message, DeviceInfoDocList) and panel_inventory_baseline(document.data):
+                # A complete panel document reports normal state by omitting the
+                # optional alarm fields. A sparse mode/health patch cannot do so.
+                receipts["alarm_state"] = now
+                receipts["alarm_signal"] = now
+            elif "transitionDelayEndTimestamp" in document.data:
+                location = self._store.snapshot.find_location(location_id)
+                asset = location.find_asset(message.asset_id) if location else None
+                device = asset.find_device(document.zid) if asset else None
+                if (
+                    device is not None
+                    and device.kind is AlarmDeviceKind.SECURITY_PANEL
+                    and device.phase in {AlarmPhase.IDLE, AlarmPhase.EXIT_DELAY}
+                ):
+                    # A transition-only patch observes that phase, not a retained
+                    # entry/alarm/unknown state and not the separate alarm signal.
+                    receipts["alarm_state"] = now
 
     async def _maintain(self, runtime):
         while self._active():

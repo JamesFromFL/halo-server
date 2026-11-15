@@ -21,6 +21,6 @@ export function verifyPublicApi(): string {
     throw new Error("hap-public-api-unavailable");
   }
   const version = HAPLibraryVersion();
-  if (version !== "2.3.0-halo.1") throw new Error("hap-version-mismatch");
+  if (version !== "2.3.0-halo.2") throw new Error("hap-version-mismatch");
   return version;
 }

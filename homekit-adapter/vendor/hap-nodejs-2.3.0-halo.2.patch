@@ -1,0 +1,1986 @@
+diff --git a/package.json b/package.json
+index db2649a..d974fe5 100644
+--- a/package.json
++++ b/package.json
+@@ -1,7 +1,7 @@
+ {
+   "name": "@homebridge/hap-nodejs",
+   "type": "module",
+-  "version": "2.3.0",
++  "version": "2.3.0-halo.2",
+   "description": "HAP-NodeJS is a Node.js implementation of HomeKit Accessory Server.",
+   "maintainers": [
+     "Andreas Bauer <mail@anderl-bauer.de>"
+diff --git a/src/hap.ts b/src/hap.ts
+index 3b7be49..98bf4d5 100644
+--- a/src/hap.ts
++++ b/src/hap.ts
+@@ -22,6 +22,7 @@ export * from './lib/HAPServer.js'
+ export * from './lib/model/AccessoryInfo.js'
+ export * from './lib/model/HAPFileStorage.js'
+ export * from './lib/model/HAPStorage.js'
++export * from './lib/model/HAPStorageError.js'
+ export * from './lib/Service.js'
+ export * from './lib/tv/AccessControlManagement.js'
+ 
+diff --git a/src/lib/camera/RecordingManagement.ts b/src/lib/camera/RecordingManagement.ts
+index 1921d22..7a6fbcc 100644
+--- a/src/lib/camera/RecordingManagement.ts
++++ b/src/lib/camera/RecordingManagement.ts
+@@ -2,16 +2,19 @@
+ import { Buffer } from 'node:buffer'
+ import crypto from 'node:crypto'
+ import { EventEmitter } from 'node:events'
++import { types } from 'node:util'
+ 
+ import createDebug from 'debug'
+ 
+ import { Access, Characteristic, CharacteristicEventTypes } from '../Characteristic.js'
+ import { CameraRecordingDelegate, StateChangeDelegate } from '../controller/index.js'
++import { assertRecordingData } from '../datastream/DataStreamBounds.js'
+ import {
+   DataStreamConnection,
+   DataStreamConnectionEvent,
+   DataStreamManagement,
+   DataStreamProtocolHandler,
++  DataStreamTransportOptions,
+   EventHandler,
+   HDSConnectionError,
+   HDSConnectionErrorType,
+@@ -39,6 +42,8 @@ const hksvDebug = createDebug('HAP-NodeJS:HKSV')
+  * @group Camera
+  */
+ export interface CameraRecordingOptions {
++  /** Explicit finite transport budgets, including one shared physical-connection owner. */
++  dataStreamTransport?: DataStreamTransportOptions
+   /**
+    * The size of the prebuffer in milliseconds. It must be at least 4000 ms.
+    * A sensible value for this property is in the interval [4000, 8000].
+@@ -411,6 +416,7 @@ export interface RecordingManagementState {
+ export class RecordingManagement {
+   readonly options: CameraRecordingOptions
+   readonly delegate: CameraRecordingDelegate
++  private readonly usedStreamIds = new WeakMap<DataStreamConnection, Set<number>>()
+ 
+   private stateChangeDelegate?: StateChangeDelegate
+ 
+@@ -494,7 +500,7 @@ export class RecordingManagement {
+     operatingMode.setCharacteristic(Characteristic.HomeKitCameraActive, true)
+     operatingMode.setCharacteristic(Characteristic.PeriodicSnapshotsActive, true)
+ 
+-    const dataStreamManagement = new DataStreamManagement()
++    const dataStreamManagement = new DataStreamManagement(undefined, this.options.dataStreamTransport)
+     recordingManagement.addLinkedService(dataStreamManagement.getService())
+ 
+     return {
+@@ -574,7 +580,7 @@ export class RecordingManagement {
+     const target: string = message.target
+     const reason: string = message.reason
+ 
+-    if (target !== 'controller' || type !== 'ipcamera.recording') {
++    if (!Number.isSafeInteger(streamId) || streamId < 0 || target !== 'controller' || type !== 'ipcamera.recording') {
+       debug('[HDS %s] Received data send with unexpected target: %s or type: %d. Rejecting...',
+         connection.remoteAddress, target, type)
+       connection.sendResponse(Protocols.DATA_SEND, Topics.OPEN, id, HDSStatus.PROTOCOL_SPECIFIC_ERROR, {
+@@ -619,6 +625,15 @@ export class RecordingManagement {
+ 
+     debug('[HDS %s] HDS DATA_SEND Open with reason \'%s\'.', connection.remoteAddress, reason)
+ 
++    const used = this.usedStreamIds.get(connection) ?? new Set<number>()
++    if (used.has(streamId) || used.size >= 1024) {
++      connection.sendResponse(Protocols.DATA_SEND, Topics.OPEN, id, HDSStatus.PROTOCOL_SPECIFIC_ERROR, { status: HDSProtocolSpecificErrorReason.BUSY })
++      connection.close()
++      return
++    }
++    used.add(streamId)
++    this.usedStreamIds.set(connection, used)
++
+     // eslint-disable-next-line ts/no-use-before-define
+     this.recordingStream = new CameraRecordingStream(connection, this.delegate, id, streamId)
+     this.recordingStream.on(CameraRecordingStreamEvents.CLOSED, () => {
+@@ -934,7 +949,14 @@ export class RecordingManagement {
+     this.stateChangeDelegate = delegate
+   }
+ 
++  /** Close the logical stream first so its signal fences the delegate synchronously. */
++  public async closeStreamsAndWait(): Promise<void> {
++    this.recordingStream?.close(HDSProtocolSpecificErrorReason.CANCELLED)
++    await this.dataStreamManagement.closeConnectionsAndWait()
++  }
++
+   destroy(): void {
++    this.recordingStream?.close(HDSProtocolSpecificErrorReason.CANCELLED)
+     this.dataStreamManagement.destroy()
+   }
+ 
+@@ -976,7 +998,7 @@ const enum CameraRecordingStreamEvents {
+ }
+ 
+ // eslint-disable-next-line ts/no-unsafe-declaration-merging
+-declare interface CameraRecordingStream {
++export declare interface CameraRecordingStream {
+   on(event: 'closed', listener: () => void): this
+ 
+   emit(event: 'closed'): boolean
+@@ -989,12 +1011,13 @@ declare interface CameraRecordingStream {
+  * @group Camera
+  */
+ // eslint-disable-next-line ts/no-unsafe-declaration-merging
+-class CameraRecordingStream extends EventEmitter implements DataStreamProtocolHandler {
++export class CameraRecordingStream extends EventEmitter implements DataStreamProtocolHandler {
+   readonly connection: DataStreamConnection
+   readonly delegate: CameraRecordingDelegate
+   readonly hdsRequestId: number
+   readonly streamId: number
+   private abortController?: AbortController
++  private endOfStreamQueued = false
+   private closed = false
+ 
+   eventHandler?: Record<string, EventHandler> = {
+@@ -1030,9 +1053,11 @@ class CameraRecordingStream extends EventEmitter implements DataStreamProtocolHa
+     this.connection.addProtocolHandler(Protocols.DATA_SEND, this)
+   }
+ 
+-  startStreaming() {
+-    // noinspection JSIgnoredPromiseFromCall
+-    this._startStreaming()
++  startStreaming(): void {
++    void this._startStreaming().catch((error) => {
++      debug('[HDS %s] Failed to start recording stream %d: %s', this.connection.remoteAddress, this.streamId, error)
++      this.close(HDSProtocolSpecificErrorReason.UNEXPECTED_FAILURE)
++    })
+   }
+ 
+   private async _startStreaming() {
+@@ -1067,6 +1092,12 @@ class CameraRecordingStream extends EventEmitter implements DataStreamProtocolHa
+         }
+ 
+         const fragment = packet.data
++        if (types.isProxy(fragment) || !Buffer.isBuffer(fragment) || fragment.length < 1
++          || fragment.length > (initialization
++            ? 1024 * 1024
++            : 8 * 1024 * 1024) || typeof packet.isLast !== 'boolean') {
++          throw new Error('Invalid recording packet')
++        }
+ 
+         let offset = 0
+         let dataChunkSequenceNumber = 1
+@@ -1102,11 +1133,19 @@ class CameraRecordingStream extends EventEmitter implements DataStreamProtocolHa
+ 
+           debug('[HDS %s] Sending DATA_SEND DATA for stream %d with metadata: %o and length %d; EoS: %s',
+             this.connection.remoteAddress, this.streamId, event.packets[0].metadata, data.length, event.endOfStream)
+-          this.connection.sendEvent(Protocols.DATA_SEND, Topics.DATA, event)
++          assertRecordingData(event)
++          await this.connection.sendEventAsync(Protocols.DATA_SEND, Topics.DATA, event, {
++            signal: this.abortController.signal,
++            onQueued: () => {
++              if (event.endOfStream) {
++                this.endOfStreamQueued = true
++              }
++            },
++          })
+ 
+           dataChunkSequenceNumber++
+-          initialization = false
+         }
++        initialization = false
+ 
+         lastFragmentWasMarkedLast = packet.isLast
+ 
+@@ -1163,8 +1202,11 @@ class CameraRecordingStream extends EventEmitter implements DataStreamProtocolHa
+   }
+ 
+   private handleDataSendAck(message: Record<any, any>) {
+-    const streamId: string = message.streamId
++    const streamId: number = message.streamId
+     const endOfStream: boolean = message.endOfStream
++    if (streamId !== this.streamId || endOfStream !== true || !this.endOfStreamQueued) {
++      return
++    }
+ 
+     // The HomeKit Controller will send a DATA_SEND ACK if we set the `endOfStream` flag in the last packet
+     // of our DATA_SEND DATA packet.
+@@ -1255,14 +1297,19 @@ class CameraRecordingStream extends EventEmitter implements DataStreamProtocolHa
+       this.connection.remoteAddress, this.streamId, reason ? HDSProtocolSpecificErrorReason[reason] : 'CLOSED')
+ 
+     // the `isConsideredClosed` check just ensures that the won't ever throw here and that `handledClosed` is always executed.
+-    if (!this.connection.isConsideredClosed()) {
+-      this.connection.sendEvent(Protocols.DATA_SEND, Topics.CLOSE, {
+-        streamId: this.streamId,
+-        reason,
+-      })
++    try {
++      if (!this.connection.isConsideredClosed()) {
++        this.connection.sendEvent(Protocols.DATA_SEND, Topics.CLOSE, {
++          streamId: this.streamId,
++          reason,
++        })
++      }
++    } catch (error) {
++      void this.connection.abortAndWait().catch(failure => debug('HDS close remains owned: %s', failure))
++    } finally {
++      // Queue exhaustion must never skip the delegate's synchronous delivery fence.
++      this.handleClosed(() => this.delegate.closeRecordingStream(this.streamId, reason))
+     }
+-
+-    this.handleClosed(() => this.delegate.closeRecordingStream(this.streamId, reason))
+   }
+ 
+   private kickOffCloseTimeout(): void {
+@@ -1277,6 +1324,9 @@ class CameraRecordingStream extends EventEmitter implements DataStreamProtocolHa
+ 
+       debug('[HDS %s] Recording stream %d took longer than expected to fully close. Force closing now!', this.connection.remoteAddress, this.streamId)
+       this.close(HDSProtocolSpecificErrorReason.CANCELLED)
++      // A peer that drains CLOSE but never acknowledges must not pin admission.
++      // The logical delegate is fenced before bounded physical retirement.
++      this.connection.close()
+     }, 12000)
+   }
+ }
+diff --git a/src/lib/controller/CameraController.ts b/src/lib/controller/CameraController.ts
+index 8b90874..bc88999 100644
+--- a/src/lib/controller/CameraController.ts
++++ b/src/lib/controller/CameraController.ts
+@@ -452,6 +452,11 @@ export class CameraController extends EventEmitter implements SerializableContro
+    *
+    * @param sessionId - id of the current ongoing streaming session
+    */
++  /** Fence recording delivery and await actual HDS physical retirement. */
++  public async closeRecordingStreams(): Promise<void> {
++    await this.recordingManagement?.closeStreamsAndWait()
++  }
++
+   public forceStopStreamingSession(sessionId: SessionIdentifier): void {
+     this.streamManagements.forEach((management) => {
+       if (management.sessionIdentifier === sessionId) {
+@@ -678,7 +683,7 @@ export class CameraController extends EventEmitter implements SerializableContro
+           {
+             recordingManagement: serviceMap.cameraEventRecordingManagement,
+             operatingMode: serviceMap.cameraOperatingMode,
+-            dataStreamManagement: new DataStreamManagement(serviceMap.dataStreamTransportManagement),
++            dataStreamManagement: new DataStreamManagement(serviceMap.dataStreamTransportManagement, this.recording.options.dataStreamTransport),
+           },
+         )
+       } else {
+diff --git a/src/lib/datastream/BoundedFrameWriter.ts b/src/lib/datastream/BoundedFrameWriter.ts
+new file mode 100644
+index 0000000..bcb0389
+--- /dev/null
++++ b/src/lib/datastream/BoundedFrameWriter.ts
+@@ -0,0 +1,321 @@
++import type { Server } from 'node:net'
++/** Halo transport extension; cryptography and HDS wire framing remain upstream-owned. */
++import type { Duplex } from 'node:stream'
++
++/* global NodeJS */
++import { Buffer } from 'node:buffer'
++
++export class TransportError extends Error {
++  constructor(readonly code: 'busy' | 'closed' | 'aborted' | 'timeout' | 'encode' | 'io' | 'cleanup-pending') {
++    super(code)
++  }
++}
++interface Reservation {
++  resolve(): void
++  reject(error: Error): void
++  cleanup(): void
++  settled: boolean
++}
++export interface WriterLimits {
++  maximumFrameBytes: number
++  maximumPendingFrames: number
++  maximumPendingBytes: number
++  writeTimeoutMs: number
++  closeGraceMs: number
++  closeTimeoutMs: number
++}
++export interface SendOptions {
++  signal?: AbortSignal
++  onQueued?: () => void
++}
++/**
++ * Admission occurs BEFORE the supplied bounded encoder runs. There is no
++ * uncharged waiter queue. The socket has exactly one owner, and every write
++ * (legacy events, requests, responses and awaited recording data) uses it.
++ */
++export class BoundedFrameWriter {
++  private readonly pending = new Set<Reservation>()
++  private closing = false
++  private physicallyClosed = false
++  private readonly closeWaiters = new Set<() => void>()
++  private closeWork: Promise<void> | undefined
++  private physicalWait: Promise<void> | undefined
++  private readonly closedCallback: () => void
++  constructor(
++    private readonly socket: Duplex,
++    readonly limits: WriterLimits,
++  ) {
++    if (
++      Object.values(limits).some(value => !Number.isSafeInteger(value) || value < 1)
++      || limits.maximumFrameBytes > 0xFFFFF + 20
++      || limits.maximumPendingFrames > 8
++      || limits.maximumPendingBytes < limits.maximumFrameBytes
++      || limits.maximumPendingBytes > 8 * (0xFFFFF + 20)
++      || limits.writeTimeoutMs > 30000
++      || limits.closeGraceMs > 5000
++      || limits.closeTimeoutMs > 5000
++    ) {
++      throw new TransportError('encode')
++    }
++    this.closedCallback = () => {
++      this.physicallyClosed = true
++      this.closing = true
++      for (const item of this.pending) {
++        item.cleanup()
++        if (!item.settled) {
++          item.reject(new TransportError('closed'))
++        }
++      }
++      this.pending.clear()
++      for (const callback of this.closeWaiters) {
++        callback()
++      }
++      this.closeWaiters.clear()
++    }
++    socket.on('close', this.closedCallback)
++    socket.on('error', () => {
++      void this.abort('io').catch(() => {})
++    })
++  }
++
++  get reservationCount(): number {
++    return this.pending.size
++  }
++
++  get chargedBytes(): number {
++    return this.pending.size * this.limits.maximumFrameBytes
++  }
++
++  get retirementComplete(): boolean {
++    return this.physicallyClosed
++  }
++
++  send(build: (maximumFrameBytes: number) => Buffer, options: SendOptions = {}): Promise<void> {
++    if (this.closing) {
++      throw new TransportError('closed')
++    }
++    if (options.signal?.aborted) {
++      throw new TransportError('aborted')
++    }
++    if (
++      this.pending.size >= this.limits.maximumPendingFrames
++      || this.chargedBytes + this.limits.maximumFrameBytes > this.limits.maximumPendingBytes
++    ) {
++      throw new TransportError('busy')
++    }
++    let resolve!: () => void, reject!: (error: Error) => void
++    const result = new Promise<void>((yes, no) => {
++      resolve = yes
++      reject = no
++    })
++    void result.catch(() => {})
++    let timer: NodeJS.Timeout | undefined
++    let callbackDone = false
++    let drainSeen = false
++    let writeReturned = false
++    let needDrain = false
++    const aborted = () => {
++      void this.abort('aborted').catch(() => {})
++    }
++    // The drain and completion callbacks reference one another.
++
++    let finish!: () => void
++    const socket = this.socket
++    const drained = () => {
++      drainSeen = true
++      finish()
++    }
++    const item: Reservation = {
++      resolve,
++      reject,
++      settled: false,
++      cleanup: () => {
++        if (timer) {
++          clearTimeout(timer)
++        }
++        options.signal?.removeEventListener('abort', aborted)
++        socket.off('drain', drained)
++      },
++    }
++    finish = () => {
++      if (this.closing || !writeReturned || !callbackDone || (needDrain && !drainSeen) || item.settled) {
++        return
++      }
++      item.settled = true
++      item.cleanup()
++      this.pending.delete(item)
++      item.resolve()
++    }
++    this.pending.add(item) // Before encoding, including reentrant encoder calls.
++    try {
++      const frame = build(this.limits.maximumFrameBytes)
++      if (!Buffer.isBuffer(frame) || frame.length < 1 || frame.length > this.limits.maximumFrameBytes) {
++        throw new TransportError('encode')
++      }
++      if (options.signal?.aborted) {
++        throw new TransportError('aborted')
++      }
++      options.signal?.addEventListener('abort', aborted, { once: true })
++      timer = setTimeout(() => {
++        void this.abort('timeout').catch(() => {})
++      }, this.limits.writeTimeoutMs)
++      socket.on('drain', drained)
++      needDrain = !socket.write(frame, (error) => {
++        if (error) {
++          void this.abort('io').catch(() => {})
++          return
++        }
++        callbackDone = true
++        finish()
++      })
++      writeReturned = true
++      if (!this.closing) {
++        options.onQueued?.()
++      }
++      finish()
++    } catch (error) {
++      // The encoder may already have consumed a nonce. Closing prevents reuse
++      // or a nonce gap on an otherwise surviving encrypted connection.
++      void this.abort(error instanceof TransportError
++        ? error.code
++        : 'encode').catch(() => {})
++    }
++    return result
++  }
++
++  async abort(code: TransportError['code'] = 'aborted'): Promise<void> {
++    this.beginClose(code)
++    this.socket.destroy()
++    await this.awaitPhysicalClose()
++  }
++
++  close(): Promise<void> {
++    if (!this.closeWork) {
++      this.closeWork = (async () => {
++        this.beginClose('closed')
++        if (!this.physicallyClosed) {
++          const force = setTimeout(() => this.socket.destroy(), this.limits.closeGraceMs)
++          this.socket.end()
++          try {
++            await this.awaitPhysicalClose(this.limits.closeGraceMs + this.limits.closeTimeoutMs)
++          } finally {
++            clearTimeout(force)
++          }
++        }
++      })().finally(() => {
++        this.closeWork = undefined
++      })
++    }
++    return this.closeWork
++  }
++
++  private beginClose(code: TransportError['code']): void {
++    if (this.closing) {
++      return
++    }
++    this.closing = true
++    for (const item of this.pending) {
++      item.cleanup()
++      if (!item.settled) {
++        item.settled = true
++        item.reject(new TransportError(code))
++      }
++    }
++    // Reservation release happens only on the actual close event.
++  }
++
++  private async awaitPhysicalClose(timeout = this.limits.closeTimeoutMs): Promise<void> {
++    if (this.physicallyClosed) {
++      return
++    }
++    if (!this.physicalWait) {
++      this.physicalWait = new Promise<void>((resolve, reject) => {
++        // Callback is installed before its timeout handle is assigned.
++
++        let timer: NodeJS.Timeout
++        const closed = () => {
++          clearTimeout(timer)
++          this.closeWaiters.delete(closed)
++          resolve()
++        }
++        timer = setTimeout(() => {
++          this.closeWaiters.delete(closed)
++          reject(new TransportError('cleanup-pending'))
++        }, timeout)
++        this.closeWaiters.add(closed)
++      }).finally(() => {
++        this.physicalWait = undefined
++      })
++    }
++    await this.physicalWait
++  }
++}
++
++/** Shared by every HDS server; no HDS object is created before admission. */
++export class PhysicalConnectionBudget {
++  private readonly owners = new Set<Duplex>()
++  private readonly servers = new Map<Server, number>()
++  constructor(
++    readonly maximum: number,
++    readonly maximumServers = 256,
++  ) {
++    if (
++      !Number.isSafeInteger(maximum)
++      || maximum < 1
++      || maximum > 256
++      || !Number.isSafeInteger(maximumServers)
++      || maximumServers < 1
++      || maximumServers > 256
++    ) {
++      throw new TransportError('encode')
++    }
++  }
++
++  /** Node >=22 drops before allocating a Socket when public maxConnections is zero. */
++  registerServer(server: Server, maximumConnections: number): void {
++    if (!Number.isSafeInteger(maximumConnections) || maximumConnections < 1 || maximumConnections > 256) {
++      throw new TransportError('encode')
++    }
++    if (this.servers.has(server) || this.servers.size >= this.maximumServers) {
++      throw new TransportError('busy')
++    }
++    this.servers.set(server, maximumConnections)
++    server.maxConnections = this.owners.size >= this.maximum
++      ? 0
++      : maximumConnections
++    Object.assign(server, { dropMaxConnection: true })
++    server.once('close', () => this.servers.delete(server))
++  }
++
++  private updateServers(): void {
++    for (const [server, maximum] of this.servers) {
++      server.maxConnections = this.owners.size >= this.maximum
++        ? 0
++        : maximum
++    }
++  }
++
++  get count(): number {
++    return this.owners.size
++  }
++
++  admit(socket: Duplex): boolean {
++    if (this.owners.has(socket)) {
++      throw new TransportError('encode')
++    }
++    if (socket.destroyed) {
++      return false
++    }
++    if (this.owners.size >= this.maximum) {
++      socket.destroy()
++      return false
++    }
++    this.owners.add(socket)
++    this.updateServers()
++    socket.once('close', () => {
++      this.owners.delete(socket)
++      this.updateServers()
++    })
++    return true
++  }
++}
+diff --git a/src/lib/datastream/DataStreamBounds.ts b/src/lib/datastream/DataStreamBounds.ts
+new file mode 100644
+index 0000000..2603609
+--- /dev/null
++++ b/src/lib/datastream/DataStreamBounds.ts
+@@ -0,0 +1,152 @@
++import { Buffer } from 'node:buffer'
++/** Finite plain-data traversal before HDS serialization allocates key/value arrays. */
++import { types } from 'node:util'
++
++export function assertBoundedData(value: unknown, wrappers: readonly { readonly prototype: object }[] = []): void {
++  const ancestors = new Set<object>()
++  let nodes = 0
++  let keys = 0
++  let strings = 0
++  let bytes = 0
++  function visit(item: unknown, depth: number): void {
++    if (++nodes > 4096 || depth > 16) {
++      throw new Error('HDS value budget exceeded')
++    }
++    if (item === null || item === undefined || typeof item === 'boolean') {
++      return
++    }
++    if (typeof item === 'number') {
++      if (!Number.isFinite(item) || (Number.isInteger(item) && !Number.isSafeInteger(item))) {
++        throw new TypeError('Invalid HDS number')
++      }
++      return
++    }
++    if (typeof item === 'string') {
++      if (item.length > 65536) {
++        throw new Error('HDS string budget exceeded')
++      }
++      strings += Buffer.byteLength(item)
++      if (strings > 262144) {
++        throw new Error('HDS string budget exceeded')
++      }
++      return
++    }
++    if (typeof item !== 'object' || types.isProxy(item)) {
++      throw new Error('Invalid HDS value')
++    }
++    if (Buffer.isBuffer(item)) {
++      bytes += item.length
++      if (bytes > 0xFFFFF) {
++        throw new Error('HDS byte budget exceeded')
++      }
++      return
++    }
++    if (ancestors.has(item)) {
++      throw new Error('Cyclic HDS value')
++    }
++    ancestors.add(item)
++    if (Array.isArray(item)) {
++      if (item.length > 4096) {
++        throw new Error('HDS array budget exceeded')
++      }
++      for (let index = 0; index < item.length; index++) {
++        const property = Object.getOwnPropertyDescriptor(item, index)
++        if (!property || !('value' in property)) {
++          throw new Error('Invalid HDS array member')
++        }
++        visit(property.value, depth + 1)
++      }
++    } else {
++      const prototype = Object.getPrototypeOf(item)
++      if (prototype !== Object.prototype && prototype !== null && !wrappers.some(wrapper => wrapper.prototype === prototype)) {
++        throw new Error('Invalid HDS prototype')
++      }
++      let count = 0
++      for (const key in item) {
++        if (!Object.hasOwn(item, key) || ++keys > 1024 || ++count > 1024 || key.length > 128) {
++          throw new Error('HDS key budget exceeded')
++        }
++        const property = Object.getOwnPropertyDescriptor(item, key)
++        if (!property || !('value' in property)) {
++          throw new Error('HDS accessor is forbidden')
++        }
++        visit(key, depth + 1)
++        visit(property.value, depth + 1)
++      }
++    }
++    ancestors.delete(item)
++  }
++  visit(value, 0)
++}
++
++function record(value: unknown, allowed: readonly string[]): Record<string, unknown> {
++  if (
++    value === null
++    || typeof value !== 'object'
++    || types.isProxy(value)
++    || ![Object.prototype, null].includes(Object.getPrototypeOf(value))
++  ) {
++    throw new Error('Invalid recording record')
++  }
++  for (const key of allowed) {
++    const property = Object.getOwnPropertyDescriptor(value, key)
++    if (property && !('value' in property)) {
++      throw new Error('Invalid recording accessor')
++    }
++  }
++  let count = 0
++  for (const key in value) {
++    if (++count > allowed.length || !allowed.includes(key) || !Object.hasOwn(value, key)) {
++      throw new Error('Invalid recording key')
++    }
++    const property = Object.getOwnPropertyDescriptor(value, key)
++    if (!property || !('value' in property)) {
++      throw new Error('Invalid recording accessor')
++    }
++  }
++  return value as Record<string, unknown>
++}
++
++export function assertRecordingData(value: unknown): void {
++  const message = record(value, ['streamId', 'packets', 'endOfStream'])
++  if (
++    !Number.isSafeInteger(message.streamId)
++    || (message.streamId as number) < 0
++    || (message.endOfStream !== undefined && typeof message.endOfStream !== 'boolean')
++    || !Array.isArray(message.packets)
++    || types.isProxy(message.packets)
++    || message.packets.length !== 1
++  ) {
++    throw new Error('Invalid recording event')
++  }
++  const packet = Object.getOwnPropertyDescriptor(message.packets, 0)
++  if (!packet || !('value' in packet)) {
++    throw new Error('Invalid recording packet accessor')
++  }
++  const item = record(packet.value, ['data', 'metadata'])
++  if (types.isProxy(item.data) || !Buffer.isBuffer(item.data) || item.data.length < 1 || item.data.length > 0x40000) {
++    throw new Error('Invalid recording chunk')
++  }
++  const metadata = record(item.metadata, [
++    'dataType',
++    'dataSequenceNumber',
++    'dataChunkSequenceNumber',
++    'isLastDataChunk',
++    'dataTotalSize',
++  ])
++  if (
++    (metadata.dataType !== 'mediaInitialization' && metadata.dataType !== 'mediaFragment')
++    || !Number.isSafeInteger(metadata.dataSequenceNumber)
++    || (metadata.dataSequenceNumber as number) < 1
++    || !Number.isSafeInteger(metadata.dataChunkSequenceNumber)
++    || (metadata.dataChunkSequenceNumber as number) < 1
++    || (metadata.dataChunkSequenceNumber as number) > 32
++    || typeof metadata.isLastDataChunk !== 'boolean'
++    || (metadata.dataTotalSize !== undefined
++      && (!Number.isSafeInteger(metadata.dataTotalSize)
++        || (metadata.dataTotalSize as number) < 1
++        || (metadata.dataTotalSize as number) > 8 * 1024 * 1024))
++  ) {
++    throw new Error('Invalid recording metadata')
++  }
++}
+diff --git a/src/lib/datastream/DataStreamManagement.ts b/src/lib/datastream/DataStreamManagement.ts
+index 94e2a62..ca9151e 100644
+--- a/src/lib/datastream/DataStreamManagement.ts
++++ b/src/lib/datastream/DataStreamManagement.ts
+@@ -1,4 +1,5 @@
+ import type { DataStreamTransportManagement } from '../definitions/index.js'
++import type { DataStreamTransportOptions } from './DataStreamServer.js'
+ 
+ import { Buffer } from 'node:buffer'
+ 
+@@ -71,14 +72,15 @@ export const enum DataStreamStatus {
+  */
+ export class DataStreamManagement {
+   // one server per accessory is probably the best practice
+-  private readonly dataStreamServer: DataStreamServer = new DataStreamServer() // TODO how to handle Remote+future HKSV controller at the same time?
++  private readonly dataStreamServer: DataStreamServer // TODO how to handle Remote+future HKSV controller at the same time?
+ 
+   private readonly dataStreamTransportManagementService: DataStreamTransportManagement
+ 
+   private readonly supportedDataStreamTransportConfiguration: string
+   private lastSetupDataStreamTransportResponse = '' // stripped. excludes ACCESSORY_KEY_SALT
+ 
+-  constructor(service?: DataStreamTransportManagement) {
++  constructor(service?: DataStreamTransportManagement, transport?: DataStreamTransportOptions) {
++    this.dataStreamServer = new DataStreamServer(transport)
+     const supportedConfiguration: TransportType[] = [TransportType.HOMEKIT_DATA_STREAM]
+     this.supportedDataStreamTransportConfiguration = this.buildSupportedDataStreamTransportConfigurationTLV(supportedConfiguration)
+ 
+@@ -86,6 +88,11 @@ export class DataStreamManagement {
+     this.setupServiceHandlers()
+   }
+ 
++  /** Retire physical data-stream owners without removing reusable service handlers. */
++  public closeConnectionsAndWait(): Promise<void> {
++    return this.dataStreamServer.closeConnectionsAndWait()
++  }
++
+   public destroy(): void {
+     this.dataStreamServer.destroy() // removes ALL listeners
+     this.dataStreamTransportManagementService.getCharacteristic(Characteristic.SetupDataStreamTransport)
+diff --git a/src/lib/datastream/DataStreamParser.ts b/src/lib/datastream/DataStreamParser.ts
+index a5c4c7c..3be9ec4 100644
+--- a/src/lib/datastream/DataStreamParser.ts
++++ b/src/lib/datastream/DataStreamParser.ts
+@@ -5,6 +5,7 @@ import createDebug from 'debug'
+ 
+ import * as hapCrypto from '../util/hapCrypto.js'
+ import * as uuid from '../util/uuid.js'
++import { assertBoundedData } from './DataStreamBounds.js'
+ 
+ // welcome to hell :)
+ // in this file lies madness and frustration. and It's not only about HDS. Also, JavaScript is hell
+@@ -247,6 +248,20 @@ export class DataStreamParser {
+ 
+   // eslint-disable-next-line ts/explicit-module-boundary-types
+   public static encode(data: any, buffer: DataStreamWriter): void {
++    assertBoundedData(data, [
++      Int8,
++      Int16,
++      Int32,
++      Int64,
++      Float32,
++      Float64,
++      SecondsSince2001,
++      UUID,
++    ])
++    this.encodeValue(data, buffer)
++  }
++
++  private static encodeValue(data: any, buffer: DataStreamWriter): void {
+     if (data === undefined) {
+       throw new Error('HDSEncoder: cannot encode undefined')
+     }
+@@ -284,9 +299,9 @@ export class DataStreamParser {
+             buffer.writeTag(DataFormatTags.ARRAY_TERMINATED)
+           }
+ 
+-          data.forEach((element) => {
+-            this.encode(element, buffer)
+-          })
++          for (let index = 0; index < length; index++) {
++            this.encodeValue(data[index], buffer)
++          }
+ 
+           if (length > 12) {
+             buffer.writeTag(DataFormatTags.TERMINATOR)
+@@ -324,8 +339,8 @@ export class DataStreamParser {
+           }
+ 
+           entries.forEach((entry) => {
+-            this.encode(entry[0], buffer) // encode key
+-            this.encode(entry[1], buffer) // encode value
++            this.encodeValue(entry[0], buffer) // encode key
++            this.encodeValue(entry[1], buffer) // encode value
+           })
+ 
+           if (entries.length > 14) {
+@@ -640,8 +655,11 @@ export class DataStreamWriter {
+ 
+   private writtenData = new WrittenDataList()
+ 
+-  constructor() {
+-    this.data = Buffer.alloc(DataStreamWriter.chunkSize)
++  constructor(private readonly maximumBytes = Number.MAX_SAFE_INTEGER) {
++    if (!Number.isSafeInteger(maximumBytes) || maximumBytes < 1) {
++      throw new Error('Invalid HDS encoder budget')
++    }
++    this.data = Buffer.alloc(Math.min(DataStreamWriter.chunkSize, maximumBytes))
+     this.writerIndex = 0
+   }
+ 
+@@ -654,15 +672,19 @@ export class DataStreamWriter {
+   }
+ 
+   private ensureLength(bytes: number) {
++    if (!Number.isSafeInteger(bytes) || bytes < 0 || this.writerIndex + bytes > this.maximumBytes) {
++      throw new Error('HDS encoder budget exceeded')
++    }
+     const neededBytes = (this.writerIndex + bytes) - this.data.length
+     if (neededBytes > 0) {
+       const chunks = Math.ceil(neededBytes / DataStreamWriter.chunkSize)
+ 
+       // don't know if it's best for performance to immediately concatenate the buffers. That way it's
+       // the easiest way to handle writing though.
++      const extra = Math.min(chunks * DataStreamWriter.chunkSize, this.maximumBytes - this.data.length)
+       this.data = Buffer.concat([
+         this.data,
+-        Buffer.alloc(chunks * DataStreamWriter.chunkSize),
++        Buffer.alloc(extra),
+       ])
+     }
+   }
+diff --git a/src/lib/datastream/DataStreamServer.spec.ts b/src/lib/datastream/DataStreamServer.spec.ts
+index aeb37bd..c0b116f 100644
+--- a/src/lib/datastream/DataStreamServer.spec.ts
++++ b/src/lib/datastream/DataStreamServer.spec.ts
+@@ -17,11 +17,19 @@ class FakeSocket extends EventEmitter {
+   remoteAddress = '192.0.2.1'
+   setNoDelay = vi.fn()
+   setKeepAlive = vi.fn()
+-  write = vi.fn()
++  pause = vi.fn()
++  resume = vi.fn()
++  write = vi.fn((_data: Buffer, callback?: () => void) => {
++    callback?.()
++    return true
++  })
++
+   end = vi.fn()
+-  destroy = vi.fn()
++  destroy = vi.fn(() => this.emit('close'))
+ }
+ 
++const sockets: FakeSocket[] = []
++
+ interface TestSession {
+   server: DataStreamServer
+   socket: FakeSocket
+@@ -42,6 +50,7 @@ function setupSession(): TestSession {
+   server.preparedSessions.push(prepared)
+ 
+   const socket = new FakeSocket()
++  sockets.push(socket)
+   // @ts-expect-error: private method access
+   server.onConnection(socket as unknown as Socket)
+   // @ts-expect-error: private property access
+@@ -89,6 +98,9 @@ describe('dataStreamServer', () => {
+   })
+ 
+   afterEach(() => {
++    for (const socket of sockets.splice(0)) {
++      socket.destroy()
++    }
+     vi.useRealTimers()
+   })
+ 
+@@ -169,24 +181,24 @@ describe('dataStreamServer', () => {
+   })
+ 
+   describe('closing', () => {
+-    it('should destroy a closed socket which the remote never closes', () => {
++    it('should destroy a closed socket which the remote never closes', async () => {
+       const { socket, connection } = setupSession()
+ 
+       connection.close()
+       expect(socket.end).toHaveBeenCalledTimes(1)
+       expect(socket.destroy).not.toHaveBeenCalled()
+ 
+-      vi.advanceTimersByTime(5000)
++      await vi.advanceTimersByTimeAsync(5000)
+       expect(socket.destroy).toHaveBeenCalledTimes(1)
+     })
+ 
+-    it('should not destroy a socket which the remote closed in time', () => {
++    it('should not destroy a socket which the remote closed in time', async () => {
+       const { socket, connection } = setupSession()
+ 
+       connection.close()
+       socket.emit('close')
+ 
+-      vi.advanceTimersByTime(5000)
++      await vi.advanceTimersByTimeAsync(5000)
+       expect(socket.destroy).not.toHaveBeenCalled()
+     })
+   })
+diff --git a/src/lib/datastream/DataStreamServer.ts b/src/lib/datastream/DataStreamServer.ts
+index 1a1c38d..8d7e1ae 100644
+--- a/src/lib/datastream/DataStreamServer.ts
++++ b/src/lib/datastream/DataStreamServer.ts
+@@ -9,8 +9,29 @@ import createDebug from 'debug'
+ 
+ import { HAPConnection, HAPConnectionEvent } from '../util/eventedhttp.js'
+ import * as hapCrypto from '../util/hapCrypto.js'
++import { BoundedFrameWriter, PhysicalConnectionBudget, SendOptions, WriterLimits } from './BoundedFrameWriter.js'
+ import { DataStreamParser, DataStreamReader, DataStreamWriter, Int64 } from './DataStreamParser.js'
+ 
++export { BoundedFrameWriter, PhysicalConnectionBudget, TransportError } from './BoundedFrameWriter.js'
++export type { SendOptions, WriterLimits } from './BoundedFrameWriter.js'
++
++/** Finite transport budgets for every legacy and awaited HDS write. */
++export interface DataStreamTransportOptions {
++  connectionBudget?: PhysicalConnectionBudget
++  maximumConnections?: number
++  maximumPreparedSessions?: number
++  writerLimits?: WriterLimits
++}
++const sharedConnectionBudget = new PhysicalConnectionBudget(16)
++const defaultWriterLimits: WriterLimits = {
++  maximumFrameBytes: 0xFFFFF + 20,
++  maximumPendingFrames: 2,
++  maximumPendingBytes: 2 * (0xFFFFF + 20),
++  writeTimeoutMs: 5000,
++  closeGraceMs: 1000,
++  closeTimeoutMs: 1000,
++}
++
+ const debug = createDebug('HAP-NodeJS:DataStream:Server')
+ 
+ /**
+@@ -244,11 +265,18 @@ export class DataStreamServer extends EventEmitter {
+   preparedSessions: PreparedDataStreamSession[] = []
+   private readonly connections: DataStreamConnection[] = []
+   private removeListenersOnceClosed = false
++  private draining = false
++  private destroyed = false
+ 
+   private readonly internalEventEmitter: NodeEventEmitter = new NodeEventEmitter() // used for message event and message request handlers
+ 
+-  public constructor() {
++  public constructor(private readonly transport: DataStreamTransportOptions = {}) {
+     super()
++    for (const limit of [transport.maximumConnections ?? 4, transport.maximumPreparedSessions ?? 16]) {
++      if (!Number.isSafeInteger(limit) || limit < 1 || limit > 256) {
++        throw new Error('Invalid HDS connection limit')
++      }
++    }
+   }
+ 
+   /**
+@@ -305,6 +333,10 @@ export class DataStreamServer extends EventEmitter {
+ 
+   public prepareSession(connection: HAPConnection, controllerKeySalt: Buffer, callback: PrepareSessionCallback): void {
+     debug('Preparing for incoming HDS connection from %s', connection.sessionID)
++    if (this.destroyed || this.draining || this.preparedSessions.length >= (this.transport.maximumPreparedSessions ?? 16)) {
++      callback(new Error('HDS prepared session capacity reached'))
++      return
++    }
+     const accessoryKeySalt = crypto.randomBytes(32)
+     const salt = Buffer.concat([controllerKeySalt, accessoryKeySalt])
+ 
+@@ -335,6 +367,8 @@ export class DataStreamServer extends EventEmitter {
+ 
+     this.checkTCPServerEstablished(preparedSession, (error) => {
+       if (error) {
++        clearTimeout(preparedSession.connectTimeout)
++        this.timeoutPreparedSession(preparedSession)
+         callback(error)
+       } else {
+         callback(undefined, preparedSession)
+@@ -353,10 +387,21 @@ export class DataStreamServer extends EventEmitter {
+   }
+ 
+   private checkTCPServerEstablished(preparedSession: PreparedDataStreamSession, callback: (error?: Error) => void) {
++    if (this.destroyed || this.draining || !this.preparedSessions.includes(preparedSession)) {
++      callback(new Error('HDS setup retired'))
++      return
++    }
+     switch (this.state) {
+       case ServerState.UNINITIALIZED:
+         debug('Starting up TCP server.')
+         this.tcpServer = net.createServer()
++        try {
++          (this.transport.connectionBudget ?? sharedConnectionBudget).registerServer(this.tcpServer, this.transport.maximumConnections ?? 4)
++        } catch (error) {
++          this.tcpServer = undefined
++          callback(error as Error)
++          return
++        }
+ 
+         this.tcpServer.once('listening', this.listening.bind(this, preparedSession, callback))
+         this.tcpServer.on('connection', this.onConnection.bind(this))
+@@ -382,6 +427,10 @@ export class DataStreamServer extends EventEmitter {
+   }
+ 
+   private listening(preparedSession: PreparedDataStreamSession, callback: (error?: Error) => void) {
++    if (this.destroyed || this.draining || !this.preparedSessions.includes(preparedSession)) {
++      callback(new Error('HDS setup retired'))
++      return
++    }
+     this.state = ServerState.LISTENING
+ 
+     const address = this.tcpServer!.address()
+@@ -396,8 +445,24 @@ export class DataStreamServer extends EventEmitter {
+ 
+   private onConnection(socket: Socket) {
+     debug('[%s] New DataStream connection was established', socket.remoteAddress)
+-    // eslint-disable-next-line ts/no-use-before-define
+-    const connection = new DataStreamConnection(socket)
++
++    socket.pause()
++    if (this.draining || this.destroyed || this.connections.length >= (this.transport.maximumConnections ?? 4)) {
++      socket.destroy()
++      return
++    }
++    if (!(this.transport.connectionBudget ?? sharedConnectionBudget).admit(socket)) {
++      return
++    }
++
++    let connection: DataStreamConnection
++    try {
++      // eslint-disable-next-line ts/no-use-before-define
++      connection = new DataStreamConnection(socket, this.transport.writerLimits)
++    } catch {
++      socket.destroy()
++      return
++    }
+ 
+     connection.on(DataStreamConnectionEvent.IDENTIFICATION, this.handleSessionIdentification.bind(this, connection))
+     connection.on(DataStreamConnectionEvent.HANDLE_MESSAGE_GLOBALLY, this.handleMessageGlobally.bind(this, connection))
+@@ -406,6 +471,7 @@ export class DataStreamServer extends EventEmitter {
+     this.connections.push(connection)
+ 
+     this.emit(DataStreamServerEvent.CONNECTION_OPENED, connection)
++    socket.resume()
+   }
+ 
+   private handleSessionIdentification(connection: DataStreamConnection, firstFrame: HDSFrame, callback: IdentificationCallback) {
+@@ -483,18 +549,44 @@ export class DataStreamServer extends EventEmitter {
+   }
+ 
+   private checkCloseable() {
+-    if (this.connections.length === 0 && this.preparedSessions.length === 0 && this.state < ServerState.CLOSING) {
++    if (this.tcpServer && this.connections.length === 0 && this.preparedSessions.length === 0 && this.state < ServerState.CLOSING) {
+       debug('Last connection disconnected. Closing the server now.')
+ 
+       this.state = ServerState.CLOSING
+-      this.tcpServer!.close()
++      this.tcpServer?.close()
+     }
+   }
+ 
++  /** Fence new setup, retire physical owners, and retain failed-close claims for retry. */
++  public async closeConnectionsAndWait(): Promise<void> {
++    this.draining = true
++    for (const session of this.preparedSessions) {
++      clearTimeout(session.connectTimeout)
++    }
++    this.preparedSessions.length = 0
++    const results = await Promise.allSettled(this.connections.map(connection => connection.abortAndWait()))
++    if (results.some(result => result.status === 'rejected')) {
++      throw new Error('HDS physical retirement pending')
++    }
++    if (!this.destroyed) {
++      this.draining = false
++    }
++    this.checkCloseable()
++  }
++
+   /**
+    * This method will fully stop the DataStreamServer
+    */
+   public destroy(): void {
++    this.destroyed = true
++    this.draining = true
++    for (const session of this.preparedSessions) {
++      clearTimeout(session.connectTimeout)
++    }
++    this.preparedSessions.length = 0
++    for (const connection of this.connections) {
++      connection.close()
++    }
+     if (this.state > ServerState.UNINITIALIZED && this.state < ServerState.CLOSING) {
+       this.tcpServer!.close()
+       for (const connection of this.connections) {
+@@ -618,9 +710,12 @@ export class DataStreamConnection extends EventEmitter {
+   private helloTimer?: NodeJS.Timeout
+   private socketEndTimer?: NodeJS.Timeout
+ 
+-  constructor(socket: Socket) {
++  private readonly frameWriter: BoundedFrameWriter
++
++  constructor(socket: Socket, limits: WriterLimits = defaultWriterLimits) {
+     super()
+     this.socket = socket
++    this.frameWriter = new BoundedFrameWriter(socket, limits)
+     this.remoteAddress = socket.remoteAddress!
+ 
+     this.socket.setNoDelay(true) // disable Nagle algorithm
+@@ -716,6 +811,27 @@ export class DataStreamConnection extends EventEmitter {
+     }
+   }
+ 
++  /** Resolves after local write completion and any required drain, never peer receipt. */
++  async sendEventAsync(protocol: string | Protocols, event: string | Topics,
++    message: object = {}, options: SendOptions = {}): Promise<void> {
++    if (this.state !== ConnectionState.READY) {
++      return Promise.reject(new Error('HDS connection is not ready'))
++    }
++    return this.frameWriter.send(() => this.encodeHDSFrame({ protocol, event }, message), options)
++  }
++
++  /** Graceful close with finite force-destroy fallback; resolves only on physical close. */
++  closeAndWait(): Promise<void> {
++    this.state = Math.max(this.state, ConnectionState.CLOSING)
++    return this.frameWriter.close()
++  }
++
++  /** Synchronously fences all encrypted output; ownership remains until physical close. */
++  abortAndWait(): Promise<void> {
++    this.state = Math.max(this.state, ConnectionState.CLOSING)
++    return this.frameWriter.abort()
++  }
++
+   /**
+    * Sends a new request message to the connected client.
+    *
+@@ -727,8 +843,22 @@ export class DataStreamConnection extends EventEmitter {
+    */
+ 
+   sendRequest(protocol: string | Protocols, request: string | Topics, message: Record<any, any> = {}, callback: ResponseHandler): void {
++    if (Object.keys(this.responseHandlers).length >= 32) {
++      callback(new Error('HDS request capacity reached'), undefined, {})
++      return
++    }
++    if (this.state !== ConnectionState.READY) {
++      callback(new Error('HDS connection closed'), undefined, {})
++      return
++    }
+     let requestId: number
+-    do { // generate unused requestId
++    let attempts = 0
++    do {
++      if (++attempts > 32) {
++        callback(new Error('HDS request ID collision'), undefined, {})
++        return
++      }
++      // // generate unused requestId
+       // currently writing int64 to data stream is not really supported, so 32-bit int will be the max
+       requestId = Math.floor(Math.random() * 4294967295)
+     } while (this.responseHandlers[requestId] !== undefined)
+@@ -752,7 +882,14 @@ export class DataStreamConnection extends EventEmitter {
+     header.request = request
+     header.id = new Int64(requestId)
+ 
+-    this.sendHDSFrame(header, message)
++    try {
++      this.sendHDSFrame(header, message)
++    } catch (error) {
++      clearTimeout(this.responseTimers[requestId])
++      delete this.responseHandlers[requestId]
++      delete this.responseTimers[requestId]
++      callback(error as Error, undefined, {})
++    }
+   }
+ 
+   /**
+@@ -1086,14 +1223,29 @@ export class DataStreamConnection extends EventEmitter {
+   }
+ 
+   private sendHDSFrame(header: Record<any, any>, message: Record<any, any>) {
++    // Legacy callers share the same cap; they cannot bypass awaited recording writes.
++    try {
++      const completion = this.frameWriter.send(() => this.encodeHDSFrame(header, message))
++      void completion.catch(() => this.close())
++    } catch (error) {
++      // Legacy void callers cannot safely keep a protocol alive after a lost control frame.
++      void this.abortAndWait().catch(failure => debug('HDS retirement remains owned: %s', failure))
++      throw error
++    }
++  }
++
++  private encodeHDSFrame(header: Record<string, unknown>, message: object): Buffer {
+     if (this.state >= ConnectionState.CLOSING) {
+       throw new HDSConnectionError('Cannot send message on closing/closed socket!', HDSConnectionErrorType.CLOSED_SOCKET)
+     }
+ 
+-    const headerWriter = new DataStreamWriter()
+-    const messageWriter = new DataStreamWriter()
+-
++    const maximumPayload = Math.min(DataStreamConnection.MAX_PAYLOAD_LENGTH, this.frameWriter.limits.maximumFrameBytes - 20)
++    if (maximumPayload < 2) {
++      throw new Error('HDS frame budget is too small')
++    }
++    const headerWriter = new DataStreamWriter(Math.min(255, maximumPayload - 1))
+     DataStreamParser.encode(header, headerWriter)
++    const messageWriter = new DataStreamWriter(maximumPayload - 1 - headerWriter.length())
+     DataStreamParser.encode(message, messageWriter)
+ 
+     const payloadHeaderBuffer = Buffer.alloc(1)
+@@ -1126,7 +1278,7 @@ export class DataStreamConnection extends EventEmitter {
+       payloadBuffer,
+     )
+ 
+-    this.socket.write(Buffer.concat([frameHeader, encrypted.ciphertext, encrypted.authTag]))
++    return Buffer.concat([frameHeader, encrypted.ciphertext, encrypted.authTag])
+ 
+     /* Useful for debugging outgoing packages and detecting encoding errors
+         console.log("SENT DATA: " + payloadBuffer.toString("hex"));
+@@ -1146,15 +1298,7 @@ export class DataStreamConnection extends EventEmitter {
+       return // connection is already closing/closed
+     }
+ 
+-    this.state = ConnectionState.CLOSING
+-    this.socket.end()
+-
+-    // a remote which never closes its side would otherwise keep the half-closed socket (and this connection) around forever
+-    this.socketEndTimer = setTimeout(() => {
+-      debug('[%s] Remote did not close the socket in time. Destroying it now.', this.remoteAddress)
+-      this.socket.destroy()
+-    }, DataStreamConnection.SOCKET_END_TIMEOUT)
+-    this.socketEndTimer.unref()
++    void this.closeAndWait().catch(error => debug('HDS close remains owned: %s', error))
+   }
+ 
+   isConsideredClosed(): boolean {
+@@ -1182,6 +1326,22 @@ export class DataStreamConnection extends EventEmitter {
+     }
+     this.emit(DataStreamConnectionEvent.CLOSED)
+ 
++    if (this.helloTimer) {
++      clearTimeout(this.helloTimer)
++      this.helloTimer = undefined
++    }
++    for (const key of Object.keys(this.responseHandlers)) {
++      const id = Number(key)
++      const callback = this.responseHandlers[id]
++      clearTimeout(this.responseTimers[id])
++      delete this.responseHandlers[id]
++      delete this.responseTimers[id]
++      try {
++        callback(new Error('HDS connection closed'), undefined, {})
++      } catch (error) {
++        debug('HDS response close callback failed: %s', error)
++      }
++    }
+     this.connection?.removeListener(HAPConnectionEvent.CLOSED, this.hapConnectionClosedListener)
+     this.connection?.setMaxListeners(this.connection.getMaxListeners() - 1)
+     this.removeAllListeners()
+diff --git a/src/lib/model/HAPFileStorage.spec.ts b/src/lib/model/HAPFileStorage.spec.ts
+index 4b3bf91..da34b7e 100644
+--- a/src/lib/model/HAPFileStorage.spec.ts
++++ b/src/lib/model/HAPFileStorage.spec.ts
+@@ -213,7 +213,8 @@ describe('hAPFileStorage', () => {
+       fs.mkdirSync(path.join(dir, 'occupied'))
+ 
+       expect(() => storage.setItemSync('occupied', { a: 1 })).toThrow()
+-      expect(storage.getItem('occupied')).toBeUndefined()
++      // The failed filesystem mutation latches authority instead of serving cached success.
++      expect(() => storage.getItem('occupied')).toThrow(/HAP storage/)
+     })
+ 
+     it('should write the temporary file beside its target, as renaming across directories is not atomic', () => {
+diff --git a/src/lib/model/HAPFileStorage.ts b/src/lib/model/HAPFileStorage.ts
+index f4b39ec..ae8a450 100644
+--- a/src/lib/model/HAPFileStorage.ts
++++ b/src/lib/model/HAPFileStorage.ts
+@@ -1,7 +1,21 @@
++import { Buffer } from 'node:buffer'
++/* global NodeJS */
+ import fs from 'node:fs'
+ import path from 'node:path'
+ import process from 'node:process'
+ 
++import { HAPStorageError, HAPStorageFailureHandler, HAPStorageFailureOperation } from './HAPStorageError.js'
++
++export const HAP_STORAGE_INTENT = '.hap-storage-intent'
++
++/** Public construction options for direct storage users. @group Model */
++export interface HAPFileStorageOptions {
++  /** Synchronously retire cached model authority when any filesystem mutation fails. */
++  failureHandler?: HAPStorageFailureHandler
++  /** Require one exclusive directory owner; an incomplete intent is never automatically removed. */
++  durabilityGuard?: boolean
++}
++
+ /**
+  * Init options supported by {@link HAPFileStorage.initSync}.
+  *
+@@ -86,7 +100,9 @@ export class HAPFileStorage {
+ 
+   private readonly data = new Map<string, any>()
+ 
+-  constructor() {
++  private failure?: HAPStorageError
++
++  constructor(private readonly options: HAPFileStorageOptions = {}) {
+     for (const method of UNSUPPORTED_METHODS) {
+       // runtime-only stubs, deliberately absent from the class type: TypeScript consumers get a compile error,
+       // JavaScript consumers get this error instead of "storage.keys is not a function"
+@@ -99,6 +115,7 @@ export class HAPFileStorage {
+   }
+ 
+   initSync(options?: HAPFileStorageInitOptions): void {
++    this.assertHealthy()
+     if (options) {
+       const unsupportedOptions = Object.keys(options).filter(key => key !== 'dir')
+       if (unsupportedOptions.length > 0) {
+@@ -116,6 +133,20 @@ export class HAPFileStorage {
+       }
+     }
+ 
++    if (this.options.durabilityGuard) {
++      try {
++        fs.lstatSync(path.join(this.dir, HAP_STORAGE_INTENT))
++        this.fail('initialize', true)
++      } catch (error) {
++        if (error instanceof HAPStorageError) {
++          throw error
++        }
++        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
++          this.fail('initialize', true)
++        }
++      }
++    }
++
+     if (fs.existsSync(this.dir)) {
+       for (const entry of fs.readdirSync(this.dir, { withFileTypes: true })) {
+         if (entry.name.startsWith('.')) {
+@@ -133,7 +164,7 @@ export class HAPFileStorage {
+         this.data.set(entry.name, HAPFileStorage.parse(fs.readFileSync(file, 'utf8')))
+       }
+     } else {
+-      fs.mkdirSync(this.dir, { recursive: true })
++      fs.mkdirSync(this.dir, { recursive: true, mode: 0o700 })
+     }
+   }
+ 
+@@ -143,6 +174,7 @@ export class HAPFileStorage {
+    */
+ 
+   getItem(key: string, ...legacyCallback: never[]): any {
++    this.assertHealthy()
+     if (legacyCallback.length > 0) {
+       throw new Error('getItem() with a callback is not supported anymore: HAP-NodeJS replaced node-persist with a minimal file storage '
+         + `which only implements ${SUPPORTED_METHODS} (see https://github.com/homebridge/HAP-NodeJS/issues/1107).`)
+@@ -163,44 +195,134 @@ export class HAPFileStorage {
+    */
+   // eslint-disable-next-line ts/explicit-module-boundary-types
+   setItemSync(key: string, value: any): void {
++    this.assertHealthy()
+     HAPFileStorage.assertPlainKey(key)
++    // Serialization and argument failures occur before any filesystem mutation.
++    const serialized = JSON.stringify(value)
++    if (serialized === undefined) {
++      throw new TypeError('HAP storage value cannot be serialized')
++    }
++    this.mutate('write', key, serialized)
++    this.data.set(key, value)
++  }
+ 
+-    // node-persist 0.0.12 ran mkdirp.sync before every write, which recreated a storage directory removed at runtime
+-    fs.mkdirSync(this.dir, { recursive: true })
++  removeItemSync(key: string): void {
++    this.assertHealthy()
++    HAPFileStorage.assertPlainKey(key)
++    this.mutate('remove', key)
++    this.data.delete(key)
++  }
+ 
+-    const file = path.join(this.dir, key)
+-    // the dot prefix keeps a temporary file left behind by a crash from being loaded as a key by initSync,
+-    // the pid keeps processes sharing a storage directory (like child bridges) from racing on the same temporary file.
+-    // it sits in the storage directory next to its target, as renaming across directories would not be atomic
+-    const temporaryFile = path.join(this.dir, `.${key}.${process.pid}.tmp`)
++  private assertHealthy(): void {
++    if (this.failure) {
++      throw this.failure
++    }
++  }
+ 
+-    try {
+-      fs.writeFileSync(temporaryFile, JSON.stringify(value))
+-      fs.renameSync(temporaryFile, file)
+-    } catch (error) {
++  private fail(operation: HAPStorageFailureOperation, uncertain: boolean): never {
++    if (!this.failure) {
++      this.failure = new HAPStorageError(operation, uncertain)
++      // A handler cannot undo the latch or replace the original typed failure.
+       try {
+-        fs.unlinkSync(temporaryFile)
++        this.options.failureHandler?.(this.failure)
+       } catch {
+-        // the temporary file may never have been created, in which case there is nothing to clean up
++        // The consumer still receives the latched storage error.
+       }
+-
+-      throw error
+     }
+-
+-    // only now that the value is on disk: everything is served from memory afterwards, so a value cached
+-    // for a write which never landed would be indistinguishable from a saved one until the next restart
+-    this.data.set(key, value)
++    throw this.failure
+   }
+ 
+-  removeItemSync(key: string): void {
+-    HAPFileStorage.assertPlainKey(key)
+-
+-    // force ignores a file which is already gone, without the exists-then-unlink
+-    // gap in which another process (child bridges share a storage directory)
+-    // could remove the file first and turn this into an ENOENT crash
+-    fs.rmSync(path.join(this.dir, key), { force: true })
++  private writeAll(descriptor: number, text: string): void {
++    const bytes = Buffer.from(text, 'utf8')
++    let offset = 0
++    while (offset < bytes.length) {
++      const written = fs.writeSync(descriptor, bytes, offset, bytes.length - offset)
++      if (!Number.isSafeInteger(written) || written < 1 || written > bytes.length - offset) {
++        throw new Error('HAP storage write made no progress')
++      }
++      offset += written
++    }
++  }
+ 
+-    this.data.delete(key)
++  private mutate(operation: 'write' | 'remove', key: string, serialized?: string): void {
++    let directory = -1
++    let temporary = -1
++    let intent = -1
++    let temporaryOwned = false
++    let uncertain = false
++    let temporaryFile = ''
++    try {
++      fs.mkdirSync(this.dir, { recursive: true, mode: 0o700 })
++      directory = fs.openSync(this.dir, fs.constants.O_RDONLY | fs.constants.O_DIRECTORY)
++      const metadata = fs.fstatSync(directory)
++      if (!metadata.isDirectory() || metadata.nlink < 1 || (this.options.durabilityGuard
++        && (process.getuid?.() !== metadata.uid || (metadata.mode & 0o077) !== 0))) {
++        throw new Error('Unsafe HAP storage directory')
++      }
++      // On qualified Linux, every operation stays relative to the pinned inode.
++      const base = process.platform === 'linux'
++        ? `/proc/self/fd/${directory}`
++        : this.dir
++      const marker = path.join(base, HAP_STORAGE_INTENT)
++      if (this.options.durabilityGuard) {
++        intent = fs.openSync(marker, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW, 0o600)
++        fs.fchmodSync(intent, 0o600)
++        this.writeAll(intent, JSON.stringify({ version: 1, operation }))
++        fs.fsyncSync(intent)
++        const closing = intent
++        intent = -1
++        fs.closeSync(closing)
++        fs.fsyncSync(directory)
++      }
++      const file = path.join(base, key)
++      if (operation === 'write') {
++        temporaryFile = path.join(base, `.${key}.${process.pid}.tmp`)
++        temporary = fs.openSync(temporaryFile, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW, 0o600)
++        temporaryOwned = true
++        fs.fchmodSync(temporary, 0o600)
++        this.writeAll(temporary, serialized!)
++        fs.fsyncSync(temporary)
++        const closing = temporary
++        temporary = -1
++        fs.closeSync(closing)
++        uncertain = true
++        fs.renameSync(temporaryFile, file)
++        temporaryOwned = false
++      } else {
++        uncertain = true
++        fs.rmSync(file, { force: true })
++      }
++      fs.fsyncSync(directory)
++      if (this.options.durabilityGuard) {
++        fs.unlinkSync(marker)
++        fs.fsyncSync(directory)
++      }
++      const closing = directory
++      directory = -1
++      fs.closeSync(closing)
++    } catch {
++      this.fail(operation, uncertain)
++    } finally {
++      // Never remove a pre-existing marker or temp file. An incomplete intent is
++      // deliberately retained for explicit owner recovery, including on startup.
++      for (const descriptor of [temporary, intent]) {
++        if (descriptor >= 0) {
++          try {
++            fs.closeSync(descriptor)
++          } catch { /* Process retirement owns a failed close. */ }
++        }
++      }
++      if (temporaryOwned) {
++        try {
++          fs.unlinkSync(temporaryFile)
++        } catch { /* Bounded, preserved crash evidence. */ }
++      }
++      if (directory >= 0) {
++        try {
++          fs.closeSync(directory)
++        } catch { /* Process retirement owns a failed close. */ }
++      }
++    }
+   }
+ 
+   /**
+diff --git a/src/lib/model/HAPFileStorageDurability.spec.ts b/src/lib/model/HAPFileStorageDurability.spec.ts
+new file mode 100644
+index 0000000..8a369ff
+--- /dev/null
++++ b/src/lib/model/HAPFileStorageDurability.spec.ts
+@@ -0,0 +1,326 @@
++import type { Mock } from 'vitest'
++
++import { Buffer } from 'node:buffer'
++import fs from 'node:fs'
++import os from 'node:os'
++import path from 'node:path'
++
++import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
++
++import { HAP_STORAGE_INTENT, HAPFileStorage } from './HAPFileStorage.js'
++import { HAPStorage } from './HAPStorage.js'
++import { HAPStorageError, HAPStorageFailureHandler } from './HAPStorageError.js'
++
++const descriptorName = (descriptor: number): string => fs.readlinkSync(`/proc/self/fd/${descriptor}`)
++
++describe('durable HAP intent boundary', () => {
++  let dir: string
++
++  beforeEach(() => {
++    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hap-durable-test-'))
++    fs.chmodSync(dir, 0o700)
++  })
++
++  afterEach(() => {
++    vi.restoreAllMocks()
++    fs.rmSync(dir, { recursive: true, force: true })
++  })
++
++  const guard = (handler: HAPStorageFailureHandler = vi.fn()): HAPFileStorage => {
++    const storage = new HAPFileStorage({ durabilityGuard: true, failureHandler: handler })
++    storage.initSync({ dir })
++    return storage
++  }
++  const initial = (): void => fs.writeFileSync(path.join(dir, 'key.json'), '{"old":true}', { mode: 0o600 })
++  const failAndCheck = (storage: HAPFileStorage, handler: Mock, uncertain: boolean): HAPStorageError => {
++    let failure: unknown
++    try {
++      storage.setItemSync('key.json', { new: true })
++    } catch (error) {
++      failure = error
++    }
++    expect(failure).toBeInstanceOf(HAPStorageError)
++    expect((failure as HAPStorageError).uncertain).toBe(uncertain)
++    expect(handler).toHaveBeenCalledTimes(1)
++    expect(handler).toHaveBeenCalledWith(failure)
++    expect(() => storage.getItem('key.json')).toThrow(failure as Error)
++    expect(() => storage.setItemSync('other.json', 1)).toThrow(failure as Error)
++    expect(() => storage.removeItemSync('key.json')).toThrow(failure as Error)
++    expect(handler).toHaveBeenCalledTimes(1)
++    return failure as HAPStorageError
++  }
++
++  it('confirms intent before target mutation and target durability before clearing intent', () => {
++    const storage = guard()
++    const events: string[] = []
++    const sync = fs.fsyncSync
++    const rename = fs.renameSync
++    const unlink = fs.unlinkSync
++    vi.spyOn(fs, 'fsyncSync').mockImplementation((fd) => {
++      const name = descriptorName(fd)
++      events.push(fs.fstatSync(fd).isDirectory()
++        ? 'dir'
++        : name.endsWith(HAP_STORAGE_INTENT)
++          ? 'intent'
++          : 'temp')
++      sync(fd)
++    })
++    vi.spyOn(fs, 'renameSync').mockImplementation((source, target) => {
++      events.push('rename')
++      rename(source, target)
++    })
++    vi.spyOn(fs, 'unlinkSync').mockImplementation((file) => {
++      events.push('clear')
++      unlink(file)
++    })
++    storage.setItemSync('key.json', { new: true })
++    expect(events).toEqual([
++      'intent',
++      'dir',
++      'temp',
++      'rename',
++      'dir',
++      'clear',
++      'dir',
++    ])
++    expect(fs.readFileSync(path.join(dir, 'key.json'), 'utf8')).toBe('{"new":true}')
++    expect(fs.readdirSync(dir)).toEqual(['key.json'])
++  })
++
++  it('creates target and intent privately even with a permissive umask', () => {
++    const mask = process.umask(0)
++    try {
++      const storage = guard()
++      const write = fs.writeSync
++      vi.spyOn(fs, 'writeSync').mockImplementation((fd, buffer, offset, length) => {
++        expect(fs.fstatSync(fd).mode & 0o777).toBe(0o600)
++        return write(fd, buffer as unknown as Buffer, offset as unknown as number, length as unknown as number)
++      })
++      storage.setItemSync('key.json', { new: true })
++      expect(fs.statSync(path.join(dir, 'key.json')).mode & 0o777).toBe(0o600)
++    } finally {
++      process.umask(mask)
++    }
++  })
++
++  it.each([1, 2])('preserves the old target and intent if pre-mutation fsync %d fails', (call) => {
++    initial()
++    const handler = vi.fn()
++    const storage = guard(handler)
++    const sync = fs.fsyncSync
++    let count = 0
++    vi.spyOn(fs, 'fsyncSync').mockImplementation((fd) => {
++      if (++count === call) {
++        throw new Error('private path must not escape')
++      }
++      sync(fd)
++    })
++    const failure = failAndCheck(storage, handler, false)
++    expect(failure.message).not.toContain('private path')
++    expect(fs.readFileSync(path.join(dir, 'key.json'), 'utf8')).toBe('{"old":true}')
++    expect(fs.existsSync(path.join(dir, HAP_STORAGE_INTENT))).toBe(true)
++  })
++
++  it('cleans only its own incomplete temp after a full-write failure', () => {
++    initial()
++    const handler = vi.fn()
++    const storage = guard(handler)
++    const write = fs.writeSync
++    vi.spyOn(fs, 'writeSync').mockImplementation((fd, buffer, offset, length) => {
++      if (descriptorName(fd).endsWith('.tmp')) {
++        throw new Error('disk full')
++      }
++      return write(fd, buffer as unknown as Buffer, offset as unknown as number, length as unknown as number)
++    })
++    failAndCheck(storage, handler, false)
++    expect(fs.readFileSync(path.join(dir, 'key.json'), 'utf8')).toBe('{"old":true}')
++    expect(fs.readdirSync(dir).sort()).toEqual([HAP_STORAGE_INTENT, 'key.json'].sort())
++  })
++
++  it('fully writes compact UTF-8 JSON despite short native writes', () => {
++    const storage = guard()
++    const write = fs.writeSync
++    vi.spyOn(fs, 'writeSync').mockImplementation((fd, buffer, offset, length) =>
++      write(fd, buffer as unknown as Buffer, offset as unknown as number, Math.min(3, length as unknown as number)),
++    )
++    storage.setItemSync('key.json', { label: 'café', pairedClients: {} })
++    expect(fs.readFileSync(path.join(dir, 'key.json'), 'utf8')).toBe(JSON.stringify({ label: 'café', pairedClients: {} }))
++    expect(fs.existsSync(path.join(dir, HAP_STORAGE_INTENT))).toBe(false)
++  })
++
++  it('bounds a zero-progress write and never mutates the old target', () => {
++    initial()
++    const handler = vi.fn()
++    const storage = guard(handler)
++    const write = fs.writeSync
++    vi.spyOn(fs, 'writeSync').mockImplementation((fd, buffer, offset, length) =>
++      descriptorName(fd).endsWith('.tmp')
++        ? 0
++        : write(fd, buffer as unknown as Buffer, offset as unknown as number, length as unknown as number),
++    )
++    failAndCheck(storage, handler, false)
++    expect(fs.readFileSync(path.join(dir, 'key.json'), 'utf8')).toBe('{"old":true}')
++  })
++
++  it('retains intent and old target when temp fsync fails', () => {
++    initial()
++    const handler = vi.fn()
++    const storage = guard(handler)
++    const sync = fs.fsyncSync
++    vi.spyOn(fs, 'fsyncSync').mockImplementation((fd) => {
++      if (descriptorName(fd).endsWith('.tmp')) {
++        throw new Error('sync')
++      }
++      sync(fd)
++    })
++    failAndCheck(storage, handler, false)
++    expect(fs.readFileSync(path.join(dir, 'key.json'), 'utf8')).toBe('{"old":true}')
++    expect(fs.existsSync(path.join(dir, HAP_STORAGE_INTENT))).toBe(true)
++  })
++
++  it('does not retry an ambiguous temp close or advance to rename', () => {
++    initial()
++    const handler = vi.fn()
++    const storage = guard(handler)
++    const close = fs.closeSync
++    let tempCloses = 0
++    vi.spyOn(fs, 'closeSync').mockImplementation((fd) => {
++      const temporary = descriptorName(fd).endsWith('.tmp')
++      close(fd)
++      if (temporary) {
++        tempCloses++
++        throw new Error('ambiguous close')
++      }
++    })
++    const rename = vi.spyOn(fs, 'renameSync')
++    failAndCheck(storage, handler, false)
++    expect(tempCloses).toBe(1)
++    expect(rename).not.toHaveBeenCalled()
++    expect(fs.readFileSync(path.join(dir, 'key.json'), 'utf8')).toBe('{"old":true}')
++  })
++
++  it('marks a failed target rename as uncertain and retains the durable intent', () => {
++    initial()
++    const handler = vi.fn()
++    const storage = guard(handler)
++    vi.spyOn(fs, 'renameSync').mockImplementation(() => {
++      throw new Error('rename')
++    })
++    failAndCheck(storage, handler, true)
++    expect(fs.readFileSync(path.join(dir, 'key.json'), 'utf8')).toBe('{"old":true}')
++    expect(fs.existsSync(path.join(dir, HAP_STORAGE_INTENT))).toBe(true)
++  })
++
++  it('keeps the new disk target but denies cached success when post-rename directory fsync fails', () => {
++    initial()
++    const handler = vi.fn()
++    const storage = guard(handler)
++    const sync = fs.fsyncSync
++    let directories = 0
++    vi.spyOn(fs, 'fsyncSync').mockImplementation((fd) => {
++      if (fs.fstatSync(fd).isDirectory() && ++directories === 2) {
++        throw new Error('directory sync')
++      }
++      sync(fd)
++    })
++    failAndCheck(storage, handler, true)
++    expect(fs.readFileSync(path.join(dir, 'key.json'), 'utf8')).toBe('{"new":true}')
++    expect(fs.existsSync(path.join(dir, HAP_STORAGE_INTENT))).toBe(true)
++  })
++
++  it.each(['unlink', 'sync'])('fails closed if intent-clear %s fails after the target is durable', (point) => {
++    const handler = vi.fn()
++    const storage = guard(handler)
++    const sync = fs.fsyncSync
++    if (point === 'unlink') {
++      vi.spyOn(fs, 'unlinkSync').mockImplementation(() => {
++        throw new Error('unlink')
++      })
++    } else {
++      let directories = 0
++      vi.spyOn(fs, 'fsyncSync').mockImplementation((fd) => {
++        if (fs.fstatSync(fd).isDirectory() && ++directories === 3) {
++          throw new Error('clear sync')
++        }
++        sync(fd)
++      })
++    }
++    failAndCheck(storage, handler, true)
++    expect(fs.readFileSync(path.join(dir, 'key.json'), 'utf8')).toBe('{"new":true}')
++    expect(fs.existsSync(path.join(dir, HAP_STORAGE_INTENT))).toBe(point === 'unlink')
++  })
++
++  it('retains a removal intent when directory durability is uncertain and refuses startup', () => {
++    initial()
++    const handler = vi.fn()
++    const storage = guard(handler)
++    const sync = fs.fsyncSync
++    let directories = 0
++    vi.spyOn(fs, 'fsyncSync').mockImplementation((fd) => {
++      if (fs.fstatSync(fd).isDirectory() && ++directories === 2) {
++        throw new Error('remove sync')
++      }
++      sync(fd)
++    })
++    expect(() => storage.removeItemSync('key.json')).toThrow(HAPStorageError)
++    expect(fs.existsSync(path.join(dir, 'key.json'))).toBe(false)
++    expect(fs.existsSync(path.join(dir, HAP_STORAGE_INTENT))).toBe(true)
++    vi.restoreAllMocks()
++    const onFailure = vi.fn()
++    expect(() => new HAPFileStorage({ durabilityGuard: true, failureHandler: onFailure }).initSync({ dir })).toThrow(HAPStorageError)
++    expect(onFailure).toHaveBeenCalledWith(expect.objectContaining({ operation: 'initialize', uncertain: true }))
++  })
++
++  it('does not follow or delete a pre-existing intent or temporary symlink', () => {
++    const victim = path.join(dir, 'victim.json')
++    fs.writeFileSync(victim, 'original')
++    fs.symlinkSync(victim, path.join(dir, HAP_STORAGE_INTENT))
++    expect(() => guard()).toThrow(HAPStorageError)
++    expect(fs.readFileSync(victim, 'utf8')).toBe('original')
++    fs.unlinkSync(path.join(dir, HAP_STORAGE_INTENT))
++    const storage = guard()
++    const temporary = path.join(dir, `.key.json.${process.pid}.tmp`)
++    fs.symlinkSync(victim, temporary)
++    expect(() => storage.setItemSync('key.json', 1)).toThrow(HAPStorageError)
++    expect(fs.lstatSync(temporary).isSymbolicLink()).toBe(true)
++    expect(fs.readFileSync(victim, 'utf8')).toBe('original')
++  })
++
++  it('removes one target durably without rewriting another raw JSON record', () => {
++    initial()
++    const storage = guard()
++    const other = path.join(dir, 'other.json')
++    fs.writeFileSync(other, '{"pairedClients":{}}')
++    storage.removeItemSync('key.json')
++    expect(fs.readFileSync(other, 'utf8')).toBe('{"pairedClients":{}}')
++    expect(fs.existsSync(path.join(dir, HAP_STORAGE_INTENT))).toBe(false)
++    expect(storage.getItem('key.json')).toBeUndefined()
++  })
++
++  it('keeps the original typed latch when the consumer\'s fatal callback throws', () => {
++    const storage = guard(() => {
++      throw new Error('consumer')
++    })
++    vi.spyOn(fs, 'renameSync').mockImplementation(() => {
++      throw new Error('disk')
++    })
++    expect(() => storage.setItemSync('key.json', 1)).toThrow(HAPStorageError)
++    expect(() => storage.getItem('key.json')).toThrow(HAPStorageError)
++  })
++
++  it('configures the public singleton boundary before initialization and forbids late changes', () => {
++    const storage = new HAPStorage()
++    const handler = vi.fn()
++    storage.setFailureHandler(handler)
++    storage.setDurabilityGuard(true)
++    storage.setCustomStoragePath(dir)
++    const local = storage.storage()
++    expect(() => storage.setDurabilityGuard(false)).toThrow()
++    expect(() => storage.setFailureHandler(vi.fn())).toThrow()
++    vi.spyOn(fs, 'renameSync').mockImplementation(() => {
++      throw new Error('disk')
++    })
++    expect(() => local.setItemSync('key.json', 1)).toThrow(HAPStorageError)
++    expect(handler).toHaveBeenCalledTimes(1)
++  })
++})
+diff --git a/src/lib/model/HAPStorage.ts b/src/lib/model/HAPStorage.ts
+index e25beea..c204a8e 100644
+--- a/src/lib/model/HAPStorage.ts
++++ b/src/lib/model/HAPStorage.ts
+@@ -2,6 +2,7 @@
+ import { accessSync, constants } from 'node:fs'
+ 
+ import { HAPFileStorage } from './HAPFileStorage.js'
++import { HAPStorageFailureHandler } from './HAPStorageError.js'
+ 
+ /**
+  * @group Model
+@@ -11,6 +12,32 @@ export class HAPStorage {
+ 
+   private localStore?: HAPFileStorage
+   private customStoragePath?: string
++  private failureHandler?: HAPStorageFailureHandler
++  private durabilityGuard = false
++
++  /** Configure before the first storage/model access; the handler must retire cached authority synchronously. */
++  public static setFailureHandler(handler: HAPStorageFailureHandler): void {
++    this.INSTANCE.setFailureHandler(handler)
++  }
++
++  /** Opt in only with exclusive directory ownership. Confirm an intent before every target mutation. */
++  public static setDurabilityGuard(enabled: boolean): void {
++    this.INSTANCE.setDurabilityGuard(enabled)
++  }
++
++  public setFailureHandler(handler: HAPStorageFailureHandler): void {
++    if (this.localStore || typeof handler !== 'function') {
++      throw new Error('Configure a HAP storage failure handler before storage initialization')
++    }
++    this.failureHandler = handler
++  }
++
++  public setDurabilityGuard(enabled: boolean): void {
++    if (this.localStore || typeof enabled !== 'boolean') {
++      throw new Error('Configure the HAP storage durability guard before storage initialization')
++    }
++    this.durabilityGuard = enabled
++  }
+ 
+   public static storage(): HAPFileStorage {
+     return this.INSTANCE.storage()
+@@ -22,7 +49,7 @@ export class HAPStorage {
+ 
+   public storage(): HAPFileStorage {
+     if (!this.localStore) {
+-      this.localStore = new HAPFileStorage()
++      this.localStore = new HAPFileStorage({ failureHandler: this.failureHandler, durabilityGuard: this.durabilityGuard })
+ 
+       if (this.customStoragePath) {
+         this.localStore.initSync({
+diff --git a/src/lib/model/HAPStorageError.ts b/src/lib/model/HAPStorageError.ts
+new file mode 100644
+index 0000000..ad438af
+--- /dev/null
++++ b/src/lib/model/HAPStorageError.ts
+@@ -0,0 +1,16 @@
++/** @group Model */
++export type HAPStorageFailureOperation = 'initialize' | 'write' | 'remove'
++
++/** A latched persistence failure. Callers must retire cached model authority. @group Model */
++export class HAPStorageError extends Error {
++  readonly code: 'storage-failed' | 'storage-uncertain'
++
++  constructor(readonly operation: HAPStorageFailureOperation, readonly uncertain: boolean) {
++    super(uncertain ? 'HAP storage commit is uncertain; owner recovery is required' : 'HAP storage failed; owner recovery is required')
++    this.name = 'HAPStorageError'
++    this.code = uncertain ? 'storage-uncertain' : 'storage-failed'
++  }
++}
++
++/** Runs synchronously once, before a failed mutation throws. Never log stored data. @group Model */
++export type HAPStorageFailureHandler = (failure: HAPStorageError) => void
+diff --git a/src/lib/Accessory.ts b/src/lib/Accessory.ts
+--- a/src/lib/Accessory.ts
++++ b/src/lib/Accessory.ts
+@@ -2011,6 +2011,8 @@
+       const uuid = change.characteristic.UUID
+       const immediateDelivery = uuid === Characteristic.ButtonEvent.UUID || uuid === Characteristic.ProgrammableSwitchEvent.UUID
+         || uuid === Characteristic.MotionDetected.UUID || uuid === Characteristic.ContactSensorState.UUID
++        // Security-system transitions must not wait behind ordinary status batching.
++        || uuid === Characteristic.SecuritySystemCurrentState.UUID
+ 
+       const value = formatOutgoingCharacteristicValue(change.newValue, change.characteristic.props)
+       this._server.sendEventNotifications(accessory.aid, change.characteristic.iid, value, change.originator, immediateDelivery)

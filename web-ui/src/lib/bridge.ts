@@ -35,6 +35,8 @@ export function validBridgeRuntime(value: unknown): value is BridgeRuntime {
     ['disabled', 'starting', 'ready', 'offline', 'error', 'reset_pending'].includes(
       runtime.state,
     ) &&
+    (runtime.alarm_events_pending === undefined || count(runtime.alarm_events_pending)) &&
+    (runtime.alarm_events_dropped === undefined || count(runtime.alarm_events_dropped)) &&
     optionalText(runtime.reason) &&
     optionalText(runtime.boot_id) &&
     typeof runtime.published === 'boolean' &&

@@ -186,8 +186,8 @@ test('missing modes and phases remain unknown rather than appearing disarmed', (
   assert.equal(alarmModeLabel('disarmed'), 'Disarmed');
   assert.equal(alarmPhaseLabel(null), 'Unknown');
   assert.equal(alarmPhaseLabel('unrecognized'), 'Unknown');
-  assert.equal(alarmPhaseLabel('entry-delay'), 'Entry delay');
-  assert.equal(alarmPhaseLabel('exit-delay'), 'Exit delay');
+  assert.equal(alarmPhaseLabel('entry-delay'), 'Entry countdown');
+  assert.equal(alarmPhaseLabel('exit-delay'), 'Exit countdown (arming)');
   assert.equal(alarmPhaseLabel('alarming'), 'Alarm triggered');
   assert.equal(alarmSignalLabel(null), 'Unknown');
   assert.equal(alarmSignalLabel('unrecognized'), 'Unknown');
@@ -240,4 +240,12 @@ test('uncertain receipt recovery requires a newer fresh permitted observation an
       ),
       false,
     );
+});
+
+test('alarm phases distinguish stable modes and countdowns from a triggered alarm', () => {
+  assert.equal(alarmPhaseLabel('idle'), 'Stable');
+  assert.equal(alarmPhaseLabel('exit-delay'), 'Exit countdown (arming)');
+  assert.equal(alarmPhaseLabel('entry-delay'), 'Entry countdown');
+  assert.equal(alarmPhaseLabel('alarming'), 'Alarm triggered');
+  assert.equal(alarmPhaseLabel(null), 'Unknown');
 });
