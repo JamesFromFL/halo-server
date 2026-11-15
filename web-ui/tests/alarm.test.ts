@@ -9,6 +9,7 @@ import {
   alarmPhaseLabel,
   alarmPolicyBody,
   alarmSignalLabel,
+  alarmTargetBlockers,
   alarmUnsettled,
   validAlarm,
 } from '../src/lib/alarm.ts';
@@ -102,6 +103,44 @@ test('alarm DTO is additive and requires a real panel with complete guarded stat
     validNoncamera({ ...monitoring, safety: { ...monitoring.safety, panic_enabled: true } }),
     false,
   );
+});
+
+test('target blockers explain unavailable modes using only known reason labels', () => {
+  const restricted: AlarmState = {
+    ...alarm,
+    allowed_targets: ['disarmed'],
+    target_reasons: { home: 'sensors-require-bypass', away: 'faulted-device-list-unknown' },
+  };
+  assert.equal(validAlarm(restricted), true);
+  assert.deepEqual(alarmTargetBlockers(restricted), [
+    {
+      mode: 'Home',
+      message: 'A sensor reports a fault. Check the sensors in Ring; Halo does not bypass them.',
+    },
+    {
+      mode: 'Away',
+      message:
+        'Halo cannot confirm that every required sensor is clear. Check for unavailable or unrecognized sensors in the device list and Ring app.',
+    },
+  ]);
+  assert.deepEqual(alarmTargetBlockers(alarm), []);
+  const older = { ...restricted, target_reasons: undefined };
+  assert.equal(validAlarm(older), true);
+  assert.equal(alarmTargetBlockers(older).length, 2);
+  for (const target_reasons of [
+    null,
+    [],
+    { panic: 'command-pending' },
+    { home: 'untrusted private text' },
+    { home: 'constructor' },
+    { home: 'unknown-reason' },
+    { home: null },
+    { disarmed: 'command-pending' },
+  ]) {
+    const invalid = { ...restricted, target_reasons };
+    assert.equal(validAlarm(invalid), false);
+    assert.deepEqual(alarmTargetBlockers(invalid as AlarmState), []);
+  }
 });
 
 test('alarm policy changes are per location and carry only account and policy CAS', () => {

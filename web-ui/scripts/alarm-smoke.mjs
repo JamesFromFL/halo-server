@@ -380,7 +380,35 @@ try {
   checks.push(
     'target-specific restrictions retain only allowed normal modes and explain availability',
   );
+  alarm.reason = null;
+  for (const [reason, message] of [
+    [
+      'sensors-require-bypass',
+      'A sensor reports a fault. Check the sensors in Ring; Halo does not bypass them.',
+    ],
+    [
+      'faulted-device-list-unknown',
+      'Halo cannot confirm that every required sensor is clear. Check for unavailable or unrecognized sensors in the device list and Ring app.',
+    ],
+  ]) {
+    alarm.target_reasons = { home: reason, away: reason };
+    publish();
+    await page.getByText(`Home unavailable: ${message}`, { exact: true }).waitFor();
+    await page.getByText(`Away unavailable: ${message}`, { exact: true }).waitFor();
+    assert.equal(await home.isDisabled(), true);
+    assert.equal(
+      await page.getByRole('button', { name: 'Arm Away', exact: true }).isDisabled(),
+      true,
+    );
+    assert.equal(
+      await page.getByRole('button', { name: 'Disarm', exact: true }).isDisabled(),
+      false,
+    );
+    assert.equal(modeWrites.length, 1);
+  }
+  checks.push('blocked Home and Away show exact fault-evidence reasons without sending commands');
   alarm.allowed_targets = ['disarmed', 'home', 'away'];
+  alarm.target_reasons = {};
   alarm.reason = null;
 
   for (const authorization of ['denied', 'unknown']) {

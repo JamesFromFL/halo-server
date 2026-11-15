@@ -28,6 +28,31 @@ PHASES = frozenset({"idle", "entry-delay", "exit-delay", "alarming"})
 SIGNALS = frozenset(
     {"none", "burglar", "fire", "carbon-monoxide", "fire-or-carbon-monoxide", "panic"}
 )
+TARGET_REASONS = frozenset(
+    {
+        "source-unavailable",
+        "connection-superseded",
+        "panel-offline",
+        "multiple-panels",
+        "control-unavailable",
+        "panel-asset-unsupported",
+        "panel-stale",
+        "outcome-unknown",
+        "transition-active",
+        "sensors-require-bypass",
+        "faulted-device-list-unknown",
+        "command-pending",
+        "authorization-denied",
+        "authorization-unknown",
+        "cellular-backup",
+        "panel-inventory-incomplete",
+        "life-safety-active",
+        "mode-unknown",
+        "alarm-active",
+        "panel-state-unknown",
+        "faulted-device-list-invalid",
+    }
+)
 POLICY_FIELDS = frozenset(
     {"profile_id", "account_generation", "location_id", "expected_revision", "enabled"}
 )
@@ -125,10 +150,23 @@ class AlarmCoordinator:
                     for target in row["allowed_targets"]
                 )
                 or len(set(row["allowed_targets"])) != len(row["allowed_targets"])
+                or "target_reasons" in row
+                and (
+                    not isinstance(row["target_reasons"], dict)
+                    or len(row["target_reasons"]) > 3
+                    or any(
+                        target not in MODES
+                        or target in row["allowed_targets"]
+                        or not isinstance(reason, str)
+                        or reason not in TARGET_REASONS
+                        for target, reason in row["target_reasons"].items()
+                    )
+                )
             ):
                 self._revoke_source()
                 return
             indexed[row["device_id"]] = dict(row)
+            indexed[row["device_id"]]["target_reasons"] = dict(row.get("target_reasons", {}))
         if not indexed or any(
             identity not in indexed
             or indexed[identity]["epoch"] != old["epoch"]
@@ -255,6 +293,7 @@ class AlarmCoordinator:
             "authorization": source.get("authorization", "unknown") if current else "unknown",
             "can_set_mode": can_set,
             "allowed_targets": list(source["allowed_targets"]) if can_set else [],
+            "target_reasons": dict(source.get("target_reasons", {})) if current and fresh else {},
             "reason": reason,
             "pending": bool(pending or current and source.get("pending")),
             "outcome_unknown": bool(uncertain or current and source.get("outcome_unknown")),

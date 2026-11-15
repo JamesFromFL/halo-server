@@ -5,6 +5,31 @@ export const alarmModes: Record<AlarmMode, string> = {
   home: 'Home',
   away: 'Away',
 };
+const targetReasonLabels: Record<string, string> = {
+  'source-unavailable': 'Ring device monitoring is unavailable.',
+  'connection-superseded': 'The Ring connection changed. Wait for fresh observations.',
+  'panel-offline': 'The alarm panel is offline.',
+  'multiple-panels': 'Halo cannot identify one current alarm panel for this location.',
+  'control-unavailable': 'Ring alarm controls are currently unavailable.',
+  'panel-asset-unsupported': 'This alarm panel connection does not support mode controls.',
+  'panel-stale': 'Halo is waiting for fresh alarm panel observations.',
+  'outcome-unknown': 'The previous command’s outcome is uncertain. Check the observed state.',
+  'transition-active': 'An entry or exit countdown is in progress.',
+  'sensors-require-bypass':
+    'A sensor reports a fault. Check the sensors in Ring; Halo does not bypass them.',
+  'faulted-device-list-unknown':
+    'Halo cannot confirm that every required sensor is clear. Check for unavailable or unrecognized sensors in the device list and Ring app.',
+  'command-pending': 'Another alarm command is waiting for confirmation.',
+  'authorization-denied': 'Ring has denied alarm control for this account.',
+  'authorization-unknown': 'Ring account authority has not been verified.',
+  'cellular-backup': 'The alarm base station is using cellular backup.',
+  'panel-inventory-incomplete': 'Halo is waiting for a complete alarm device inventory.',
+  'life-safety-active': 'A smoke or carbon monoxide alarm is active.',
+  'mode-unknown': 'The current alarm mode has not been confirmed.',
+  'alarm-active': 'An alarm is currently active.',
+  'panel-state-unknown': 'The current alarm phase or signal has not been confirmed.',
+  'faulted-device-list-invalid': 'Ring supplied fault information that Halo could not validate.',
+};
 const count = (value: unknown) =>
   typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
 const mode = (value: unknown) =>
@@ -28,11 +53,35 @@ export function validAlarm(value: unknown): value is AlarmState {
     alarm.allowed_targets.length <= 3 &&
     new Set(alarm.allowed_targets).size === alarm.allowed_targets.length &&
     alarm.allowed_targets.every((target) => target !== null && mode(target)) &&
+    (alarm.target_reasons === undefined ||
+      (alarm.target_reasons !== null &&
+        typeof alarm.target_reasons === 'object' &&
+        !Array.isArray(alarm.target_reasons) &&
+        Object.keys(alarm.target_reasons).length <= 3 &&
+        Object.entries(alarm.target_reasons).every(
+          ([target, reason]) =>
+            Object.hasOwn(alarmModes, target) &&
+            !alarm.allowed_targets.includes(target as AlarmMode) &&
+            typeof reason === 'string' &&
+            Object.hasOwn(targetReasonLabels, reason),
+        ))) &&
     text(alarm.phase) &&
     text(alarm.signal) &&
     text(alarm.reason) &&
     ['allowed', 'denied', 'unknown'].includes(alarm.authorization)
   );
+}
+
+export function alarmTargetBlockers(alarm: AlarmState): { mode: string; message: string }[] {
+  if (!validAlarm(alarm)) return [];
+  return Object.entries(alarmModes)
+    .filter(([target]) => !alarm.allowed_targets.includes(target as AlarmMode))
+    .map(([target, label]) => ({
+      mode: label,
+      message:
+        targetReasonLabels[alarm.target_reasons?.[target as AlarmMode] ?? ''] ??
+        'This mode is currently unavailable. Refresh the alarm state for details.',
+    }));
 }
 
 function scopedAlarm(monitoring: NoncameraState, device: NoncameraDevice) {

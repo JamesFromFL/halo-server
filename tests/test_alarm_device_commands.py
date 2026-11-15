@@ -790,3 +790,145 @@ async def test_optional_fault_list_requires_fresh_fault_receipt_not_battery_refr
         assert not transport.sent
     finally:
         await instance.close()
+
+
+def administrative_record(raw_type="access-code", **fields):
+    return DeviceDocument(
+        "administrative", {"zid": "administrative", "deviceType": raw_type, **fields}
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("raw_type", ["access-code", "access-code.vault"])
+@pytest.mark.parametrize(
+    "fields", [{}, {"batteryLevel": 100, "acStatus": "ok", "tamperStatus": "ok"}]
+)
+async def test_administrative_inventory_records_do_not_block_clear_sensor_evidence(
+    raw_type, fields
+):
+    instance = await setup()
+    transport = instance._runtimes["home"].transport
+    try:
+        await transport.message(
+            DeviceInfoDocList(
+                "asset",
+                (panel(alarmInfo=None), sensor(), administrative_record(raw_type, **fields)),
+            )
+        )
+        state = snapshot(instance)
+        assert state["allowed_targets"] == ["disarmed", "home", "away"]
+        assert state["target_reasons"] == {}
+        assert state["can_set_mode"] is True
+        assert not transport.sent  # Observation/eligibility only; no command, even to the mock.
+    finally:
+        await instance.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("raw_type", ["access-code", "access-code.vault"])
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"faulted": False},
+        {"bypassed": False},
+        {"bypassStatus": "none"},
+        {"motionStatus": "clear"},
+        {"smoke": {"alarmStatus": "inactive"}},
+        {"co": {"alarmStatus": "inactive"}},
+        {"flood": {"faulted": False}},
+        {"freeze": {"faulted": False}},
+        {"locked": "locked"},
+        {"mode": "none"},
+        {"siren": {"state": "off"}},
+        {"on": False},
+        {"valveState": "closed"},
+        {"celsius": 20},
+        {"categoryId": 10},
+    ],
+)
+async def test_administrative_type_cannot_hide_sensor_or_actuator_schema(raw_type, fields):
+    instance = await setup()
+    transport = instance._runtimes["home"].transport
+    try:
+        await transport.message(
+            DeviceInfoDocList(
+                "asset",
+                (panel(alarmInfo=None), sensor(), administrative_record(raw_type, **fields)),
+            )
+        )
+        state = snapshot(instance)
+        assert state["allowed_targets"] == ["disarmed"]
+        assert state["target_reasons"] == {
+            "home": "faulted-device-list-unknown",
+            "away": "faulted-device-list-unknown",
+        }
+        assert not transport.sent
+    finally:
+        await instance.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("raw_type", ["future-sensor", "access-code.future", "vendor.access-code"])
+async def test_administrative_exemption_does_not_expand_to_unrecognized_types(raw_type):
+    instance = await setup()
+    transport = instance._runtimes["home"].transport
+    try:
+        await transport.message(
+            DeviceInfoDocList(
+                "asset", (panel(alarmInfo=None), sensor(), administrative_record(raw_type))
+            )
+        )
+        assert snapshot(instance)["allowed_targets"] == ["disarmed"]
+        assert snapshot(instance)["target_reasons"]["away"] == "faulted-device-list-unknown"
+        assert not transport.sent
+    finally:
+        await instance.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "sensors,expected",
+    [
+        ((), "faulted-device-list-unknown"),
+        ((sensor(faulted=True),), "sensors-require-bypass"),
+        ((sensor(faulted=None),), "faulted-device-list-unknown"),
+        ((sensor(comm="down"),), "faulted-device-list-unknown"),
+    ],
+)
+async def test_administrative_records_do_not_relax_real_sensor_guards(sensors, expected):
+    instance = await setup()
+    transport = instance._runtimes["home"].transport
+    try:
+        await transport.message(
+            DeviceInfoDocList("asset", (panel(alarmInfo=None), *sensors, administrative_record()))
+        )
+        state = snapshot(instance)
+        assert state["can_set_mode"] is True  # Disarming remains possible.
+        assert state["reason"] is None
+        assert state["allowed_targets"] == ["disarmed"]
+        assert state["target_reasons"] == {"home": expected, "away": expected}
+        assert not transport.sent
+    finally:
+        await instance.close()
+
+
+@pytest.mark.asyncio
+async def test_administrative_records_cannot_refresh_stale_sensor_fault_receipts():
+    now = [100.0]
+    instance = await setup(clock=lambda: now[0])
+    transport = instance._runtimes["home"].transport
+    try:
+        await transport.message(
+            DeviceInfoDocList("asset", (panel(alarmInfo=None), sensor(), administrative_record()))
+        )
+        assert snapshot(instance)["allowed_targets"] == ["disarmed", "home", "away"]
+        now[0] += 121
+        await transport.message(
+            DeviceInfoDocUpdate("asset", (administrative_record(tamperStatus="ok"),))
+        )
+        state = snapshot(instance)
+        assert state["allowed_targets"] == ["disarmed"]
+        assert state["target_reasons"]["home"] == "faulted-device-list-unknown"
+        assert not transport.sent
+    finally:
+        await instance.close()

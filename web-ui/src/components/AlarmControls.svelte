@@ -11,6 +11,7 @@
     alarmPhaseLabel,
     alarmPolicyBody,
     alarmSignalLabel,
+    alarmTargetBlockers,
     alarmUnsettled,
   } from '../lib/alarm.ts';
   import type { AlarmMode, NoncameraDevice, NoncameraState, Operation } from '../lib/types.ts';
@@ -67,6 +68,7 @@
       alarm.authorization,
       alarm.can_set_mode,
       alarm.allowed_targets,
+      alarm.target_reasons,
       alarm.pending,
       fresh,
       device.source_health,
@@ -205,7 +207,7 @@
     </Row>
     <Row
       title="Available modes"
-      subtitle="Ring may restrict which normal modes can be requested right now."
+      subtitle="Current Ring observations and Halo’s safety checks determine which modes are available."
     >
       <span
         >{current && alarm.allowed_targets.length
@@ -259,6 +261,11 @@
   {#if current && alarm.reason}<p class="inline-note">
       Control availability: {alarm.reason.replaceAll('-', ' ').replaceAll('_', ' ')}.
     </p>{/if}
+  {#if current && alarm.enabled && !alarm.pending && !alarm.outcome_unknown && !alarm.reason}
+    {#each alarmTargetBlockers(alarm) as blocker}
+      <p class="inline-note"><strong>{blocker.mode} unavailable:</strong> {blocker.message}</p>
+    {/each}
+  {/if}
   <div class="actions alarm-actions" aria-label="Normal alarm modes">
     {#each Object.entries(alarmModes) as [target, label]}
       <button

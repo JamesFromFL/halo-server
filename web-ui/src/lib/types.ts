@@ -113,6 +113,7 @@ export interface AlarmState {
   authorization: 'allowed' | 'denied' | 'unknown';
   can_set_mode: boolean;
   allowed_targets: AlarmMode[];
+  target_reasons?: Partial<Record<AlarmMode, string>>;
   reason: string | null;
   pending: boolean;
   outcome_unknown: boolean;

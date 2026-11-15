@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "source_hash": "4cab3cc08ac18f5f86c49743fffff7bf87ecf2cd4c71f8bee009b1d28871cccc",
+  "source_hash": "7a69c977e69662ac95d39143774215e27f852dc1cb7298c339b09248f2166599",
   "source_files": [
     {
       "path": ".prettierignore",
@@ -36,7 +36,7 @@
     },
     {
       "path": "scripts/alarm-smoke.mjs",
-      "sha256": "3e46560a4a5fc83ef49cfc3f97e6a033b702d5de1cd8c3b17bc6dbd2f37aedc2"
+      "sha256": "624a9e78e7d09a5da58cb262c2f214a1427be0527065bf9102857153e0de77be"
     },
     {
       "path": "scripts/bridge-homekit-smoke.mjs",
@@ -100,7 +100,7 @@
     },
     {
       "path": "src/components/AlarmControls.svelte",
-      "sha256": "71c5f6eafe01c98e2ffcba0a02000cbc7eae9d65bf6a074a77cfbf4a95d7ea58"
+      "sha256": "765fbac6af9c873bf5d236989fa63f4f19bb6446606e5621f615ed0263168119"
     },
     {
       "path": "src/components/BridgeHomeKit.svelte",
@@ -148,7 +148,7 @@
     },
     {
       "path": "src/lib/alarm.ts",
-      "sha256": "b77ef069303a41a1e5997ceac83b52e805dc3bbc5a140c96ffe617d7d8c2ec04"
+      "sha256": "633df6fba636d71b90f3ecc6f939b62e05a133ac4c9cbf829acca2b450e86e94"
     },
     {
       "path": "src/lib/api.ts",
@@ -188,7 +188,7 @@
     },
     {
       "path": "src/lib/types.ts",
-      "sha256": "94c589eea41cea04c7fd8b179c06243072af8d42ceee3a0e571b53dece224432"
+      "sha256": "2df78eda0989571bc20721150674a0ac58505d24124b731c1c38b5bafc2a7513"
     },
     {
       "path": "src/main.ts",
@@ -232,7 +232,7 @@
     },
     {
       "path": "tests/alarm.test.ts",
-      "sha256": "8a9a2c27ea8787ba7ca9acebaffb011d3b241578339cd03783ac34699f6663d7"
+      "sha256": "808eef7e9f998b04ce06145450d2c5d68596446cb8efafe0782ef24d9d705535"
     },
     {
       "path": "tests/api.test.ts",
@@ -285,8 +285,8 @@
       "sha256": "74c07fd75608d0526505de5411debfe75ff1470d48bf57dcd3da8b5e31b92ff0"
     },
     {
-      "path": "assets/index-DDRleA36.js",
-      "sha256": "894b69e49b5b174776641cca262235420eee54d7ab41980eaef90beab46c66eb"
+      "path": "assets/index-C6VZQcsw.js",
+      "sha256": "bee66cfef00690513f31c7f73954b1442863d5c965fff2cfeb4f7a77cc817f1f"
     },
     {
       "path": "halo.png",
@@ -294,7 +294,7 @@
     },
     {
       "path": "index.html",
-      "sha256": "869af4ebdfea99af5aa8996b295e56970aba2b5211d5878bad5b513be63d911c"
+      "sha256": "7e75953958c2c8f0351419d8cb44b31a024f2bf2721f21dce7530371cca99d78"
     }
   ]
 }

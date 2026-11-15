@@ -27,6 +27,13 @@ from halo_server.ring.hub.provider import AlarmCommandSupersededError
 
 _MODES = (AlarmMode.DISARMED, AlarmMode.HOME, AlarmMode.AWAY)
 _WIRE_MODES = {AlarmMode.DISARMED: "none", AlarmMode.HOME: "some", AlarmMode.AWAY: "all"}
+# Ring inventories include credential-management records alongside physical
+# sensors. Homebridge also excludes these exact types from accessory handling.
+# Only their diagnostic-only shape may be ignored by the sensor safety check.
+_ADMINISTRATIVE_TYPES = frozenset({"access-code", "access-code.vault"})
+_ADMINISTRATIVE_CAPABILITIES = frozenset(
+    {AlarmCapability.BATTERY, AlarmCapability.AC_POWER, AlarmCapability.TAMPER}
+)
 _BYPASS_KINDS = frozenset(
     {
         AlarmDeviceKind.CONTACT_SENSOR,
@@ -133,6 +140,13 @@ class AlarmCommands:
         """Missing optional fault list is safe only with complete sensor evidence."""
         sensors = []
         for device in asset.devices:
+            if device.raw_type in _ADMINISTRATIVE_TYPES:
+                if (
+                    device.kind is AlarmDeviceKind.UNKNOWN
+                    and device.capabilities <= _ADMINISTRATIVE_CAPABILITIES
+                ):
+                    continue
+                return "faulted-device-list-unknown"
             if device.kind is AlarmDeviceKind.UNKNOWN:
                 return "faulted-device-list-unknown"
             if AlarmCapability.BYPASS not in device.capabilities:
@@ -178,6 +192,10 @@ class AlarmCommands:
                 reason = self._reason(location, panel)
                 if pending:
                     reason = "command-pending"
+                target_reasons = {
+                    str(mode): "command-pending" if pending else self._reason(location, panel, mode)
+                    for mode in _MODES
+                }
                 output.append(
                     {
                         "device_id": identity.key,
@@ -197,10 +215,13 @@ class AlarmCommands:
                         "can_set_mode": reason is None,
                         "reason": reason,
                         "allowed_targets": [
-                            str(mode)
-                            for mode in _MODES
-                            if not pending and self._reason(location, panel, mode) is None
+                            target for target, blocked in target_reasons.items() if blocked is None
                         ],
+                        "target_reasons": {
+                            target: blocked
+                            for target, blocked in target_reasons.items()
+                            if blocked is not None
+                        },
                         "pending": pending is not None,
                         "outcome_unknown": location.location_id in self._uncertain,
                         "requested_mode": str(pending.target) if pending else None,
