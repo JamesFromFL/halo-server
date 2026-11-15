@@ -55,8 +55,12 @@ and surfaced in the bridge UI.
 History is fenced by account, provider binding, source epoch, selected graph,
 accessory identity and adapter boot. Admission rechecks these and expiry at the
 actual IPC send. One location's reconnect does not discard another location's
-valid events. Historical observations cannot grant alarm-control authority and
-never replace the current snapshot used to admit a command. Repeated identical
+valid events. Historical observations carry only mode and trigger values. Control permission
+always comes from the current policy/source snapshot, and history never replaces
+the current snapshot used to admit a new command. Temporarily forcing permission
+off would incorrectly revoke a pending normal command when its readback arrived;
+the final implementation preserves that live permission without restoring an old
+grant. Repeated identical
 observations do not produce repeated alarm events. Retired history is not replayed
 on startup or reconnection.
 

@@ -131,7 +131,7 @@ class DevicePublisher:
             alarm = child["alarm"]
             state = (alarm["mode"], alarm["triggered"])
             seen[identity] = (fence, state)
-            observations[identity] = {**alarm, "control_enabled": False}
+            observations[identity] = {"mode": alarm["mode"], "triggered": alarm["triggered"]}
             previous = self._alarm_seen.get(identity)
             if previous is not None and previous[0] == fence and previous[1] != state:
                 changed = True
@@ -176,11 +176,16 @@ class DevicePublisher:
                 continue
             # Keep every panel at the same observed instant, including multiple
             # locations. Using another panel's latest value would reorder its
-            # transitions. History cannot grant alarm control authority or
-            # replace the latest snapshot used to admit a HomeKit command.
+            # transitions. Only observed mode/trigger are historical; authority
+            # always comes from the current snapshot. Artificially disabling it
+            # here would revoke an in-flight command's own readback. New commands
+            # from this historical sequence cannot match _last_snapshot.
             for child in snapshot["children"]:
                 if child["device_id"] in fences:
-                    child["alarm"] = deepcopy(observations[child["device_id"]])
+                    child["alarm"] = {
+                        **child["alarm"],
+                        **deepcopy(observations[child["device_id"]]),
+                    }
             self._sequence += 1
             snapshot["sequence"] = self._sequence
             return snapshot, fences, expires
@@ -375,7 +380,10 @@ class DevicePublisher:
                     }
                     if admitted() and expires > time.monotonic() and 0 < len(valid) < len(fences):
                         observations = {
-                            child["device_id"]: child["alarm"]
+                            child["device_id"]: {
+                                "mode": child["alarm"]["mode"],
+                                "triggered": child["alarm"]["triggered"],
+                            }
                             for child in event_snapshot["children"]
                             if child["device_id"] in valid
                         }
