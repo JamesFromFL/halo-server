@@ -46,3 +46,33 @@ arm, disarm, siren, panic, bypass, synthetic production alarm event or phone-ale
 test is part of this work. Real state changes remain for the owner to test.
 
 Qualification and passive deployment results will be appended after completion.
+
+## Installed result
+
+Source `7510fe29777b8f7fc27021d267961f8ac4d16c90` is deployed as release
+`ac738b2d7a522e53f4a23fa53ed239d748d7d2ab807e96a7cd43c5f05480d164`, selection
+revision 27. Fresh qualification passed 162 focused source tests, 1,092 installed
+Python tests with zero failures/skips, 328 adapter tests, and 64 frontend tests.
+Chromium and Firefox each passed 60 general layouts, 6 alarm layouts and 10 alarm
+behavior checks, including blocked Home/Away explanations with no additional
+fixture command writes. Installed daemon and child lifecycle probes passed. All
+4,396 unchanged runtime dependency files match the previous release byte for byte
+and mode for mode. The earlier full-source suite is explicitly inherited rather
+than represented as newly run.
+
+Two local build-harness issues were corrected without changing the package: npm
+needed a real local user/home rather than an unnamed sandbox uid; final receipt
+assembly needed its unchanged prior runtime proof copied and hash-bound into the
+new evidence directory. Original failed logs and the corrections are retained.
+
+The passive production check now reports all three targets (Disarmed, Home,
+Away), no target blockers, current panel observations, and a ready paired bridge.
+The postcheck confirms every pairing file is byte-identical, all seven camera
+pairings and 17 noncamera selections remain present, and owner credentials, TLS,
+alarm grants and recording preferences are unchanged. The previous release is
+retained for rollback. No pairing metadata exception was needed.
+
+No physical alarm commands or synthetic production events were sent. Actual
+Home/Away operation remains for the owner to test. No push was performed.
+Evidence: `work/halo-alarm-control-2026-11-14/final-qualification.json`,
+`deployment-result.json` and `installed-panel-status.json` in the Codex workspace.
