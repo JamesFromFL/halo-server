@@ -20,6 +20,7 @@
   import AlarmControls from './AlarmControls.svelte';
   import LightControls from './LightControls.svelte';
   import ChimeControls from './ChimeControls.svelte';
+  import KeypadControls from './KeypadControls.svelte';
 
   let {
     monitoring,
@@ -68,6 +69,7 @@
           (item) =>
             (!device.alarm || !['alarm_mode', 'alarm_state', 'alarm_signal'].includes(item.key)) &&
             (!device.light || item.key !== 'light_on') &&
+            (!device.keypad || !['keypad_brightness', 'motion_detected'].includes(item.key)) &&
             (!device.chime ||
               !['volume', 'snooze_seconds_left', 'automatic_nightlight'].includes(item.key)),
         )
@@ -152,9 +154,11 @@
             ? 'Light monitoring and guarded controls'
             : device.chime
               ? 'Chime monitoring and guarded controls'
-              : device.supported
-                ? 'Read-only monitoring'
-                : 'Not yet supported'}</span
+              : device.keypad
+                ? 'Keypad brightness and proximity monitoring'
+                : device.supported
+                  ? 'Read-only monitoring'
+                  : 'Not yet supported'}</span
       ></Row
     >
   </div>
@@ -188,7 +192,17 @@
       {notify}
       {refresh}
     />{/if}
-  {#if observations.length || (!device.alarm && !device.light && !device.chime)}<h3>
+  {#if monitoring && device.keypad}<KeypadControls
+      {monitoring}
+      {device}
+      {fresh}
+      {generation}
+      {reauthenticate}
+      {notify}
+      {refresh}
+    />{/if}
+  {#if observations.length || (!device.alarm && !device.light && !device.chime && !device.keypad)}<h3
+    >
       Observations
     </h3>
     <div class="group">
@@ -224,7 +238,7 @@
       >
     </div>
   {/if}
-  {#if !device.alarm && !device.light && !device.chime}<p class="inline-note">
+  {#if !device.alarm && !device.light && !device.chime && !device.keypad}<p class="inline-note">
       This device is read-only in Halo. Device commands, panic actions, and emergency dispatch are
       blocked by the server.
     </p>{/if}
@@ -348,9 +362,11 @@
                   ? 'Light'
                   : item.chime
                     ? 'Chime'
-                    : item.supported
-                      ? 'Read-only'
-                      : 'Unsupported'}</span
+                    : item.keypad
+                      ? 'Keypad brightness and proximity monitoring'
+                      : item.supported
+                        ? 'Read-only'
+                        : 'Unsupported'}</span
             ><span class="status">{noncameraHealth(item, fresh && !!monitoring?.enabled)}</span
             ></span
           ><Icon name="next" size={16} />

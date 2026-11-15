@@ -323,6 +323,8 @@ class DevicePublisher:
                 on_retired=changed,
                 on_alarm_set=self._alarm_set,
                 on_light_set=self._light_set,
+                on_keypad_set=self._keypad_set,
+                on_keypad_lock=self._keypad_lock,
             )
             self._runtime_token, self._scope = token, scope
             self._state = "starting"
@@ -515,6 +517,21 @@ class DevicePublisher:
                         and available
                     ),
                 }
+            keypad = None
+            if "keypad_light" in entry["mappings"]:
+                state = monitor.keypad.view(row) if row else None
+                keypad = {
+                    "brightness": state.get("brightness") if state and available else None,
+                    "locked": state["locked"]
+                    if state
+                    else (
+                        monitor.keypad.policy.preference(scope.profile_id, entry["id"]).locked
+                        if monitor.keypad._loaded and not monitor.keypad._error
+                        else True
+                    ),
+                    "control_enabled": bool(state and state["enabled"]),
+                    "on_brightness": state["on_brightness"] if state else 100,
+                }
             children.append(
                 {
                     "device_id": entry["id"],
@@ -526,6 +543,7 @@ class DevicePublisher:
                     "values": values,
                     "alarm": alarm,
                     "light": light,
+                    **({"keypad": keypad} if keypad is not None else {}),
                 }
             )
         return {
@@ -684,6 +702,97 @@ class DevicePublisher:
             "code": "uncertain" if result.get("possibly_sent") else "policy-denied",
             "observed_on": None,
         }
+
+    async def _keypad_set(self, payload, admission):
+        return await self._keypad_command(payload, admission, lock=False)
+
+    async def _keypad_lock(self, payload, admission):
+        return await self._keypad_command(payload, admission, lock=True)
+
+    async def _keypad_command(self, payload, admission, *, lock):
+        observed = "observed_locked" if lock else "observed_brightness"
+        denied = {"accepted": False, "code": "conflict", observed: None}
+        scope, profile = self._profile()
+        runtime, token = self.runtime, self._token
+        boot = runtime.boot_id if runtime else None
+        revision = self.bridge.registry.revision
+        snapshot = self._last_snapshot
+        if (
+            scope is None
+            or profile is None
+            or runtime is None
+            or snapshot is None
+            or not admission()
+            or not self._admitted(scope, revision, runtime, token, boot)
+            or self._published_boot != boot
+            or payload["scope"] != snapshot["scope"]
+            or payload["registry_revision"] != revision
+            or payload["sequence"] != snapshot["sequence"]
+            or snapshot["expires_at_ms"] <= time.monotonic() * 1000
+        ):
+            return denied
+        child = next(
+            (
+                row
+                for row in snapshot["children"]
+                if row["device_id"] == payload["device_id"]
+                and row["accessory_uuid"] == payload["accessory_uuid"]
+            ),
+            None,
+        )
+        if not child or not child.get("keypad") or not child["keypad"]["control_enabled"]:
+            return {**denied, "code": "policy-denied"}
+        coordinator = self.service._device_monitor.keypad
+        row = coordinator._row(payload["device_id"])
+        state = coordinator.view(row) if row else None
+        if not state or not state["can_set_lock" if lock else "can_set"]:
+            return {**denied, "code": "policy-denied"}
+
+        def current():
+            return admission() and self._admitted(scope, revision, runtime, token, boot)
+
+        params = dict(
+            profile_id=scope.profile_id,
+            account_generation=scope.generation,
+            device_id=payload["device_id"],
+            expected_policy_revision=state["policy_revision"],
+            admission=current,
+        )
+        try:
+            if lock:
+                result = await coordinator.set_lock(**params, locked=payload["target"])
+                if current() and type(result.get("locked")) is bool:
+                    return {"accepted": True, "code": "ok", observed: result["locked"]}
+            else:
+                result = await coordinator.set_brightness(
+                    **params,
+                    provider_generation=state["provider_generation"],
+                    expected_epoch=state["epoch"],
+                    expected_revision=state["observed_revision"],
+                    target=payload["target"],
+                    operation_id=str(uuid4()),
+                )
+                if result.get("status") == "confirmed" and current():
+                    latest_row = coordinator._row(payload["device_id"])
+                    latest = coordinator.view(latest_row) if latest_row else None
+                    value = (
+                        latest.get("brightness")
+                        if latest and latest["observed_revision"] > state["observed_revision"]
+                        else result.get("brightness")
+                    )
+                    if (
+                        latest
+                        and latest["authorization"] == "allowed"
+                        and type(value) is int
+                        and 0 <= value <= 100
+                    ):
+                        return {"accepted": True, "code": "ok", observed: value}
+            return {
+                **denied,
+                "code": "uncertain" if result.get("possibly_sent") else "policy-denied",
+            }
+        except AdminProtocolError as error:
+            return {**denied, "code": "busy" if error.code == "busy" else "conflict"}
 
     def snapshot(self):
         scope, _profile = self._profile()

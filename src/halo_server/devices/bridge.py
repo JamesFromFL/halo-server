@@ -37,6 +37,7 @@ _MAPPINGS = {
     "carbon_monoxide",
     "security_system",
     "lightbulb",
+    "keypad_light",
 }
 
 
@@ -51,7 +52,7 @@ def validate_preferences(value):
         ("excluded_devices", 512, lambda item: _KEY.fullmatch(item)),
         ("excluded_locations", 128, lambda item: _KEY.fullmatch(item)),
         ("excluded_kinds", 64, lambda item: _KIND.fullmatch(item)),
-        ("excluded_mappings", 7, lambda item: item in _MAPPINGS),
+        ("excluded_mappings", 8, lambda item: item in _MAPPINGS),
     ):
         items = value[key]
         if (
@@ -139,6 +140,7 @@ class DeviceBridge:
                         row.key,
                         row.family,
                         row.kind,
+                        row.model,
                         row.capabilities,
                         row.capability_evidence,
                         row.supported,

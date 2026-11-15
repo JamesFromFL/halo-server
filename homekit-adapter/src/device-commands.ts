@@ -5,6 +5,11 @@ import { ProtocolError } from "./protocol.js";
 import {
   validateDeviceAlarm,
   validateDeviceLight,
+  validateDeviceKeypad,
+  type DeviceKeypadRequest,
+  type DeviceKeypadResult,
+  type DeviceKeypadLockRequest,
+  type DeviceKeypadLockResult,
   type DeviceAlarmRequest,
   type DeviceAlarmResult,
   type DeviceLightRequest,
@@ -16,7 +21,13 @@ const failure = (): Error =>
 interface PendingCommand {
   request: DeviceEnvelope;
   timer: NodeJS.Timeout;
-  resolve: (result: DeviceAlarmResult | DeviceLightResult) => void;
+  resolve: (
+    result:
+      | DeviceAlarmResult
+      | DeviceLightResult
+      | DeviceKeypadResult
+      | DeviceKeypadLockResult,
+  ) => void;
   reject: (error: Error) => void;
 }
 export interface DeviceCommandChannelOptions {
@@ -38,11 +49,33 @@ export class DeviceCommandRequests {
     kind: "light_set",
     payload: DeviceLightRequest,
   ): Promise<DeviceLightResult>;
+  request(
+    kind: "keypad_set",
+    payload: DeviceKeypadRequest,
+  ): Promise<DeviceKeypadResult>;
+  request(
+    kind: "keypad_lock",
+    payload: DeviceKeypadLockRequest,
+  ): Promise<DeviceKeypadLockResult>;
   async request(
-    kind: "alarm_set" | "light_set",
-    payload: DeviceAlarmRequest | DeviceLightRequest,
-  ): Promise<DeviceAlarmResult | DeviceLightResult> {
-    (kind === "alarm_set" ? validateDeviceAlarm : validateDeviceLight)(payload);
+    kind: "alarm_set" | "light_set" | "keypad_set" | "keypad_lock",
+    payload:
+      | DeviceAlarmRequest
+      | DeviceLightRequest
+      | DeviceKeypadRequest
+      | DeviceKeypadLockRequest,
+  ): Promise<
+    | DeviceAlarmResult
+    | DeviceLightResult
+    | DeviceKeypadResult
+    | DeviceKeypadLockResult
+  > {
+    if (kind.startsWith("keypad_"))
+      validateDeviceKeypad(payload, false, kind === "keypad_lock");
+    else
+      (kind === "alarm_set" ? validateDeviceAlarm : validateDeviceLight)(
+        payload,
+      );
     const boot = this.options.boot();
     if (this.closed || boot === null) throw new ProtocolError("not-ready");
     if (this.pending.size >= 4) throw new ProtocolError("busy");
@@ -53,24 +86,27 @@ export class DeviceCommandRequests {
       request_id: randomUUID(),
       payload: { ...structuredClone(payload) },
     };
-    return new Promise<DeviceAlarmResult | DeviceLightResult>(
-      (resolve, reject) => {
-        const timer = setTimeout(() => {
-          this.options.fail("device-command-timeout");
-          this.close();
-        }, this.options.timeoutMs ?? 15_000);
-        this.pending.set(message.request_id, {
-          request: message,
-          timer,
-          resolve,
-          reject,
-        });
-        void this.options.send(message).catch(() => {
-          this.options.fail("device-command-write-failed");
-          this.close();
-        });
-      },
-    );
+    return new Promise<
+      | DeviceAlarmResult
+      | DeviceLightResult
+      | DeviceKeypadResult
+      | DeviceKeypadLockResult
+    >((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.options.fail("device-command-timeout");
+        this.close();
+      }, this.options.timeoutMs ?? 15_000);
+      this.pending.set(message.request_id, {
+        request: message,
+        timer,
+        resolve,
+        reject,
+      });
+      void this.options.send(message).catch(() => {
+        this.options.fail("device-command-write-failed");
+        this.close();
+      });
+    });
   }
   receive(message: DeviceEnvelope): void {
     const pending = this.pending.get(message.request_id);
@@ -81,9 +117,16 @@ export class DeviceCommandRequests {
       !pending
     )
       throw new ProtocolError("unowned-command-result");
-    (message.kind === "alarm_set_result"
-      ? validateDeviceAlarm
-      : validateDeviceLight)(message.payload, true);
+    if (message.kind.startsWith("keypad_"))
+      validateDeviceKeypad(
+        message.payload,
+        true,
+        message.kind === "keypad_lock_result",
+      );
+    else
+      (message.kind === "alarm_set_result"
+        ? validateDeviceAlarm
+        : validateDeviceLight)(message.payload, true);
     for (const key of [
       "scope",
       "registry_revision",
@@ -106,7 +149,11 @@ export class DeviceCommandRequests {
     this.pending.delete(message.request_id);
     clearTimeout(pending.timer);
     pending.resolve(
-      message.payload as unknown as DeviceAlarmResult | DeviceLightResult,
+      message.payload as unknown as
+        | DeviceAlarmResult
+        | DeviceLightResult
+        | DeviceKeypadResult
+        | DeviceKeypadLockResult,
     );
   }
   close(): void {

@@ -51,9 +51,12 @@ class DeviceDocument:
 
     zid: str
     data: Mapping[str, Any]
+    keypad_motion: bool = False
 
     def __post_init__(self) -> None:
         _validate_identifier(self.zid, "device zid")
+        if type(self.keypad_motion) is not bool:
+            raise AlarmSchemaError("keypad impulse must be a boolean")
         if not isinstance(self.data, Mapping):
             raise AlarmSchemaError("device data must be an object")
         data = dict(self.data)
@@ -208,7 +211,7 @@ def _require_body(message: Mapping[str, Any]) -> list[Any]:
     return body
 
 
-def _flatten_device_document(value: object) -> DeviceDocument:
+def _flatten_device_document(value: object, *, realtime: bool = False) -> DeviceDocument:
     if not isinstance(value, dict):
         raise AlarmSchemaError("device document must be an object")
 
@@ -231,11 +234,32 @@ def _flatten_device_document(value: object) -> DeviceDocument:
     if not saw_versioned_document:
         raise AlarmSchemaError("device document has no supported versioned data")
     zid = _validate_identifier(flat.get("zid"), "device zid")
-    return DeviceDocument(zid=zid, data=flat)
+    # Proximity is an impulse, not a retained field. Only the known realtime
+    # event is retained; access-code/button payloads and other impulses vanish.
+    impulse = value.get("impulse")
+    events = impulse.get("v1") if isinstance(impulse, dict) else None
+    keypad_motion = (
+        realtime
+        and isinstance(events, list)
+        and any(
+            isinstance(event, dict) and event.get("impulseType") == "keypad.motion"
+            for event in events
+        )
+    )
+    if keypad_motion:
+        general = value.get("general")
+        general_v2 = general.get("v2") if isinstance(general, dict) else None
+        if not isinstance(general_v2, dict) or general_v2.get("zid") != zid:
+            raise AlarmSchemaError("keypad impulse requires matching general identity")
+    return DeviceDocument(zid=zid, data=flat, keypad_motion=keypad_motion)
 
 
-def _parse_device_documents(message: Mapping[str, Any]) -> tuple[DeviceDocument, ...]:
-    documents = tuple(_flatten_device_document(value) for value in _require_body(message))
+def _parse_device_documents(
+    message: Mapping[str, Any], *, realtime: bool = False
+) -> tuple[DeviceDocument, ...]:
+    documents = tuple(
+        _flatten_device_document(value, realtime=realtime) for value in _require_body(message)
+    )
     zids = [document.zid for document in documents]
     if len(zids) != len(set(zids)):
         raise AlarmSchemaError("device document batch contains duplicate zids")
@@ -344,7 +368,7 @@ def parse_clap_frame(
         asset_id = _validate_identifier(source, "device-update source")
         return DeviceInfoDocUpdate(
             asset_id=asset_id,
-            devices=_parse_device_documents(message),
+            devices=_parse_device_documents(message, realtime=True),
             sequence=sequence,
         )
     if message_type == "SessionInfo":
@@ -452,6 +476,27 @@ def encode_light_command(
                     "command": {"v1": [{"commandType": "light-mode.set", "data": data}]},
                 }
             ],
+            "seq": sequence,
+        },
+    }
+
+
+def encode_keypad_brightness_command(
+    asset_id: str, keypad_zid: str, brightness: int, sequence: int
+) -> dict[str, Any]:
+    """One finite keypad LED level; no alarm, volume or display-mode fields."""
+    asset_id = _validate_outbound_identifier(asset_id, "asset_id")
+    keypad_zid = _validate_outbound_identifier(keypad_zid, "keypad_zid")
+    _validate_outbound_sequence(sequence)
+    if type(brightness) is not int or not 0 <= brightness <= 100:
+        raise ValueError("unsupported keypad brightness")
+    return {
+        "channel": "message",
+        "msg": {
+            "msg": "DeviceInfoSet",
+            "datatype": "DeviceInfoSetType",
+            "dst": asset_id,
+            "body": [{"zid": keypad_zid, "device": {"v1": {"brightness": brightness / 100}}}],
             "seq": sequence,
         },
     }

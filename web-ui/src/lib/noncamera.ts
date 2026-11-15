@@ -3,6 +3,7 @@ import { validBridge } from './bridge.ts';
 import { validAlarm } from './alarm.ts';
 import { qualifiedLightDevice, validLight } from './light.ts';
 import { validChime } from './chime.ts';
+import { validKeypad } from './keypad.ts';
 
 const ROUTE_PREFIX = 'noncamera:';
 const STATES = new Set(['disabled', 'starting', 'ready', 'partial', 'offline', 'error']);
@@ -51,6 +52,7 @@ export function validNoncamera(value: unknown): value is NoncameraState {
           (device.kind === 'security-panel' && validAlarm(device.alarm))) &&
         (device.light === undefined ||
           (qualifiedLightDevice(device) && validLight(device.light))) &&
+        (device.keypad === undefined || (device.kind === 'keypad' && validKeypad(device.keypad))) &&
         boundedText(device.model) &&
         boundedText(device.location_id) &&
         boundedText(device.location_name) &&
@@ -186,6 +188,7 @@ const observationLabels: Record<
   light_on: { title: 'Light', yes: 'On', no: 'Off' },
   on: { title: 'Power', yes: 'On', no: 'Off' },
   brightness: { title: 'Brightness', unit: '%' },
+  keypad_brightness: { title: 'Configured backlight', unit: '%' },
   locked: { title: 'Lock', yes: 'Locked', no: 'Unlocked' },
   lock_state: { title: 'Lock state' },
   leak: { title: 'Water leak', yes: 'Detected', no: 'Not detected' },

@@ -340,3 +340,10 @@ owner UI—not another camera transport redesign.
   research evidence, not an installed runtime feature or a maintained regression
   suite; convert relevant cases into project tests during their implementation
   slice.
+
+## Keypad follow-on
+
+The owner-requested keypad light, persistent brightness lock and proximity events
+are specified in [keypad integration](keypad-light-motion-2026-11-14.md). That
+qualified scope supersedes the earlier diagnostic-only keypad row; alarm buttons,
+LED-pattern changes and arbitrary keypad commands remain outside the interface.

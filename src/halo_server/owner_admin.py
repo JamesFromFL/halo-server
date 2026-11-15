@@ -23,6 +23,9 @@ class OwnerAdministration:
         {
             "owner_state",
             "devices_monitoring_set",
+            "devices_keypad_policy_set",
+            "devices_keypad_brightness_set",
+            "devices_keypad_lock_set",
             "devices_light_policy_set",
             "devices_light_set",
             "devices_chime_policy_set",
@@ -78,6 +81,23 @@ class OwnerAdministration:
                 raise AdminProtocolError("bad_params", "Alarm parameters are required")
             alarm = self.service._device_monitor.alarm
             action = alarm.set_mode if method.endswith("mode_set") else alarm.configure
+            return await action(**params)
+        if method in {
+            "devices_keypad_policy_set",
+            "devices_keypad_brightness_set",
+            "devices_keypad_lock_set",
+        }:
+            from halo_server.devices.keypad import LOCK_FIELDS, POLICY_FIELDS, SET_FIELDS
+
+            keypad = self.service._device_monitor.keypad
+            required, action = {
+                "devices_keypad_policy_set": (POLICY_FIELDS, keypad.configure),
+                "devices_keypad_brightness_set": (SET_FIELDS, keypad.set_brightness),
+                "devices_keypad_lock_set": (LOCK_FIELDS, keypad.set_lock),
+            }[method]
+            _only(params, required)
+            if set(params) != required:
+                raise AdminProtocolError("bad_params", "Keypad parameters are required")
             return await action(**params)
         if method in {"devices_light_policy_set", "devices_light_set"}:
             from halo_server.devices.light import POLICY_FIELDS, SET_FIELDS

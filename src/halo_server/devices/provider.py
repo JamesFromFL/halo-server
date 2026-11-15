@@ -29,6 +29,7 @@ from halo_server.devices.groups import (
 from halo_server.devices.groups import (
     identifier as group_identifier,
 )
+from halo_server.devices.keypad_commands import KeypadCommands
 from halo_server.devices.light_commands import BEAMS_TYPES, LightCommands
 from halo_server.devices.models import DeviceIdentity, DeviceObservation, DeviceRecord
 from halo_server.homekit.text import literal_text
@@ -81,6 +82,20 @@ class ReadOnlyDeviceError(RuntimeError):
     def __init__(self):
         super().__init__("device-controls-disabled")
         self.code = "device-controls-disabled"
+
+
+_KEYPAD_MOTION_SECONDS = 20.0
+
+
+@dataclass
+class _KeypadMotion:
+    runtime: object
+    epoch: int
+    deadline: float
+    observed_at: float
+    active: bool = True
+    source: str = "hub-keypad-motion-impulse"
+    task: asyncio.Task | None = None
 
 
 @dataclass
@@ -168,6 +183,9 @@ class NoncameraProvider:
         self._beams_owners: dict[tuple[str, str], bool] = {}
         self._lighting_reservation = lighting_reservation or LightingReservation()
         self._light_commands = LightCommands(self, timeout=command_timeout)
+        self._keypad_commands = KeypadCommands(self, timeout=command_timeout)
+        self._keypad_motion: dict[tuple[str, str, str], _KeypadMotion] = {}
+        self._keypad_motion_tasks: set[asyncio.Task] = set()
         self._device_gateway = None
         self._chime_commands = ChimeCommands(self, timeout=command_timeout)
         self._discovery_retry_at = 0.0
@@ -323,6 +341,18 @@ class NoncameraProvider:
             admission=admission,
         )
 
+    async def set_keypad_brightness(
+        self, device_id, target, *, expected_revision, expected_epoch, admission=None
+    ):
+        """Change only a qualified keypad LED brightness under owner admission."""
+        return await self._keypad_commands.request(
+            device_id,
+            target,
+            expected_revision=expected_revision,
+            expected_epoch=expected_epoch,
+            admission=admission,
+        )
+
     async def _discovery_loop(self):
         while self._active():
             await self.refresh()
@@ -409,6 +439,7 @@ class NoncameraProvider:
                     self._store.remove_location(location_id)
                     self._alarm_commands.invalidate(location_id)
                     self._light_commands.invalidate(location_id)
+                    self._keypad_commands.invalidate(location_id)
                     await self._stop_runtime(runtime)
                     self._observation_times = {
                         key: value
@@ -581,6 +612,7 @@ class NoncameraProvider:
             runtime.epoch = self._store.begin_epoch(runtime.seed.location_id)
             self._alarm_commands.invalidate(runtime.seed.location_id)
             self._light_commands.invalidate(runtime.seed.location_id)
+            self._keypad_commands.invalidate(runtime.seed.location_id)
             epoch = runtime.epoch
             began = self._monotonic()
             await self._publish()
@@ -602,6 +634,7 @@ class NoncameraProvider:
             self._store.mark_location_stale(runtime.seed.location_id, epoch)
             self._alarm_commands.invalidate(runtime.seed.location_id)
             self._light_commands.invalidate(runtime.seed.location_id)
+            self._keypad_commands.invalidate(runtime.seed.location_id)
             await self._publish()
             if self._monotonic() - began >= 60:
                 backoff = 1.0
@@ -695,6 +728,8 @@ class NoncameraProvider:
             self._record_receipts(runtime.seed.location_id, message)
         self._alarm_commands.observe(runtime, epoch, message)
         self._light_commands.observe(runtime, epoch, message, lighting_revision=lighting_revision)
+        self._keypad_commands.observe(runtime, epoch, message)
+        self._record_keypad_motion(runtime, epoch, message, previous)
         if isinstance(message, SessionInfo):
             for session in message.sessions:
                 asset = previous.find_asset(session.asset_id) if previous else None
@@ -711,6 +746,82 @@ class NoncameraProvider:
                     )
                     await runtime.transport.request_inventory(session.asset_id, epoch=epoch)
         await self._publish()
+
+    def _keypad_motion_current(self, key, event):
+        location = self._store.snapshot.find_location(key[0])
+        asset = location.find_asset(key[1]) if location else None
+        device = asset.find_device(key[2]) if asset else None
+        return bool(
+            self._valid_runtime(event.runtime, event.epoch)
+            and event.runtime.transport.connected
+            and location is not None
+            and location.epoch == event.epoch
+            and asset is not None
+            and asset.connection is AlarmConnectionStatus.ONLINE
+            and not asset.stale
+            and asset.inventory is AlarmInventoryStatus.COMPLETE
+            and asset.inventory_monotonic is not None
+            and 0 <= self._monotonic() - asset.inventory_monotonic <= 120
+            and device is not None
+            and device.raw_type == "security-keypad"
+            and not device.stale
+            and device.connection is AlarmConnectionStatus.ONLINE
+        )
+
+    def _prune_keypad_motion(self):
+        for key, event in tuple(self._keypad_motion.items()):
+            if not self._keypad_motion_current(key, event):
+                self._keypad_motion.pop(key)
+                if event.task is not None and event.task is not asyncio.current_task():
+                    event.task.cancel()
+
+    def _record_keypad_motion(self, runtime, epoch, message, previous):
+        self._prune_keypad_motion()
+        if not isinstance(message, DeviceInfoDocUpdate):
+            return
+        previous_asset = previous.find_asset(message.asset_id) if previous else None
+        for document in message.devices:
+            previous_device = previous_asset.find_device(document.zid) if previous_asset else None
+            if (
+                not document.keypad_motion
+                or previous_device is None
+                or previous_device.raw_type != "security-keypad"
+            ):
+                continue
+            key = (runtime.seed.location_id, message.asset_id, document.zid)
+            event = _KeypadMotion(
+                runtime, epoch, self._monotonic() + _KEYPAD_MOTION_SECONDS, self._clock()
+            )
+            if not self._keypad_motion_current(key, event):
+                continue
+            old = self._keypad_motion.get(key)
+            if old is not None and old.task is not None:
+                old.task.cancel()
+            self._keypad_motion[key] = event
+            event.task = asyncio.create_task(
+                self._expire_keypad_motion(key, event), name="ring-keypad-proximity"
+            )
+            self._keypad_motion_tasks.add(event.task)
+            event.task.add_done_callback(self._keypad_motion_tasks.discard)
+
+    async def _expire_keypad_motion(self, key, event):
+        while self._keypad_motion.get(key) is event and self._keypad_motion_current(key, event):
+            remaining = event.deadline - self._monotonic()
+            if remaining > 0:
+                await asyncio.sleep(remaining)
+                continue
+            # Ring reports an impulse, not a clear. Label the timeout honestly
+            # while retaining the proven capability for this connection epoch.
+            event.active = False
+            event.source = "hub-keypad-motion-expiry"
+            await self._publish()
+            return
+        # Source freshness may expire while the timer sleeps. Publish the lost
+        # evidence now, rather than leaving a last active value until another
+        # device happens to report. Never retire a newer replacement event.
+        if self._keypad_motion.get(key) is event:
+            self._keypad_motion.pop(key)
+            await self._publish()
 
     def _record_receipts(self, location_id, message):
         if isinstance(message, DeviceInfoDocList):
@@ -773,6 +884,7 @@ class NoncameraProvider:
     async def _publish(self):
         if not self._active():
             return
+        self._prune_keypad_motion()
         records = list(self._rest_records)
         complete = self._rest_valid
         group_records = self._groups.records() if self._groups is not None else ()
@@ -856,6 +968,9 @@ class NoncameraProvider:
                 alarms=alarms,
                 lights=lights,
                 chimes=self._chime_commands.snapshots(),
+                keypads=self._keypad_commands.snapshots()
+                if self._error != "device-limit-exceeded"
+                else (),
             )
             if inspect.isawaitable(result):
                 await result
@@ -877,6 +992,7 @@ class NoncameraProvider:
             "carbon_monoxide": "co_detected",
             "lock_state": "lock_state",
             "temperature_celsius": "temperature_celsius",
+            "keypad_brightness": "keypad_brightness",
             "ac_power": "ac_power",
             "siren_on": "siren_active",
             "bypassed": "bypassed",
@@ -889,6 +1005,7 @@ class NoncameraProvider:
         receipts = self._observation_times.get(
             (device.location_id, device.asset_id, device.zid), {}
         )
+        keypad_motion = self._keypad_motion.get((device.location_id, device.asset_id, device.zid))
         for attribute, name in fields.items():
             value = getattr(device, attribute)
             if isinstance(value, TriState):
@@ -902,6 +1019,21 @@ class NoncameraProvider:
             elif isinstance(value, str):
                 value = None if value == "unknown" else str(value)
             observed = receipts.get(name)
+            source = "hub"
+            if name == "motion_detected" and device.raw_type == "security-keypad":
+                value = keypad_motion.active if keypad_motion else None
+                observed = (
+                    keypad_motion.observed_at
+                    if keypad_motion and keypad_motion.active
+                    else self._clock()
+                    if keypad_motion
+                    else None
+                )
+                # An ended impulse window is a current derived "no recent
+                # detection" value only while its qualified connection survives.
+                # This is not a fresh Ring clear; preserve both its distinct
+                # provenance and the genuine last event time in the event state.
+                source = keypad_motion.source if keypad_motion else "hub"
             status = (
                 "unknown"
                 if value is None
@@ -921,7 +1053,7 @@ class NoncameraProvider:
                     value,
                     observed if value is not None else None,
                     status=status,
-                    source="hub",
+                    source=source,
                 )
             )
         connected = (
@@ -945,7 +1077,12 @@ class NoncameraProvider:
             )
         )
         supported = device.kind is not AlarmDeviceKind.UNKNOWN
-        capabilities = tuple(sorted(str(capability) for capability in device.capabilities))
+        capability_values = {str(capability) for capability in device.capabilities}
+        evidence = ["ring-hub-device-schema"] if capability_values else []
+        if keypad_motion is not None:
+            capability_values.add("motion")
+            evidence.append("ring-keypad-motion-impulse")
+        capabilities = tuple(sorted(capability_values))
         return DeviceRecord(
             identity=DeviceIdentity(
                 self.profile_id, "ring-hub", device.location_id, device.asset_id, device.zid
@@ -958,7 +1095,7 @@ class NoncameraProvider:
             model=device.raw_type,
             location_name=location_name,
             capabilities=capabilities,
-            capability_evidence=("ring-hub-device-schema",) if capabilities else (),
+            capability_evidence=tuple(evidence),
             observations=tuple(observations),
             source_health="stale"
             if device.stale
@@ -985,11 +1122,17 @@ class NoncameraProvider:
             for location_id in self._runtimes:
                 self._alarm_commands.invalidate(location_id)
                 self._light_commands.invalidate(location_id)
+                self._keypad_commands.invalidate(location_id)
             self._close_task = asyncio.create_task(self._close_impl(), name="ring-device-close")
         await asyncio.shield(self._close_task)
 
     async def _close_impl(self):
         self._stop.set()
+        motion_tasks = tuple(self._keypad_motion_tasks)
+        self._keypad_motion.clear()
+        for task in motion_tasks:
+            task.cancel()
+        await asyncio.gather(*motion_tasks, return_exceptions=True)
         if self._task is not None:
             self._task.cancel()
         if self._group_task is not None:
@@ -1118,6 +1261,7 @@ _OBSERVATION_FIELDS = {
     "co_detected": {"co", "components", "alarmStatus"},
     "lock_state": {"locked"},
     "temperature_celsius": {"celsius"},
+    "keypad_brightness": {"brightness"},
     "ac_power": {"acStatus"},
     "siren_active": {"siren"},
     "bypassed": {"bypassed", "bypassStatus"},

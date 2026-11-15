@@ -74,6 +74,8 @@ export class DeviceFakePublisher implements DevicePublisher {
 export function deviceHarness(
   onAlarmSet?: DeviceBridgeOptions["onAlarmSet"],
   onLightSet?: DeviceBridgeOptions["onLightSet"],
+  onKeypadSet?: DeviceBridgeOptions["onKeypadSet"],
+  onKeypadLock?: DeviceBridgeOptions["onKeypadLock"],
 ) {
   let now = 1,
     closes = 0,
@@ -93,6 +95,8 @@ export function deviceHarness(
     monotonicNow: () => now,
     ...(onAlarmSet ? { onAlarmSet } : {}),
     ...(onLightSet ? { onLightSet } : {}),
+    ...(onKeypadSet ? { onKeypadSet } : {}),
+    ...(onKeypadLock ? { onKeypadLock } : {}),
   });
   return {
     manager,

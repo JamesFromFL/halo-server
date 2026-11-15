@@ -136,7 +136,7 @@ async def test_failed_startup_retains_guard_only_when_compensation_is_incomplete
 @pytest.mark.asyncio
 async def test_source_reader_floor_is_checked_under_guard_before_admin_start(tmp_path):
     owner = service(tmp_path)
-    PolicyStore(owner.paths.state_directory).advance(15)
+    PolicyStore(owner.paths.state_directory).advance(16)
     with pytest.raises(ReleaseGuardError, match="cannot read"):
         await owner.start()
     assert owner._source_guard_lease is None and not owner.paths.admin_socket.exists()

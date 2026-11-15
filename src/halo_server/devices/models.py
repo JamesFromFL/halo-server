@@ -142,6 +142,10 @@ class DeviceObservation:
                 type(self.value) is not int or not 0 <= self.value <= 100
             ):
                 raise ValueError("battery percentage is outside the valid range")
+            if self.name == "keypad_brightness" and (
+                type(self.value) is not int or not 0 <= self.value <= 100
+            ):
+                raise ValueError("keypad brightness is outside the valid range")
             if self.name == "temperature_celsius" and type(self.value) not in (int, float):
                 raise ValueError("temperature requires a measured numeric value")
 

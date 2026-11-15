@@ -9,6 +9,7 @@ import {
   Service,
 } from "@homebridge/hap-nodejs";
 import { DeviceAlarm } from "./device-alarm.js";
+import { DeviceKeypad } from "./device-keypad.js";
 import { DeviceLight } from "./device-light.js";
 import { ProtocolError, type PairingManifest } from "./protocol.js";
 import { pairingSnapshot } from "./pairing.js";
@@ -26,6 +27,10 @@ import {
   type DeviceAlarmResult,
   type DeviceLightRequest,
   type DeviceLightResult,
+  type DeviceKeypadRequest,
+  type DeviceKeypadResult,
+  type DeviceKeypadLockRequest,
+  type DeviceKeypadLockResult,
 } from "./device-protocol.js";
 
 const sensors = {
@@ -74,7 +79,11 @@ export class DeviceSensor {
       callback(),
     );
     for (const mapping of value.mappings) {
-      if (mapping === "security_system" || mapping === "lightbulb")
+      if (
+        mapping === "security_system" ||
+        mapping === "lightbulb" ||
+        mapping === "keypad_light"
+      )
         throw new ProtocolError("invalid-device-child");
       const definition = sensors[mapping],
         service = new definition.service(value.name, `halo:${mapping}`);
@@ -188,6 +197,10 @@ export interface DeviceBridgeOptions {
   monotonicNow?: () => number;
   onAlarmSet?: (request: DeviceAlarmRequest) => Promise<DeviceAlarmResult>;
   onLightSet?: (request: DeviceLightRequest) => Promise<DeviceLightResult>;
+  onKeypadSet?: (request: DeviceKeypadRequest) => Promise<DeviceKeypadResult>;
+  onKeypadLock?: (
+    request: DeviceKeypadLockRequest,
+  ) => Promise<DeviceKeypadLockResult>;
 }
 const sameScope = (
   a: DevicePublication["scope"],
@@ -202,7 +215,7 @@ export class DeviceBridgeManager {
   private publication: DevicePublication | null = null;
   private readonly children = new Map<
     string,
-    DeviceSensor | DeviceAlarm | DeviceLight
+    DeviceSensor | DeviceAlarm | DeviceLight | DeviceKeypad
   >();
   private readonly identities = new Map<
     string,
@@ -291,7 +304,11 @@ export class DeviceBridgeManager {
       if (
         known &&
         (known.uuid !== child.accessory_uuid ||
-          known.mappings !== child.mappings.join())
+          (known.mappings !== child.mappings.join() &&
+            !(
+              known.mappings === "keypad_light" &&
+              child.mappings.join() === "keypad_light,motion"
+            )))
       )
         throw new ProtocolError("conflict");
       if (!known) additions++;
@@ -354,14 +371,36 @@ export class DeviceBridgeManager {
           authority(currentChildren.get(id))
       )
         this.commandEpochs.set(id, (this.commandEpochs.get(id) ?? 0) + 1);
+      for (const kind of ["set", "lock"] as const) {
+        const authority = (child: DeviceChild | undefined): string =>
+          JSON.stringify([
+            child?.accessory_uuid,
+            child?.keypad?.control_enabled,
+            ...(kind === "set"
+              ? [child?.available, child?.keypad?.locked]
+              : []),
+          ]);
+        const lane = `${id}:keypad_${kind}`;
+        if (
+          (previous !== null && this.now() >= this.deadline) ||
+          authority(previousChildren.get(id)) !==
+            authority(currentChildren.get(id))
+        )
+          this.commandEpochs.set(lane, (this.commandEpochs.get(lane) ?? 0) + 1);
+      }
     }
     this.deadline = Math.min(this.now() + 15_000, value.expires_at_ms);
     for (const child of [...value.children].sort((a, b) =>
       a.device_id.localeCompare(b.device_id),
     )) {
       const sensor = this.children.get(child.device_id);
-      if (sensor) sensor.update(child);
-      else {
+      if (sensor) {
+        sensor.update(child);
+        this.identities.set(child.device_id, {
+          uuid: child.accessory_uuid,
+          mappings: child.mappings.join(),
+        });
+      } else {
         const sensor = child.mappings.includes("security_system")
           ? new DeviceAlarm(
               child,
@@ -374,7 +413,24 @@ export class DeviceBridgeManager {
                 () => this.fresh(),
                 (target) => this.setLight(child.device_id, target),
               )
-            : new DeviceSensor(child, () => this.fresh());
+            : child.mappings.includes("keypad_light")
+              ? new DeviceKeypad(
+                  child,
+                  () => this.fresh(),
+                  async (target) =>
+                    (await this.setKeypad(
+                      child.device_id,
+                      target,
+                      false,
+                    )) as number,
+                  async (target) =>
+                    (await this.setKeypad(
+                      child.device_id,
+                      target,
+                      true,
+                    )) as boolean,
+                )
+              : new DeviceSensor(child, () => this.fresh());
         this.bridge.addBridgedAccessory(sensor.accessory);
         this.children.set(child.device_id, sensor);
         this.identities.set(child.device_id, {
@@ -506,6 +562,83 @@ export class DeviceBridgeManager {
       return result.observed_on;
     } finally {
       this.pendingCommands.delete(deviceId);
+    }
+  }
+  private async setKeypad(
+    deviceId: string,
+    target: number | boolean,
+    lock: boolean,
+  ): Promise<number | boolean> {
+    const publication = this.publication;
+    const child = publication?.children.find(
+      (item) => item.device_id === deviceId,
+    );
+    const callback = lock
+      ? this.options.onKeypadLock
+      : this.options.onKeypadSet;
+    if (
+      !publication ||
+      !child?.keypad?.control_enabled ||
+      !this.fresh() ||
+      !this.published ||
+      !callback ||
+      !child.mappings.includes("keypad_light") ||
+      (lock
+        ? typeof target !== "boolean"
+        : typeof target !== "number" ||
+          !Number.isInteger(target) ||
+          target < 0 ||
+          target > 100 ||
+          !child.available ||
+          child.keypad.locked ||
+          child.keypad.brightness === null)
+    )
+      throw unavailable();
+    const lane = `${deviceId}:keypad_${lock ? "lock" : "set"}`;
+    if (this.pendingCommands.has(lane) || this.pendingCommands.size >= 4)
+      throw new HapStatusError(HAPStatus.RESOURCE_BUSY);
+    this.pendingCommands.add(lane);
+    const epoch = this.commandEpochs.get(lane);
+    const identity = {
+      scope: structuredClone(publication.scope),
+      registry_revision: publication.registry_revision,
+      sequence: publication.sequence,
+      device_id: child.device_id,
+      accessory_uuid: child.accessory_uuid,
+    };
+    try {
+      const result = lock
+        ? await this.options.onKeypadLock!({
+            ...identity,
+            target: target as boolean,
+          })
+        : await this.options.onKeypadSet!({
+            ...identity,
+            target: target as number,
+          });
+      const current = this.publication,
+        now = current?.children.find((item) => item.device_id === deviceId);
+      const observed =
+        "observed_locked" in result
+          ? result.observed_locked
+          : result.observed_brightness;
+      if (
+        !result.accepted ||
+        observed === null ||
+        this.commandEpochs.get(lane) !== epoch ||
+        !this.fresh() ||
+        !this.published ||
+        !current ||
+        !sameScope(current.scope, identity.scope) ||
+        current.registry_revision !== identity.registry_revision ||
+        now?.accessory_uuid !== identity.accessory_uuid ||
+        !now.keypad?.control_enabled ||
+        (!lock && (!now.available || now.keypad.locked))
+      )
+        throw unavailable();
+      return observed;
+    } finally {
+      this.pendingCommands.delete(lane);
     }
   }
   private base(identity: DevicePairingIdentity): PairingBase {

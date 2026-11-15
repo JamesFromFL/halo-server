@@ -64,6 +64,24 @@ export interface NoncameraDevice {
   alarm?: AlarmState;
   light?: LightState;
   chime?: ChimeState;
+  keypad?: KeypadState;
+}
+export interface KeypadState {
+  policy_revision: number;
+  enabled: boolean;
+  locked: boolean;
+  provider_generation: number;
+  epoch: number;
+  observed_revision: number;
+  brightness: number | null;
+  on_brightness: number;
+  authorization: 'allowed' | 'denied' | 'unknown';
+  can_set: boolean;
+  can_set_lock: boolean;
+  reason: string | null;
+  pending: boolean;
+  outcome_unknown: boolean;
+  requested_brightness: number | null;
 }
 export type ChimeAction = 'volume' | 'test' | 'snooze' | 'nightlight' | 'sound_stopped';
 export interface ChimeState {

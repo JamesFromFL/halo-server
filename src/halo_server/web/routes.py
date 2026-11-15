@@ -721,6 +721,79 @@ class WebConsole:
             )
         )
 
+    async def device_keypad_policy(self, request):
+        from halo_server.devices.keypad import POLICY_FIELDS
+        from halo_server.devices.keypad_policy import valid_device_id
+
+        value = await body(request, tuple(POLICY_FIELDS) + ("operation_id",))
+        text(value["profile_id"], maximum=36)
+        integer(value["account_generation"], minimum=1)
+        integer(value["expected_revision"])
+        boolean(value["enabled"])
+        boolean(value["locked"])
+        if not valid_device_id(value["device_id"]):
+            raise WebError("bad_request", "Keypad identity is invalid")
+        if value["enabled"]:
+            self.auth.recent(request[SESSION])
+        identifier = operation_id(value["operation_id"])
+        params = {key: item for key, item in value.items() if key != "operation_id"}
+        return success(
+            await self.operations.run(
+                identifier,
+                "configuration",
+                {"target": "keypad_policy", **value},
+                lambda: self.pool.call(self.client.devices_keypad_policy_set, **params),
+            )
+        )
+
+    async def device_keypad_brightness(self, request):
+        from halo_server.devices.keypad import SET_FIELDS
+        from halo_server.devices.keypad_policy import valid_device_id
+
+        value = await body(request, tuple(SET_FIELDS))
+        text(value["profile_id"], maximum=36)
+        for field in ("account_generation", "provider_generation"):
+            integer(value[field], minimum=1)
+        for field in ("expected_epoch", "expected_revision", "expected_policy_revision"):
+            integer(value[field])
+        integer(value["target"])
+        if value["target"] > 100:
+            raise WebError("bad_request", "Keypad brightness is outside the valid range")
+        if not valid_device_id(value["device_id"]):
+            raise WebError("bad_request", "Keypad identity is invalid")
+        identifier = operation_id(value["operation_id"])
+        return success(
+            await self.operations.run(
+                identifier,
+                "control",
+                {"control": "keypad_brightness", **value},
+                lambda: self.pool.call(self.client.devices_keypad_brightness_set, **value),
+            )
+        )
+
+    async def device_keypad_lock(self, request):
+        from halo_server.devices.keypad import LOCK_FIELDS
+        from halo_server.devices.keypad_policy import valid_device_id
+
+        value = await body(request, tuple(LOCK_FIELDS) + ("operation_id",))
+        text(value["profile_id"], maximum=36)
+        integer(value["account_generation"], minimum=1)
+        integer(value["expected_policy_revision"])
+        boolean(value["locked"])
+        if not valid_device_id(value["device_id"]):
+            raise WebError("bad_request", "Keypad identity is invalid")
+        identifier = operation_id(value["operation_id"])
+        params = {key: item for key, item in value.items() if key != "operation_id"}
+        return success(
+            await self.operations.run(
+                identifier,
+                "configuration",
+                {"target": "keypad_lock", **value},
+                lambda: self.pool.call(self.client.devices_keypad_lock_set, **params),
+                keypad_lock=True,
+            )
+        )
+
     async def device_bridge_pairing(self, request):
         return success(await self.pool.call(self.client.devices_bridge_pairing_get))
 
@@ -1064,6 +1137,9 @@ def create_application(console, *, static_root=None):
         web.post(PREFIX + "/devices/monitoring", console.devices_monitoring),
         web.post(PREFIX + "/devices/light/policy", console.device_light_policy),
         web.post(PREFIX + "/devices/light/set", console.device_light_set),
+        web.post(PREFIX + "/devices/keypad/policy", console.device_keypad_policy),
+        web.post(PREFIX + "/devices/keypad/brightness", console.device_keypad_brightness),
+        web.post(PREFIX + "/devices/keypad/lock", console.device_keypad_lock),
         web.post(PREFIX + "/devices/chime/policy", console.device_chime_policy),
         web.post(PREFIX + "/devices/chime/set", console.device_chime_set),
         web.post(PREFIX + "/devices/alarm/policy", console.device_alarm_policy),

@@ -18,6 +18,7 @@ from halo_server.devices.alarm import AlarmCoordinator
 from halo_server.devices.bridge import DeviceBridge
 from halo_server.devices.catalog import CatalogError, DeviceCatalog
 from halo_server.devices.chime import ChimeCoordinator
+from halo_server.devices.keypad import KeypadCoordinator
 from halo_server.devices.light import LightCoordinator
 from halo_server.devices.policy import (
     DevicePolicy,
@@ -55,6 +56,7 @@ class DeviceMonitor:
         self._state = "disabled"
         self.alarm = AlarmCoordinator(self)
         self.light = LightCoordinator(self)
+        self.keypad = KeypadCoordinator(self)
         self.chime = ChimeCoordinator(self)
 
     def _context(self):
@@ -79,12 +81,14 @@ class DeviceMonitor:
             self._binding.active.clear()
         self.alarm.invalidate()
         self.light.invalidate()
+        self.keypad.invalidate()
         self.chime.invalidate()
         self.bridge.invalidate()
 
     async def reconcile(self):
         await self.alarm.load()
         await self.light.load()
+        await self.keypad.load()
         await self.chime.load()
         await self.bridge.reconcile()
         async with self._lock:
@@ -158,18 +162,21 @@ class DeviceMonitor:
         try:
             alarms = batch.pop("alarms", ())
             lights = batch.pop("lights", ())
+            keypads = batch.pop("keypads", ())
             chimes = batch.pop("chimes", ())
             self._catalog.apply(**batch)
         except (CatalogError, TypeError, ValueError):
             self._state = "error"
             self.alarm.receive(binding, ())
             self.light.receive(binding, ())
+            self.keypad.receive(binding, ())
             self.chime.receive(binding, ())
             self.bridge.publisher.notify()
             return
         self._state = "ready" if batch["complete"] else "partial"
         self.alarm.receive(binding, alarms)
         self.light.receive(binding, lights)
+        self.keypad.receive(binding, keypads)
         self.chime.receive(binding, chimes)
         self.bridge.observe(binding.scope, self._catalog.records(present_only=True))
 
@@ -180,6 +187,7 @@ class DeviceMonitor:
         binding.active.clear()
         self.alarm.invalidate()
         self.light.invalidate()
+        self.keypad.invalidate()
         self.chime.invalidate()
         self._catalog = None
         self.bridge.invalidate()
@@ -211,7 +219,10 @@ class DeviceMonitor:
                     try:
                         await self.chime.close()
                     finally:
-                        await self.bridge.close()
+                        try:
+                            await self.keypad.close()
+                        finally:
+                            await self.bridge.close()
 
     async def set_enabled(self, *, profile_id, account_generation, expected_revision, enabled):
         if (
@@ -242,6 +253,7 @@ class DeviceMonitor:
                 self._loaded = True
                 await self.alarm.load()
                 await self.light.load()
+                await self.keypad.load()
                 await self.chime.load()
             except DevicePolicyConflictError as error:
                 try:
@@ -304,6 +316,9 @@ class DeviceMonitor:
             light = self.light.view(row)
             if light is not None:
                 row["light"] = light
+            keypad = self.keypad.view(row)
+            if keypad is not None:
+                row["keypad"] = keypad
             chime = self.chime.view(row)
             if chime is not None:
                 row["chime"] = chime
@@ -325,6 +340,7 @@ class DeviceMonitor:
                 "read_only": not any(
                     row.get("alarm", {}).get("enabled")
                     or row.get("light", {}).get("enabled")
+                    or row.get("keypad", {}).get("enabled")
                     or row.get("chime", {}).get("enabled")
                     for row in inventory["devices"]
                 )

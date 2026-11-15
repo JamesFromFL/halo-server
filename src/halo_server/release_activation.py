@@ -21,7 +21,10 @@ from halo_server.media.manager import owned_thread, settle_owned
 from halo_server.paths import open_private_directory
 from halo_server.private_json import MAX_REVISION, PrivateJsonError, PrivateJsonStore
 
-READER_VERSION = 14
+READER_VERSION = 15
+# Reader15 adds keypad registry mappings. Existing reader14 policies remain
+# readable; activation raises the floor before new code may persist mappings.
+MINIMUM_READER = 14
 DIGEST = re.compile(r"[0-9a-f]{64}\Z")
 
 
@@ -95,14 +98,14 @@ class ReleaseSelection:
 class ReleasePolicy:
     version: int = 1
     revision: int = 0
-    minimum_reader: int = READER_VERSION
+    minimum_reader: int = MINIMUM_READER
 
     def __post_init__(self):
         if (
             type(self.version) is not int
             or self.version != 1
             or not _integer(self.revision)
-            or not _integer(self.minimum_reader, READER_VERSION)
+            or not _integer(self.minimum_reader, MINIMUM_READER)
         ):
             raise ActivationError("Mutable release reader policy is invalid")
 
@@ -247,7 +250,7 @@ class PolicyStore(PrivateJsonStore):
         return super()._save_locked(directory, current, snapshot)
 
     def advance(self, minimum_reader):
-        if not _integer(minimum_reader, READER_VERSION):
+        if not _integer(minimum_reader, MINIMUM_READER):
             raise ActivationError("Release reader is unsupported", code="reader_too_old")
 
         def change(current):

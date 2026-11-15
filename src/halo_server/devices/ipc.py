@@ -21,7 +21,7 @@ MAX_CONTROL_BYTES = 256 * 1024
 MAX_CHILDREN = 149
 IO_TIMEOUT_SECONDS = 5.0
 MAPPINGS = frozenset({"contact", "motion", "leak", "smoke", "carbon_monoxide"})
-DEVICE_SERVICE_MAPPINGS = MAPPINGS | {"security_system", "lightbulb"}
+DEVICE_SERVICE_MAPPINGS = MAPPINGS | {"security_system", "lightbulb", "keypad_light"}
 ALARM_MODES = frozenset({"disarmed", "home", "away"})
 CODES = frozenset(
     {
@@ -121,7 +121,8 @@ def _child(value):
             "values",
             "alarm",
             "light",
-        },
+        }
+        | ({"keypad"} if isinstance(value, dict) and "keypad" in value else set()),
     ):
         return False
     mappings, values = value["mappings"], value["values"]
@@ -160,6 +161,24 @@ def _child(value):
         ):
             return False
     elif light is not None:
+        return False
+    keypad = value.get("keypad")
+    if isinstance(mappings, list) and "keypad_light" in mappings:
+        if mappings not in (["keypad_light"], ["keypad_light", "motion"]) or not _fields(
+            keypad, {"brightness", "locked", "control_enabled", "on_brightness"}
+        ):
+            return False
+        if (
+            keypad["brightness"] is not None
+            and not _integer(keypad["brightness"], 0, 100)
+            or type(keypad["locked"]) is not bool
+            or type(keypad["control_enabled"]) is not bool
+            or not _integer(keypad["on_brightness"], 1, 100)
+            or not value["available"]
+            and keypad["brightness"] is not None
+        ):
+            return False
+    elif keypad is not None:
         return False
     return (
         _hash(value["device_id"])
@@ -282,6 +301,25 @@ def _light(value, result=False):
     )
 
 
+def _keypad(value, *, lock=False, result=False):
+    observed = "observed_locked" if lock else "observed_brightness"
+    valid = (lambda item: type(item) is bool) if lock else (lambda item: _integer(item, 0, 100))
+    return (
+        _fields(value, ALARM_FIELDS | ({"accepted", "code", observed} if result else set()))
+        and _scope(value["scope"])
+        and _integer(value["registry_revision"])
+        and _integer(value["sequence"], 1)
+        and _uuid4(value["accessory_uuid"])
+        and _hash(value["device_id"])
+        and valid(value["target"])
+        and (
+            not result
+            or _accepted(value)
+            and (valid(value[observed]) if value["accepted"] else value[observed] is None)
+        )
+    )
+
+
 def _payload(kind, value):
     if not isinstance(value, dict):
         return False
@@ -289,6 +327,8 @@ def _payload(kind, value):
         return _alarm(value, kind == "alarm_set_result")
     if kind in {"light_set", "light_set_result"}:
         return _light(value, kind == "light_set_result")
+    if kind in {"keypad_set", "keypad_set_result", "keypad_lock", "keypad_lock_result"}:
+        return _keypad(value, lock=kind.startswith("keypad_lock"), result=kind.endswith("_result"))
     if kind in {"ping", "pong", "shutdown", "shutdown_ack"}:
         return not value
     if kind in {"hello", "hello_ack"}:
@@ -363,9 +403,10 @@ def validate_envelope(value, *, role=None):
     ):
         raise DeviceBridgeProtocolError("Invalid device bridge control message")
     if role is not None and value["kind"] not in (
-        set(REPLIES) | {"alarm_set_result", "light_set_result"}
+        set(REPLIES)
+        | {"alarm_set_result", "light_set_result", "keypad_set_result", "keypad_lock_result"}
         if role == "python"
-        else set(REPLIES.values()) | {"alarm_set", "light_set"}
+        else set(REPLIES.values()) | {"alarm_set", "light_set", "keypad_set", "keypad_lock"}
     ):
         raise DeviceBridgeProtocolError("Invalid device bridge message direction")
     return value

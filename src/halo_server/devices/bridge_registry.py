@@ -16,6 +16,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from halo_server.account_scope import valid_profile_id
+from halo_server.devices.keypad_policy import qualified_keypad
 from halo_server.devices.light_policy import qualified_group, qualified_light
 from halo_server.devices.models import DeviceIdentity, DeviceObservation, DeviceRecord
 from halo_server.private_json import MAX_REVISION, PrivateJsonError, PrivateJsonStore
@@ -26,13 +27,23 @@ MAX_BRIDGE_CHILDREN = 149
 MAX_DEVICE_PREFERENCES = 512
 MAX_REGISTRY_BYTES = 1024 * 1024
 MAPPINGS = frozenset(
-    {"contact", "motion", "leak", "smoke", "carbon_monoxide", "security_system", "lightbulb"}
+    {
+        "contact",
+        "motion",
+        "leak",
+        "smoke",
+        "carbon_monoxide",
+        "security_system",
+        "lightbulb",
+        "keypad_light",
+    }
 )
 _HASH = re.compile(r"[0-9a-f]{64}\Z")
 _KIND = re.compile(r"[a-z][a-z0-9-]{0,63}\Z")
 _USERNAME = re.compile(r"(?:[0-9A-F]{2}:){5}[0-9A-F]{2}\Z")
 _MARKER = b"halo-device-bridge-registry-v1\n"
 _KIND_MAPPINGS = {
+    "keypad": (("keypad-brightness",), ("keypad_light",)),
     "beams-light": (("switch",), ("lightbulb",)),
     "light-group": (("switch",), ("lightbulb",)),
     "security-panel": (("mode",), ("security_system",)),
@@ -114,7 +125,7 @@ class BridgeProfile:
             ("excluded_devices", MAX_DEVICE_PREFERENCES, _hash),
             ("excluded_locations", 128, _hash),
             ("excluded_kinds", 64, _kind),
-            ("excluded_mappings", 7, lambda value: isinstance(value, str) and value in MAPPINGS),
+            ("excluded_mappings", 8, lambda value: isinstance(value, str) and value in MAPPINGS),
         ):
             if not _tuple(getattr(self, name), limit, check):
                 raise BridgeRegistryError("Bridge selection filters are invalid")
@@ -161,7 +172,12 @@ class BridgeDevice:
         allowed = _KIND_MAPPINGS.get(self.kind)
         expected_provider = "ring-light-group" if self.kind == "light-group" else "ring-hub"
         if self.mappings and (
-            self.provider != expected_provider or allowed is None or self.mappings != allowed[1]
+            self.provider != expected_provider
+            or allowed is None
+            or (
+                self.mappings != allowed[1]
+                and not (self.kind == "keypad" and self.mappings == ("keypad_light", "motion"))
+            )
         ):
             raise BridgeRegistryError("Bridge device mapping is outside the qualified allowlist")
         if (
@@ -314,6 +330,8 @@ def _mapping(record: DeviceRecord) -> tuple[str, ...]:
     allowed = _KIND_MAPPINGS.get(record.kind)
     if (
         allowed is None
+        or record.kind == "keypad"
+        and not qualified_keypad(record)
         or record.kind == "beams-light"
         and not qualified_light(record)
         or record.identity.provider != "ring-hub"
@@ -323,6 +341,12 @@ def _mapping(record: DeviceRecord) -> tuple[str, ...]:
         or not set(allowed[0]).issubset(record.capabilities)
     ):
         return ()
+    if (
+        record.kind == "keypad"
+        and "motion" in record.capabilities
+        and "ring-keypad-motion-impulse" in record.capability_evidence
+    ):
+        return ("keypad_light", "motion")
     return allowed[1]
 
 
@@ -360,7 +384,14 @@ def _eligible(entry: BridgeDevice, record: DeviceRecord | None) -> bool:
             entry.provider == record.identity.provider
             and entry.kind == record.kind
             and entry.location_id == record.identity.location_key
-            and entry.mappings == _mapping(record)
+            and (
+                entry.mappings == _mapping(record)
+                or (
+                    entry.kind == "keypad"
+                    and entry.mappings == ("keypad_light", "motion")
+                    and _mapping(record) == ("keypad_light",)
+                )
+            )
         )
     )
 
@@ -448,7 +479,24 @@ def _enroll(
                 and item.location_id == record.identity.location_key
             )
             mappings = item.mappings or (_mapping(record) if same_metadata else ())
-            qualified = bool(mappings) and same_metadata and mappings == _mapping(record)
+            if (
+                same_metadata
+                and item.kind == "keypad"
+                and _mapping(record) == ("keypad_light", "motion")
+            ):
+                mappings = ("keypad_light", "motion")
+            qualified = (
+                bool(mappings)
+                and same_metadata
+                and (
+                    mappings == _mapping(record)
+                    or (
+                        item.kind == "keypad"
+                        and mappings == ("keypad_light", "motion")
+                        and _mapping(record) == ("keypad_light",)
+                    )
+                )
+            )
             item = replace(
                 item, mappings=mappings, qualified=qualified, selected=item.selected and qualified
             )
@@ -594,7 +642,15 @@ class BridgeRegistryStore(PrivateJsonStore[BridgeRegistry]):
             replacement = entries.get(entry.device_id)
             if (
                 replacement is None
-                or (entry.mappings and replacement.mappings != entry.mappings)
+                or (
+                    entry.mappings
+                    and replacement.mappings != entry.mappings
+                    and not (
+                        entry.kind == "keypad"
+                        and entry.mappings == ("keypad_light",)
+                        and replacement.mappings == ("keypad_light", "motion")
+                    )
+                )
                 or replace(
                     entry,
                     kind=replacement.kind

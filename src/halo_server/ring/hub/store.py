@@ -9,6 +9,7 @@ import math
 import time
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Any, TypeAlias
 
 from halo_server.homekit.text import literal_text
@@ -177,6 +178,7 @@ _RETAINED_TEXT_FIELDS = {
 _RETAINED_SCALAR_FIELDS = {
     "categoryId",
     "batteryLevel",
+    "brightness",
     "batteryStatus",
     "acStatus",
     "tamperStatus",
@@ -600,6 +602,13 @@ def _kind(
     return AlarmDeviceKind.UNKNOWN
 
 
+def keypad_brightness(value: object) -> int | None:
+    """Ring's normalized LED setting, rounded half up to a HomeKit percentage."""
+    if type(value) not in (int, float) or not 0 <= value <= 1 or not math.isfinite(value):
+        return None
+    return int((Decimal(str(value)) * 100).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+
+
 def _capabilities(data: Mapping[str, Any], raw_type: str) -> frozenset[AlarmCapability]:
     capabilities = set(_TYPE_CAPABILITIES.get(raw_type, ()))
     field_capabilities = {
@@ -631,6 +640,11 @@ def _capabilities(data: Mapping[str, Any], raw_type: str) -> frozenset[AlarmCapa
             capabilities.add(AlarmCapability.SMOKE)
         if _mapping(components.get("alarm.co")) is not None:
             capabilities.add(AlarmCapability.CARBON_MONOXIDE)
+    if raw_type == "security-keypad":
+        # A keypad's generic fields do not prove exported proximity events.
+        capabilities.discard(AlarmCapability.MOTION)
+        if keypad_brightness(data.get("brightness")) is not None:
+            capabilities.add(AlarmCapability.KEYPAD_BRIGHTNESS)
     return frozenset(capabilities)
 
 
@@ -701,6 +715,8 @@ def _normalize_device(
         active={"faulted", "active", "motion"},
         inactive={"clear", "inactive"},
     )
+    if kind is AlarmDeviceKind.KEYPAD:
+        motion = TriState.UNKNOWN
     if motion is TriState.UNKNOWN and kind is AlarmDeviceKind.MOTION_SENSOR:
         motion = faulted
 
@@ -803,6 +819,9 @@ def _normalize_device(
         ),
         lock_state=_lock_state(data.get("locked")),
         temperature_celsius=_number(data.get("celsius")),
+        keypad_brightness=(
+            keypad_brightness(data.get("brightness")) if kind is AlarmDeviceKind.KEYPAD else None
+        ),
         mode=_mode(data.get("mode")),
         phase=phase,
         signal=signal,

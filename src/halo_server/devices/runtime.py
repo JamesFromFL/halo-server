@@ -91,6 +91,8 @@ class DeviceBridgeRuntime:
         max_restarts: int = 3,
         on_alarm_set: Callable[[dict, Callable[[], bool]], Awaitable[dict]] | None = None,
         on_light_set: Callable[[dict, Callable[[], bool]], Awaitable[dict]] | None = None,
+        on_keypad_set: Callable[[dict, Callable[[], bool]], Awaitable[dict]] | None = None,
+        on_keypad_lock: Callable[[dict, Callable[[], bool]], Awaitable[dict]] | None = None,
     ):
         if not node.is_absolute() or not entry.is_absolute():
             raise ValueError("Device bridge executable paths must be absolute")
@@ -106,7 +108,12 @@ class DeviceBridgeRuntime:
         self._pairing_owner: PairingDirectoryOwner | None = None
         self._on_ready, self._on_retired = on_ready, on_retired
         self._max_restarts = max_restarts
-        self._command_handlers = {"alarm_set": on_alarm_set, "light_set": on_light_set}
+        self._command_handlers = {
+            "alarm_set": on_alarm_set,
+            "light_set": on_light_set,
+            "keypad_set": on_keypad_set,
+            "keypad_lock": on_keypad_lock,
+        }
         self._publication = None
         self._command_epochs = {}
         self._command_tasks: dict[str, asyncio.Task] = {}
@@ -397,7 +404,7 @@ class DeviceBridgeRuntime:
                 validate_envelope(message, role="hap")
                 if message["boot_id"] != self._boot_id:
                     raise DeviceBridgeProtocolError("Retired device bridge boot identity")
-                if message["kind"] in {"alarm_set", "light_set"}:
+                if message["kind"] in {"alarm_set", "light_set", "keypad_set", "keypad_lock"}:
                     await self._dispatch_command(message)
                     continue
                 record = self._pending.get(message["request_id"])
@@ -442,7 +449,29 @@ class DeviceBridgeRuntime:
 
             if expired or authority(previous.get(device)) != authority(current.get(device)):
                 self._command_epochs[device] = self._command_epochs.get(device, 0) + 1
+            for kind in ("keypad_set", "keypad_lock"):
+
+                def keypad_authority(row, kind=kind):
+                    state = row.get("keypad") if row else None
+                    if not state:
+                        return None
+                    base = (row["accessory_uuid"], state["control_enabled"])
+                    return (
+                        base
+                        if kind == "keypad_lock"
+                        else (*base, row["available"], state["locked"])
+                    )
+
+                if expired or keypad_authority(previous.get(device)) != keypad_authority(
+                    current.get(device)
+                ):
+                    lane = (device, kind)
+                    self._command_epochs[lane] = self._command_epochs.get(lane, 0) + 1
         self._publication = publication
+
+    @staticmethod
+    def _command_lane(device, kind):
+        return (device, kind) if kind.startswith("keypad_") else device
 
     def _command_current(self, payload, boot, *, kind="alarm_set", initial=False, epoch=None):
         publication = self._publication
@@ -458,13 +487,28 @@ class DeviceBridgeRuntime:
             or initial
             and publication["sequence"] != payload["sequence"]
             or epoch is not None
-            and self._command_epochs.get(payload["device_id"]) != epoch
+            and self._command_epochs.get(self._command_lane(payload["device_id"], kind)) != epoch
         ):
             return False
         child = next(
             (row for row in publication["children"] if row["device_id"] == payload["device_id"]),
             None,
         )
+        if kind.startswith("keypad_"):
+            state = child.get("keypad") if child else None
+            return bool(
+                child
+                and child["accessory_uuid"] == payload["accessory_uuid"]
+                and "keypad_light" in child["mappings"]
+                and state
+                and state["control_enabled"]
+                and (
+                    kind == "keypad_lock"
+                    or child["available"]
+                    and not state["locked"]
+                    and type(state["brightness"]) is int
+                )
+            )
         field, mapping = (
             ("alarm", "security_system") if kind == "alarm_set" else ("light", "lightbulb")
         )
@@ -489,6 +533,11 @@ class DeviceBridgeRuntime:
             result.setdefault("code", "ok")
         elif message["kind"] == "light_set":
             result.setdefault("observed_on", None)
+        if message["kind"].startswith("keypad_"):
+            result.setdefault(
+                "observed_locked" if message["kind"] == "keypad_lock" else "observed_brightness",
+                None,
+            )
         envelope = {
             **message,
             "kind": message["kind"] + "_result",
@@ -522,14 +571,12 @@ class DeviceBridgeRuntime:
         if not self._command_current(payload, boot, kind=kind, initial=True) or handler is None:
             await self._send_command_result(message, {"accepted": False, "code": "policy-denied"})
             return
-        if (
-            len(self._command_tasks) >= MAX_COMMAND_REQUESTS
-            or payload["device_id"] in self._command_devices
-        ):
+        lane = self._command_lane(payload["device_id"], kind)
+        if len(self._command_tasks) >= MAX_COMMAND_REQUESTS or lane in self._command_devices:
             await self._send_command_result(message, {"accepted": False, "code": "busy"})
             return
-        epoch = self._command_epochs.get(payload["device_id"])
-        self._command_devices.add(payload["device_id"])
+        epoch = self._command_epochs.get(lane)
+        self._command_devices.add(lane)
 
         async def execute():
             def admitted():
@@ -545,7 +592,13 @@ class DeviceBridgeRuntime:
                 if not isinstance(result, dict):
                     raise DeviceBridgeProtocolError("Invalid device command handler result")
                 expected = {"accepted", "code"} | (
-                    {"observed_on"} if kind == "light_set" else set()
+                    {"observed_on"}
+                    if kind == "light_set"
+                    else {"observed_brightness"}
+                    if kind == "keypad_set"
+                    else {"observed_locked"}
+                    if kind == "keypad_lock"
+                    else set()
                 )
                 if not set(result).issubset(expected) or "accepted" not in result:
                     raise DeviceBridgeProtocolError("Invalid device command handler result")
@@ -559,7 +612,7 @@ class DeviceBridgeRuntime:
                     )
             finally:
                 self._command_tasks.pop(request_id, None)
-                self._command_devices.discard(payload["device_id"])
+                self._command_devices.discard(lane)
 
         self._command_tasks[request_id] = asyncio.create_task(
             execute(), name="device-control-command"

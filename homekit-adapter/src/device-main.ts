@@ -77,6 +77,14 @@ async function run(): Promise<number> {
   manager = new DeviceBridgeManager({
     store,
     publisher: deviceHapPublisher(store),
+    onKeypadSet: (request) =>
+      commands
+        ? commands.request("keypad_set", request)
+        : Promise.reject(new ProtocolError("not-ready")),
+    onKeypadLock: (request) =>
+      commands
+        ? commands.request("keypad_lock", request)
+        : Promise.reject(new ProtocolError("not-ready")),
     onLightSet: (request) =>
       commands
         ? commands.request("light_set", request)
@@ -141,6 +149,8 @@ async function run(): Promise<number> {
     if (message.boot_id !== boot) throw new ProtocolError("stale-boot");
     renew();
     switch (message.kind) {
+      case "keypad_set_result":
+      case "keypad_lock_result":
       case "light_set_result":
       case "alarm_set_result":
         commands!.receive(message);

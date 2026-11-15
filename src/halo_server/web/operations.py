@@ -128,6 +128,7 @@ class Operations:
         self.tasks = {}
         self.workers = set()
         self.lock = asyncio.Lock()
+        self.keypad_lock = asyncio.Lock()
         self.accepting = True
 
     async def start(self):
@@ -176,7 +177,21 @@ class Operations:
             raise WebError("not_found", "Operation was not found", status=404)
         return {key: value for key, value in row.items() if key not in {"kind", "digest"}}
 
-    async def run(self, identifier, kind, parameters, function, *, resume=False):
+    async def run(self, identifier, kind, parameters, function, *, resume=False, keypad_lock=False):
+        # This opt-in is internal to the local keypad-lock route. Physical
+        # mutations keep their existing single lane; locking must not wait for
+        # a pending dimmer whose captured admission it is intended to revoke.
+        if (
+            type(keypad_lock) is not bool
+            or keypad_lock
+            and (
+                kind != "configuration"
+                or not isinstance(parameters, dict)
+                or parameters.get("target") != "keypad_lock"
+            )
+        ):
+            raise WebError("bad_request", "Invalid local keypad lock operation")
+        lane = self.keypad_lock if keypad_lock else self.lock
         identifier = operation_id(identifier)
         digest = hashlib.sha256(
             json.dumps(parameters, sort_keys=True, separators=(",", ":")).encode()
@@ -194,11 +209,11 @@ class Operations:
                 return self.get(identifier)
         if not self.accepting:
             raise WebError("service_stopping", "Web mutations are draining", status=503)
-        if self.lock.locked():
+        if lane.locked():
             raise WebError("busy", "Another owner operation is pending", status=429)
         if existing is None and len(self.rows) >= MAX_OPERATIONS:
             raise WebError("capacity", "Operation history is full; use local recovery", status=429)
-        await self.lock.acquire()
+        await lane.acquire()
         row = {
             "operation_id": identifier,
             "kind": kind,
@@ -277,7 +292,7 @@ class Operations:
             try:
                 return await apply()
             finally:
-                self.lock.release()
+                lane.release()
 
         task = asyncio.create_task(owned(), name="web-owned-mutation")
         self.tasks[identifier] = task

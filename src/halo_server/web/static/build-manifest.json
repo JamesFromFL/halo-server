@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "source_hash": "7a69c977e69662ac95d39143774215e27f852dc1cb7298c339b09248f2166599",
+  "source_hash": "a7ee07d6fc04c9224a0342916b79d0ccd047d3c746e98c6b479839de5b3fdce2",
   "source_files": [
     {
       "path": ".prettierignore",
@@ -63,6 +63,10 @@
       "sha256": "b2d3e6055cd306b4a65b8cb78d3cf00ec6cb64735d44fbbd3e60f6a7932163dd"
     },
     {
+      "path": "scripts/keypad-smoke.mjs",
+      "sha256": "698449c892de3a099006358ad3e369f81ab92368be95109b0500b0ebd107ad06"
+    },
+    {
       "path": "scripts/licenses.mjs",
       "sha256": "8ddb7b83a22aeaa6a9ca00cb9abfa075d9db2b04c907bbd81a363d9456915cb2"
     },
@@ -123,16 +127,20 @@
       "sha256": "b01bc5b8265cd3e81b3f32b4ee6513fb639527eb4ade2f4818613c1bac897400"
     },
     {
+      "path": "src/components/KeypadControls.svelte",
+      "sha256": "bdb5088420dc2089f3a233e8ac57453783d08255a7dcbc0a75840a15d357817b"
+    },
+    {
       "path": "src/components/LightControls.svelte",
       "sha256": "62cd8e77636eee6434bf6cf0ae1551f327e306125348331f3566e7bb5bf153f9"
     },
     {
       "path": "src/components/NoncameraDevices.svelte",
-      "sha256": "b7ef2d7e296030570a5544683c1ce8855d24e81831f8113fd94c5e79a5b86b39"
+      "sha256": "d797bb7e214c9caadc103577a3d6865ef06ba73fcc829e54775859200c6acdd6"
     },
     {
       "path": "src/components/OperationStatus.svelte",
-      "sha256": "9a7bcf374596731670db079209758afdeac5099d49e17bb84db855f3939a4461"
+      "sha256": "a5a954518350902ec4c09bdeab92b17c601f03098a7f2821618c9ad7116236ee"
     },
     {
       "path": "src/components/PairingCode.svelte",
@@ -164,11 +172,15 @@
     },
     {
       "path": "src/lib/bridge.ts",
-      "sha256": "3b31dce8ff69baaf75ac9b5ed0f9ac66df9218894f08333bb5d77cf2f8f3de03"
+      "sha256": "4cc1f248eaffb0109d3be6e2a39c03e1be05a619f659aac0f2ff33c132650ea5"
     },
     {
       "path": "src/lib/chime.ts",
       "sha256": "fc1645d4e2dfd7de7f7a343405314207f4177c01421a59753a1061aa1d58b32e"
+    },
+    {
+      "path": "src/lib/keypad.ts",
+      "sha256": "939fd9bb63e79c23d981b1410f78863c210f785333e34bfafd543ff3fb21e0ad"
     },
     {
       "path": "src/lib/light.ts",
@@ -180,7 +192,7 @@
     },
     {
       "path": "src/lib/noncamera.ts",
-      "sha256": "63e1c2d247eaacf15ddadabc5fe57482b01dcbea74fb6cb175781985823f033a"
+      "sha256": "5ad2206edae1cf394e46872f9b1b2853cc5658dd46a7bbdc09fe026aaf6ab0fa"
     },
     {
       "path": "src/lib/password.ts",
@@ -188,7 +200,7 @@
     },
     {
       "path": "src/lib/types.ts",
-      "sha256": "2df78eda0989571bc20721150674a0ac58505d24124b731c1c38b5bafc2a7513"
+      "sha256": "f0ade9bf6db0cc6ff5c65a30810467ad7bbbdc4a6d3af684b278bc19baf158ca"
     },
     {
       "path": "src/main.ts",
@@ -251,6 +263,10 @@
       "sha256": "864a5e2bddc2748bf9921c0c990ea486f9ffbe691f63020b3534315515288b8c"
     },
     {
+      "path": "tests/keypad.test.ts",
+      "sha256": "c0db81a032120d6d8d733464c13ddc4931d5bfe3dd4157008eb676a11bdee247"
+    },
+    {
       "path": "tests/light.test.ts",
       "sha256": "b143a5cd29affa3179916421b91d26fac2a11afa74e50532a0b2aa99c0ecc5f3"
     },
@@ -281,12 +297,12 @@
       "sha256": "27b3a540203dab45ee90ade440f4840b513dd2055969a84a9ebccb561fd14799"
     },
     {
-      "path": "assets/index-B_958Fvz.css",
-      "sha256": "74c07fd75608d0526505de5411debfe75ff1470d48bf57dcd3da8b5e31b92ff0"
+      "path": "assets/index-7Au-VFw8.css",
+      "sha256": "7535816b4e8693ab146ba556a9766b5bf9a2c86dfdc12e5cfd1e3057979345f0"
     },
     {
-      "path": "assets/index-C6VZQcsw.js",
-      "sha256": "bee66cfef00690513f31c7f73954b1442863d5c965fff2cfeb4f7a77cc817f1f"
+      "path": "assets/index-cphiC3jO.js",
+      "sha256": "8c285e72bb153b47f06b44d6d5a8c7d933170c60f22085eaf91de0295100f846"
     },
     {
       "path": "halo.png",
@@ -294,7 +310,7 @@
     },
     {
       "path": "index.html",
-      "sha256": "7e75953958c2c8f0351419d8cb44b31a024f2bf2721f21dce7530371cca99d78"
+      "sha256": "af8bb68c031d997e88b9180ab80004b509ea8b2de8c761d98817a0f49af3abe3"
     }
   ]
 }

@@ -95,6 +95,7 @@ async def test_activate_rollback_and_uninstall_never_restore_mutable_snapshots(t
         "devices/alarm.json",
         "devices/light.json",
         "devices/chime.json",
+        "devices/keypad.json",
         "homekit/devices/registry.json",
         "homekit/devices/publication.json",
         "homekit/devices/pairings/AccessoryInfo.json",
@@ -139,12 +140,12 @@ async def test_local_failure_rolls_back_only_code_compatible_with_current_floor(
     newer, service = setup(
         tmp_path / "newer",
         service=Service({B.release_id: False}),
-        readers={A.release_id: 14, B.release_id: 15},
+        readers={A.release_id: 14, B.release_id: 16},
     )
     first = await newer.activate(A, expected_revision=0)
     result = await newer.activate(B, expected_revision=first.selection.revision)
     assert result.status == "stopped" and result.code == "rollback_incompatible"
-    assert newer.policy.load().minimum_reader == 15 and newer.selection.load().active == B
+    assert newer.policy.load().minimum_reader == 16 and newer.selection.load().active == B
     assert service.events[-1] == "stop"
     with pytest.raises(ActivationError) as error:
         await newer.activate(A, expected_revision=result.selection.revision)
@@ -277,13 +278,13 @@ async def test_crossprefix_floor_change_after_verification_is_rechecked_under_gl
     async def stop():
         await original_stop()
         # A separate prefix won EX between initial verification and this stop.
-        activation.policy.advance(15)
+        activation.policy.advance(16)
 
     service.stop = stop
     with pytest.raises(ActivationError) as error:
         await activation.activate(A, expected_revision=0)
     assert error.value.code == "operator_reader_too_old"
-    assert activation.policy.load().minimum_reader == 15
+    assert activation.policy.load().minimum_reader == 16
     assert not activation.selection.path.exists()
 
 
@@ -377,3 +378,19 @@ async def test_legacy_stop_uncertainty_prevents_first_selection_and_floor(tmp_pa
     assert error.value.code == ("active_unmanaged" if response == "running" else "stop_unverified")
     assert calls == [("stop",)]
     assert not activation.selection.path.exists() and not activation.policy.path.exists()
+
+
+@pytest.mark.asyncio
+async def test_keypad_reader_upgrade_accepts_legacy_floor_and_blocks_old_code(tmp_path):
+    activation, service = setup(tmp_path, readers={A.release_id: 14, B.release_id: 15})
+    first = await activation.activate(A, expected_revision=0)
+    assert first.policy.minimum_reader == 14
+    newer = await activation.activate(B, expected_revision=first.selection.revision)
+    assert newer.policy.minimum_reader == 15
+    assert newer.selection.previous == A
+    events = list(service.events)
+    with pytest.raises(ActivationError) as error:
+        await activation.rollback(expected_revision=newer.selection.revision)
+    assert error.value.code == "reader_too_old"
+    assert service.events == events
+    assert activation.selection.load() == newer.selection

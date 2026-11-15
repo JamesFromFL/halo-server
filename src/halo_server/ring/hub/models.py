@@ -162,6 +162,7 @@ class AlarmCapability(StrEnum):
     SWITCH = "switch"
     VALVE = "valve"
     SIREN = "siren"
+    KEYPAD_BRIGHTNESS = "keypad-brightness"
 
 
 @unique
@@ -264,6 +265,7 @@ class AlarmDeviceSnapshot:
     valve_open: TriState = TriState.UNKNOWN
     lock_state: AlarmLockState = AlarmLockState.UNKNOWN
     temperature_celsius: float | None = None
+    keypad_brightness: int | None = None
     mode: AlarmMode = AlarmMode.UNKNOWN
     phase: AlarmPhase = AlarmPhase.UNKNOWN
     signal: AlarmSignal = AlarmSignal.UNKNOWN
@@ -291,6 +293,10 @@ class AlarmDeviceSnapshot:
                 raise ValueError("battery_level must be an integer or None")
             if not 0 <= self.battery_level <= 100:
                 raise ValueError("battery_level must be between 0 and 100")
+        if self.keypad_brightness is not None and (
+            type(self.keypad_brightness) is not int or not 0 <= self.keypad_brightness <= 100
+        ):
+            raise ValueError("keypad brightness must be an integer percentage or None")
         object.__setattr__(self, "capabilities", frozenset(self.capabilities))
         if not isinstance(self.faulted_devices_valid, bool):
             raise ValueError("faulted_devices_valid must be a boolean")

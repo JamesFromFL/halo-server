@@ -20,6 +20,7 @@ export const DEVICE_SERVICE_MAPPINGS = [
   ...DEVICE_MAPPINGS,
   "security_system",
   "lightbulb",
+  "keypad_light",
 ] as const;
 export type AlarmMode = "disarmed" | "home" | "away";
 export interface DeviceAlarmState {
@@ -52,16 +53,48 @@ export interface DeviceLightResult extends DeviceLightRequest {
   observed_on: boolean | null;
 }
 
+export interface DeviceKeypadState {
+  brightness: number | null;
+  locked: boolean;
+  control_enabled: boolean;
+  on_brightness: number;
+}
+export interface DeviceKeypadRequest extends Omit<
+  DeviceAlarmRequest,
+  "target"
+> {
+  target: number;
+}
+export interface DeviceKeypadResult extends DeviceKeypadRequest {
+  accepted: boolean;
+  code: string;
+  observed_brightness: number | null;
+}
+export interface DeviceKeypadLockRequest extends Omit<
+  DeviceAlarmRequest,
+  "target"
+> {
+  target: boolean;
+}
+export interface DeviceKeypadLockResult extends DeviceKeypadLockRequest {
+  accepted: boolean;
+  code: string;
+  observed_locked: boolean | null;
+}
+
 export interface DeviceChild {
   device_id: string;
   accessory_uuid: string;
   name: string;
   model: string;
-  mappings: (DeviceMapping | "security_system" | "lightbulb")[];
+  mappings: (
+    DeviceMapping | "security_system" | "lightbulb" | "keypad_light"
+  )[];
   available: boolean;
   values: Record<DeviceMapping, boolean | null>;
   alarm: DeviceAlarmState | null;
   light: DeviceLightState | null;
+  keypad?: DeviceKeypadState | null;
 }
 export interface DevicePublication {
   scope: AccountScope;
@@ -98,7 +131,11 @@ export type DeviceKind =
   | "alarm_set"
   | "alarm_set_result"
   | "light_set"
-  | "light_set_result";
+  | "light_set_result"
+  | "keypad_set"
+  | "keypad_set_result"
+  | "keypad_lock"
+  | "keypad_lock_result";
 export interface DeviceEnvelope {
   v: 1;
   kind: DeviceKind;
@@ -188,6 +225,11 @@ export function validateDevicePublication(v: unknown): DevicePublication {
       "values",
       "alarm",
       "light",
+      ...(child !== null &&
+      typeof child === "object" &&
+      Object.hasOwn(child, "keypad")
+        ? ["keypad"]
+        : []),
     ]);
     if (
       !hash(child.device_id) ||
@@ -236,6 +278,30 @@ export function validateDevicePublication(v: unknown): DevicePublication {
         throw new ProtocolError("invalid-light-state");
     } else if (child.light !== null)
       throw new ProtocolError("invalid-light-mapping");
+    if (child.mappings.includes("keypad_light")) {
+      if (
+        !["keypad_light", "keypad_light,motion"].includes(child.mappings.join())
+      )
+        throw new ProtocolError("invalid-keypad-mapping");
+      exact(child.keypad, [
+        "brightness",
+        "locked",
+        "control_enabled",
+        "on_brightness",
+      ]);
+      if (
+        (child.keypad.brightness !== null &&
+          (!integer(child.keypad.brightness) ||
+            child.keypad.brightness > 100)) ||
+        typeof child.keypad.locked !== "boolean" ||
+        typeof child.keypad.control_enabled !== "boolean" ||
+        !integer(child.keypad.on_brightness, 1) ||
+        child.keypad.on_brightness > 100 ||
+        (!child.available && child.keypad.brightness !== null)
+      )
+        throw new ProtocolError("invalid-keypad-state");
+    } else if (child.keypad != null)
+      throw new ProtocolError("invalid-keypad-mapping");
     exact(child.values, DEVICE_MAPPINGS);
     for (const mapping of DEVICE_MAPPINGS) {
       const observed = child.values[mapping];
@@ -309,6 +375,39 @@ export function validateDeviceLight(
       throw new ProtocolError("invalid-light-result");
   }
   return value as unknown as DeviceLightRequest;
+}
+export function validateDeviceKeypad(
+  value: unknown,
+  result = false,
+  lock = false,
+): DeviceKeypadRequest | DeviceKeypadLockRequest {
+  const observed = lock ? "observed_locked" : "observed_brightness";
+  exact(value, [
+    "scope",
+    "registry_revision",
+    "sequence",
+    "accessory_uuid",
+    "device_id",
+    "target",
+    ...(result ? ["accepted", "code", observed] : []),
+  ]);
+  validateDeviceScope(value.scope);
+  const valid = (v: unknown): boolean =>
+    lock ? typeof v === "boolean" : integer(v) && v <= 100;
+  if (
+    !integer(value.registry_revision) ||
+    !integer(value.sequence, 1) ||
+    !uuid4(value.accessory_uuid) ||
+    !hash(value.device_id) ||
+    !valid(value.target)
+  )
+    throw new ProtocolError("invalid-keypad-command");
+  if (result) {
+    outcome(value);
+    if (value.accepted ? !valid(value[observed]) : value[observed] !== null)
+      throw new ProtocolError("invalid-keypad-result");
+  }
+  return value as unknown as DeviceKeypadRequest | DeviceKeypadLockRequest;
 }
 export function validateDevicePairing(
   v: unknown,
@@ -384,6 +483,8 @@ export function validateDeviceEnvelope(
     "shutdown",
     "alarm_set_result",
     "light_set_result",
+    "keypad_set_result",
+    "keypad_lock_result",
   ];
   const replies = [
     "hello_ack",
@@ -395,6 +496,8 @@ export function validateDeviceEnvelope(
     "shutdown_ack",
     "alarm_set",
     "light_set",
+    "keypad_set",
+    "keypad_lock",
   ];
   if (
     !(
@@ -408,6 +511,16 @@ export function validateDeviceEnvelope(
     throw new ProtocolError("invalid-device-kind");
   const p = v.payload as Record<string, unknown>;
   switch (v.kind) {
+    case "keypad_set":
+    case "keypad_set_result":
+    case "keypad_lock":
+    case "keypad_lock_result":
+      validateDeviceKeypad(
+        p,
+        String(v.kind).endsWith("_result"),
+        String(v.kind).startsWith("keypad_lock"),
+      );
+      break;
     case "alarm_set":
       validateDeviceAlarm(p);
       break;

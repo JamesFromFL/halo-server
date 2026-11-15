@@ -165,7 +165,7 @@ async def test_old_source_operator_refuses_floor_before_any_configuration_read(
     tmp_path, monkeypatch
 ):
     activation, service = setup(tmp_path)
-    activation.policy.advance(15)
+    activation.policy.advance(16)
     configuration = activation.state_directory / "configuration.json"
     configuration.write_text("future configuration must never be decoded by this reader")
     configuration.chmod(0o600)

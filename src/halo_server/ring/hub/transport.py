@@ -24,6 +24,7 @@ from halo_server.ring.hub.protocol import (
     HubDisconnection,
     encode_clap_frame,
     encode_device_list_request,
+    encode_keypad_brightness_command,
     encode_light_command,
     encode_mode_command,
     parse_clap_frame,
@@ -296,6 +297,27 @@ class RingAlarmTransport:
             light_command=(asset_id, light_zid, on, duration_seconds),
         )
 
+    async def send_keypad_brightness(
+        self,
+        asset_id: str,
+        keypad_zid: str,
+        brightness: int,
+        *,
+        epoch: int,
+        admission: Callable[[], AbstractContextManager[None]],
+    ) -> None:
+        """Send only the qualified keypad brightness field under final admission."""
+        if not callable(admission):
+            raise AlarmTransportError("operation-not-allowed")
+        await self._send_encoded(
+            lambda sequence: encode_keypad_brightness_command(
+                asset_id, keypad_zid, brightness, sequence
+            ),
+            epoch=epoch,
+            admission=admission,
+            keypad_command=(asset_id, keypad_zid, brightness),
+        )
+
     async def close(self) -> None:
         """Close the socket and its independently owned aiohttp session."""
 
@@ -363,6 +385,7 @@ class RingAlarmTransport:
         admission: Callable[[], AbstractContextManager[None]] | None = None,
         mode_command: tuple[str, str, AlarmMode] | None = None,
         light_command: tuple[str, str, bool, int | None] | None = None,
+        keypad_command: tuple[str, str, int] | None = None,
     ) -> None:
         async with self._send_lock:
             websocket = self._websocket
@@ -380,7 +403,7 @@ class RingAlarmTransport:
             message = payload.get("msg") if isinstance(payload, Mapping) else None
             # Generic encoded calls remain read-only. Each actuator opts into
             # its own exact schema and asset kind with a send-boundary guard.
-            if mode_command is None and light_command is None:
+            if mode_command is None and light_command is None and keypad_command is None:
                 allowed = (
                     isinstance(message, Mapping)
                     and set(message) == {"msg", "dst", "seq"}
@@ -390,19 +413,32 @@ class RingAlarmTransport:
                 allowed = (
                     callable(admission)
                     and light_command is None
+                    and keypad_command is None
                     and payload == encode_mode_command(*mode_command, sequence)
                     and any(
                         asset.asset_id == mode_command[0] and asset.kind.startswith("base_station")
                         for asset in self._assets
                     )
                 )
-            else:
+            elif light_command is not None:
                 allowed = (
                     callable(admission)
+                    and keypad_command is None
                     and light_command is not None
                     and payload == encode_light_command(*light_command, sequence)
                     and any(
                         asset.asset_id == light_command[0] and asset.kind == "beams_bridge_v1"
+                        for asset in self._assets
+                    )
+                )
+            else:
+                allowed = (
+                    callable(admission)
+                    and keypad_command is not None
+                    and payload == encode_keypad_brightness_command(*keypad_command, sequence)
+                    and any(
+                        asset.asset_id == keypad_command[0]
+                        and asset.kind.startswith("base_station")
                         for asset in self._assets
                     )
                 )

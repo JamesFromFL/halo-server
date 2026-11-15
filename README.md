@@ -53,7 +53,8 @@ Implemented:
 - account-scoped non-camera inventory, hub events and stable Halo Bridge identities
 - read-only contact, motion, leak, smoke/CO and Alarm observations with explicit faults
 - separately permitted normal Alarm modes, finite individual/group lighting requests,
-  and legacy Chime settings with deliberate sound tests
+  legacy Chime settings with deliberate sound tests, and keypad brightness with
+  a persistent brightness lock and evidence-qualified proximity motion
 
 Not implemented yet:
 

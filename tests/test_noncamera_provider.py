@@ -488,7 +488,7 @@ async def test_confirmed_source_removal_is_unavailable_while_other_location_is_o
         gateway=gateway,
         transport_factory=Isolated,
         clock=lambda: 100.0,
-        on_snapshot=lambda alarms, lights, chimes, **snapshot: catalog.apply(**snapshot),
+        on_snapshot=lambda alarms, lights, chimes, keypads, **snapshot: catalog.apply(**snapshot),
     )
     try:
         await instance.refresh()

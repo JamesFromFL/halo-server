@@ -199,6 +199,15 @@ class AdminClient:
     async def devices_bridge_publication_set(self, **params):
         return await self._object("devices_bridge_publication_set", **params)
 
+    async def devices_keypad_policy_set(self, **params):
+        return await self._object("devices_keypad_policy_set", **params)
+
+    async def devices_keypad_brightness_set(self, **params):
+        return await self._object("devices_keypad_brightness_set", **params)
+
+    async def devices_keypad_lock_set(self, **params):
+        return await self._object("devices_keypad_lock_set", **params)
+
     async def devices_light_policy_set(self, **params):
         return await self._object("devices_light_policy_set", **params)
 
