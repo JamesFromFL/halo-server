@@ -103,3 +103,49 @@ Development tests use fake providers, isolated sockets and synthetic local HAP
 accessories. They do not send production alarm or keypad commands. Physical
 brightness, Siri behavior and live proximity acceptance are reserved for the
 owner. Passive server checks preserve all existing pairings and unrelated grants.
+
+## Deployment result
+
+The feature from local commit `71ca7f30a19738342a711a3f96db4e65ef47d233`
+was deployed on November 14, 2026 (final passive check November 15 at 03:44 UTC).
+Release `e2ea9aaf3e8eaec6476c991fda701b04cc5a7f9a04520c151d9617e9a28e0e12`
+is active at selection revision 29. The separately qualified reader15 recovery
+release `db5c537710fa4d7673da7a0fccdfd6f2b16c45ed5585ba85c485a73f4ae93ae6`
+was installed and verified first, and remains the retained previous release.
+The reader floor is now 15; the earlier reader14 packages are historical copies,
+not valid rollback targets.
+
+All seven paired cameras and the 17 existing bridge children survived. The keypad
+is the 18th selected child. Camera pairing files remained byte-identical, bridge
+pairing credentials and existing HAP identifiers remained intact, and only the
+expected new keypad identifiers and bridge configuration metadata were added.
+Owner authentication, TLS, recording preferences and existing alarm grants were
+preserved. The final daemon, web and HomeKit readiness checks passed.
+
+Passive Ring observation reported keypad brightness at 100%. Its local control
+grant was enabled with the persistent lock **on**; brightness remained 100%,
+physical writes were unavailable while locked, and the local lock control became
+available. This saved only Halo policy. No brightness, alarm, panic, siren,
+bypass or LED-pattern commands, or simulated HomeKit events, were sent.
+
+Motion remained unknown in the passive keypad capture: no genuine proximity event
+had yet arrived. The motion service therefore remains gated on that first event.
+The owner still needs to verify physical brightness, Siri room-light behavior and
+proximity reporting. Ring's LED wake mode may affect proximity event availability;
+Halo did not change that setting.
+
+Source verification covered 4,301 unique passing Python tests, with one existing
+IPv6-loopback test unavailable on the test host. An obsolete future-reader fixture
+caused eight cascading failures in the initial full run; correcting its floor from
+15 to 16 and rerunning both affected files passed all 13 tests. Installed feature
+qualification passed 1,231 Python, 338 adapter and 68 UI tests, both browsers'
+60-layout general checks, and five keypad checks/four layouts per browser. An
+initial installed-test grouping error was corrected without changing package
+bytes; its original evidence is retained. All 4,396 dependency files matched the
+previous installation. Recovery independently passed 1,101 installed Python,
+329 adapter and 65 UI tests plus both browsers.
+
+Private receipts are under the task workspace's `work/halo-keypad-2026-11-14/`.
+`deployment-complete.json` has SHA-256
+`0eaf32541bd5a9c516f8b15a96ae0785ef39c252e35f6ef492f6105aeda7328a`.
+The feature and this report are committed locally; nothing was pushed.
