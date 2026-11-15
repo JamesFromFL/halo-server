@@ -109,6 +109,55 @@ class Peer {
   }
   async close() { this.session.close(); await Promise.all([this.receiver.close(), this.producer.close()]); }
 }
+test('seven cameras record concurrently with independent policy and exact packet delivery', async () => {
+  class CameraPeer extends Peer {
+    scopes = Array.from({ length: 7 }, (_, i) => ({ ...this.scope, camera_id: String(42 + i) }));
+    override async auto(r: Envelope) {
+      if (r.kind === 'inventory_request') {
+        await this.reply(r, 'inventory_page', {
+          scope: { profile_id: profile, account_generation: 1 }, cursor: r.payload.cursor,
+          next_cursor: null, revision: this.revision, total: this.scopes.length, complete: true,
+          devices: this.scopes.map(scope => ({ ...this.camera(), scope: { ...scope } })),
+        });
+      } else if (r.kind === 'policy_update') {
+        const scope = this.scopes.find(s => s.camera_id === (r.payload.scope as MediaScope).camera_id)!;
+        scope.privacy_generation++;
+        this.revision++;
+        await this.reply(r, 'policy_ack', { scope: r.payload.scope, accepted: true, code: 'ok' });
+      } else {
+        await super.auto(r);
+      }
+    }
+  }
+  const p = new CameraPeer();
+  try {
+    await p.ready();
+    for (const scope of p.scopes.slice(1))
+      await p.session.camera(scope.camera_id).updatePolicy(policy);
+    const cameras = p.scopes.map(scope => p.session.camera(scope.camera_id));
+    const recordings = await Promise.all(cameras.map(camera => camera.openRecording(config)));
+    assert.equal(p.session.activeRecordings, 7);
+    await assert.rejects(cameras[0]!.openRecording(config), /recording-capacity/);
+    const pulls = recordings.map(recording => recording.next());
+    for (let i = 0; i < recordings.length; i++) {
+      const request = await p.take('recording_next');
+      const bytes = Buffer.from(`camera-${(request.payload.scope as MediaScope).camera_id}`);
+      await p.packet(request, bytes, 'init');
+    }
+    const packets = await Promise.all(pulls);
+    for (let i = 0; i < recordings.length; i++)
+      assert.deepEqual(packets[i]!.data, Buffer.from(`camera-${recordings[i]!.scope.camera_id}`));
+    await recordings[0]!.stop();
+    assert.equal(p.session.activeRecordings, 6);
+    assert.equal(recordings[0]!.isCurrent(), false);
+    assert.ok(recordings.slice(1).every(recording => recording.isCurrent()));
+    await Promise.all(recordings.slice(1).map(recording => recording.stop()));
+    assert.equal(p.session.activeRecordings, 0);
+    assert.deepEqual(p.failures, []);
+  } finally {
+    await p.close();
+  }
+});
 test('actual recording bulk has exact sequence, one pull, frozen scope and EOS authorization', async () => {
   const p = new Peer();
   try {

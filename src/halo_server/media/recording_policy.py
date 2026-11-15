@@ -1,7 +1,7 @@
 """Trusted recording demand and measured warm-history admission.
 
 HomeKit-selected codecs describe output. Only durable Python owner settings,
-positive mains evidence, and the current camera policy can request warm input.
+video capability, and the current camera policy can request warm input.
 """
 
 from __future__ import annotations
@@ -15,7 +15,6 @@ from uuid import uuid4
 from halo_server.homekit.models import HomeKitOperationError
 from halo_server.media.recording import RecordingConfiguration
 
-MAX_WARM = 2
 WARM_SECONDS = 570.0
 MAINTENANCE_SECONDS = 0.5
 CLEANUP_SECONDS = 5.0
@@ -27,7 +26,7 @@ class RecordingAuthority:
     audio_active: bool
     configuration: RecordingConfiguration | None
     owner_opt_in: bool = False
-    mains_confirmed: bool = False
+    recording_supported: bool = False
 
     def __post_init__(self):
         if (
@@ -37,7 +36,7 @@ class RecordingAuthority:
                     self.active,
                     self.audio_active,
                     self.owner_opt_in,
-                    self.mains_confirmed,
+                    self.recording_supported,
                 )
             )
             or self.configuration is not None
@@ -58,7 +57,7 @@ class RecordingAuthority:
             self.active,
             self.audio_active,
             self.owner_opt_in,
-            self.mains_confirmed,
+            self.recording_supported,
             self.configuration is not None,
         )
 
@@ -67,7 +66,7 @@ class RecordingAuthority:
         return (
             self.active
             and self.owner_opt_in
-            and self.mains_confirmed
+            and self.recording_supported
             and self.configuration is not None
         )
 
@@ -94,7 +93,7 @@ class _Warm:
 
 
 class RecordingPolicyOwner:
-    """At most two warm reservations, including acquisition and failed cleanup."""
+    """One warm reservation per camera, retained until cleanup actually finishes."""
 
     def __init__(
         self, controller, captures, authority, *, clock=time.monotonic, changed=lambda: None
@@ -114,10 +113,10 @@ class RecordingPolicyOwner:
     def warm_budget(self):
         """Read reserved slots without starting capture or probing its history.
 
-        Acquisitions and retained cleanup own capacity too; this count is not
+        Acquisitions and retained cleanup are counted too; this count is not
         the number of active streams or of owner preferences switched on.
         """
-        return {"capacity": MAX_WARM, "reserved": len(self._entries)}
+        return {"capacity": None, "reserved": len(self._entries)}
 
     @property
     def pending_resources(self):
@@ -201,11 +200,7 @@ class RecordingPolicyOwner:
                 return
             for camera in self.controller.inventory().cameras:
                 state = self._allowed(boot, camera.scope)
-                if (
-                    state is None
-                    or camera.scope.source_key in self._entries
-                    or len(self._entries) >= MAX_WARM
-                ):
+                if state is None or camera.scope.source_key in self._entries:
                     continue
                 entry = _Warm(
                     boot, camera.scope, str(uuid4()), state.capture_signature, self._clock()
@@ -228,7 +223,7 @@ class RecordingPolicyOwner:
                 audio=entry.signature[1],
                 warm=True,
                 owner_opt_in=True,
-                mains_confirmed=True,
+                recording_supported=True,
             )
             if not self._current(entry):
                 await entry.capture.close()
@@ -272,8 +267,6 @@ class RecordingPolicyOwner:
         state = self._allowed(self._boot, scope)
         if state is None:
             return RecordingWarmStatus("disabled")
-        if entry is None and len(self._entries) >= MAX_WARM:
-            return RecordingWarmStatus("capacity")
         if entry is None or entry.capture is None or not self._current(entry):
             return RecordingWarmStatus("warming")
         try:

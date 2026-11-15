@@ -9,6 +9,7 @@
     tri,
   } from '../lib/model.ts';
   import { cameraDetailTarget, noncameraDevice } from '../lib/noncamera.ts';
+  import { recordingEligibility, recordingReadiness, recordingSources } from '../lib/recording.ts';
   import type {
     StateEnvelope,
     CameraPage,
@@ -76,36 +77,10 @@
       !pair.pending_reset,
   );
   const warm = $derived(recording?.cameras.find((d) => d.camera_id === device?.camera_id));
-  const warmBudget = $derived(
-    recording?.warm_budget as { capacity: number; reserved: number } | undefined,
+  const eligibility = $derived(
+    recordingEligibility(fresh, device?.homekit.selected === true, recording?.available, warm),
   );
-  const recordingEligibility = $derived(
-    !fresh
-      ? {
-          label: 'Unknown',
-          detail: 'Reconnect to Halo to check this camera’s recording eligibility.',
-        }
-      : !device?.homekit.selected
-        ? {
-            label: 'Not selected',
-            detail: 'Expose this camera in Apple Home before enabling recording support.',
-          }
-        : !warm || recording?.available !== true
-          ? {
-              label: 'Unavailable',
-              detail: 'Recording details are unavailable. Refresh this device before continuing.',
-            }
-          : warm.mains_confirmed === true
-            ? {
-                label: 'Mains-only confirmed',
-                detail: 'Halo has confirmed a supported mains-only camera model.',
-              }
-            : {
-                label: 'Not confirmed',
-                detail:
-                  'Halo requires a supported mains-only model. Battery-capable cameras are excluded, including wired or solar-assisted models.',
-              },
-  );
+  const batteryCapable = $derived(device?.capabilities.includes('battery') === true);
   const control = $derived(controls?.cameras.find((d) => d.camera_id === device?.camera_id));
   const unsettled = $derived(operation?.status === 'unknown' || operation?.status === 'pending');
   const disabled = $derived(!fresh || busy || loading || unsettled);
@@ -282,7 +257,7 @@
     );
   }
   async function setWarm(enabled: boolean) {
-    if (!device || !recording || disabled) return;
+    if (!device || !recording || disabled || (enabled && !eligibility.eligible)) return;
     if (enabled && confirmation !== 'warm') {
       confirmation = 'warm';
       return;
@@ -492,19 +467,12 @@
   <h3>Recording</h3>
   <div class="group">
     <Row
-      title="Shared recording source budget"
-      subtitle="Reported at the last device refresh. Includes starting sources and cleanup still in progress."
-      ><span
-        >{fresh &&
-        warmBudget &&
-        Number.isInteger(warmBudget.capacity) &&
-        Number.isInteger(warmBudget.reserved)
-          ? `${warmBudget.reserved} of ${warmBudget.capacity} slots reserved`
-          : 'Unavailable'}</span
-      ></Row
+      title="Recording sources"
+      subtitle="Reported at the last device refresh. Includes starting sources and cleanup still in progress. Server and network capacity still apply."
+      ><span>{recordingSources(fresh, recording?.warm_budget)}</span></Row
     >
-    <Row title="Recording eligibility" subtitle={recordingEligibility.detail}
-      ><span>{recordingEligibility.label}</span></Row
+    <Row title="Recording eligibility" subtitle={eligibility.detail}
+      ><span>{eligibility.label}</span></Row
     >
     <Row
       title="Enable HomeKit Secure Video support"
@@ -514,17 +482,17 @@
         role="switch"
         aria-label="Enable HomeKit Secure Video support"
         checked={warm?.owner_warm === true}
-        disabled={disabled ||
-          !warm ||
-          (warm.owner_warm !== true &&
-            (recording?.available !== true ||
-              warm.mains_confirmed !== true ||
-              !device.homekit.selected))}
+        disabled={disabled || !warm || (warm.owner_warm !== true && !eligibility.eligible)}
         onchange={(event) => {
           event.currentTarget.checked = warm?.owner_warm === true;
           void setWarm(warm?.owner_warm !== true);
         }}
       /></Row
+    >
+    <Row
+      title="Pre-event source"
+      subtitle="Reported at the last device refresh. Buffer readiness does not confirm that Apple Home saved an event."
+      ><span>{recordingReadiness(fresh, warm?.warm_state)}</span></Row
     >
     <Row
       title="Apple Home recording"
@@ -597,8 +565,13 @@
     onclose={() => (confirmation = null)}
     ><p>
       This makes recording available to Apple Home for this camera. It may keep the camera connected
-      to Ring continuously for pre-event footage when recording is requested, using one shared
-      recording source slot. Choose whether to record and include audio separately in Apple Home.
+      to Ring continuously for pre-event footage when recording is requested. Choose whether to
+      record and include audio separately in Apple Home.
+    </p>
+    <p>
+      {batteryCapable
+        ? 'This camera supports battery power. Continuous use can drain its battery more quickly, including with wired or solar assistance.'
+        : 'For battery-powered cameras, continuous use can drain the battery more quickly, including with wired or solar assistance.'}
     </p>
     <div class="actions end">
       <button onclick={() => (confirmation = null)}>Cancel</button><button

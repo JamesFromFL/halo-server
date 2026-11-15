@@ -15,7 +15,7 @@ from halo_server.homekit.broker import HomeKitBroker, RecordingEvent
 from halo_server.homekit.events import EventPump
 from halo_server.homekit.models import HomeKitOperationError, MediaScope
 from halo_server.homekit.pairing_admin import PairingAdministration
-from halo_server.homekit.power import mains_confirmed
+from halo_server.homekit.power import recording_supported
 from halo_server.homekit.recording_settings import (
     RecordingPreferences,
     RecordingSettings,
@@ -186,7 +186,7 @@ class HomeKitBridge:
         self._recording_settings = RecordingSettings()
         self._recording_available = False
         self._recording_lock = asyncio.Lock()
-        self._recording_power = {}
+        self._recording_support = {}
         self._recording_policy = RecordingPolicyOwner(
             controller,
             self._recording.captures,
@@ -293,7 +293,7 @@ class HomeKitBridge:
         await self._pairing_admin.load()
         if self._store is not None:
             inventory = self._backend.inventory()
-            self._observe_recording_power(inventory)
+            self._observe_recording_support(inventory)
             async with self._registry_lock:
                 self._registry = await owned_thread(self._store.reconcile, inventory)
                 if self._audio_store is not None:
@@ -321,17 +321,17 @@ class HomeKitBridge:
                         else:
                             self._recording_available = True
 
-    def _observe_recording_power(self, inventory):
+    def _observe_recording_support(self, inventory):
         observed = {
-            camera.scope.source_key: mains_confirmed(camera) for camera in inventory.cameras
+            camera.scope.source_key: recording_supported(camera) for camera in inventory.cameras
         }
         boot = self._broker.boot_id
         if boot is not None:
             for camera in self._broker.controller.inventory().cameras:
                 key = camera.scope.source_key
-                if self._recording_power.get(key) and not observed.get(key, False):
+                if self._recording_support.get(key) and not observed.get(key, False):
                     self._broker.controller.fence_camera(boot, camera.scope)
-        self._recording_power = observed
+        self._recording_support = observed
 
     def _recording_row(self, scope):
         if not self._recording_available:
@@ -370,7 +370,7 @@ class HomeKitBridge:
             row.preferences.audio_active,
             row.preferences.configuration,
             row.owner_warm,
-            mains_confirmed(camera),
+            recording_supported(camera),
         )
 
     def _recording_event_for_scope(self, scope):
@@ -692,7 +692,7 @@ class HomeKitBridge:
                         and self._recording.ready
                         and self._recording_available
                         and row.owner_warm
-                        and mains_confirmed(current.get(entry["camera_id"]))
+                        and recording_supported(current.get(entry["camera_id"]))
                     ),
                 )
                 if row is not None and row.accessory_id == entry["accessory_id"]
@@ -897,7 +897,7 @@ class HomeKitBridge:
         camera = next(
             (camera for camera in inventory.cameras if camera.scope.camera_id == camera_id), None
         )
-        if enabled and not mains_confirmed(camera):
+        if enabled and not recording_supported(camera):
             raise HomeKitOperationError("capability_unsupported")
         scope = next(
             (
@@ -1103,7 +1103,7 @@ class HomeKitBridge:
         selected = self._broker.controller.inventory().cameras
         warm = tuple(self._recording_policy.status(camera.scope) for camera in selected)
         recording_enabled = any(
-            state is not None and state.owner_opt_in and state.mains_confirmed
+            state is not None and state.owner_opt_in and state.recording_supported
             for camera in selected
             if (state := self._recording_for_scope(camera.scope)) is not None
         )

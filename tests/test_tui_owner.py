@@ -53,6 +53,8 @@ class OwnerClient(FakeAdminClient):
             "profile_id": PROFILE,
             "account_generation": 2,
             "revision": 5,
+            "available": True,
+            "warm_budget": {"capacity": None, "reserved": 0},
             "offset": 0,
             "total": 1,
             "cameras": [
@@ -60,6 +62,7 @@ class OwnerClient(FakeAdminClient):
                     "camera_id": "42",
                     "owner_warm": False,
                     "mains_confirmed": True,
+                    "recording_supported": True,
                     "warm_state": "disabled",
                 }
             ],
@@ -207,6 +210,41 @@ async def test_owner_TUI_selection_warm_controls_settings_and_literal_rows():
         control = next(call for call in client.calls if call[0] == "control")
         assert control[1:5] == (PROFILE, 2, "42", 7) and control[-2:] == ("light", True)
         assert "unknown" in str(app.query_one("#message", Static).render())
+
+
+@pytest.mark.asyncio
+async def test_recording_allows_battery_and_unknown_models_without_count_cap():
+    client = OwnerClient()
+    client.recording["cameras"][0]["mains_confirmed"] = False
+    client.recording["warm_budget"]["reserved"] = 7
+    app = HaloTui(client)
+    async with app.run_test(size=(160, 60)) as pilot:
+        await pilot.pause()
+        panel = app.query_one(HomeKitPanel)
+        assert not panel.query_one("#homekit-warm-on", Button).disabled
+        summary = str(panel.query_one("#homekit-recording-summary", Static).render())
+        assert "7 sources reserved; no configured camera cap" in summary
+        await panel._action("homekit-warm-on")
+        assert ("warm", PROFILE, 2, "42", 5, True) in client.calls
+        await panel._action("homekit-warm-off")
+        assert ("warm", PROFILE, 2, "42", 6, False) in client.calls
+
+
+@pytest.mark.asyncio
+async def test_unsupported_recording_can_be_disabled_but_not_enabled():
+    client = OwnerClient()
+    client.recording["cameras"][0].update(recording_supported=False, owner_warm=True)
+    app = HaloTui(client)
+    async with app.run_test(size=(160, 60)) as pilot:
+        await pilot.pause()
+        panel = app.query_one(HomeKitPanel)
+        assert panel.query_one("#homekit-warm-on", Button).disabled
+        assert not panel.query_one("#homekit-warm-off", Button).disabled
+        with pytest.raises(ValueError, match="video-capable"):
+            await panel._action("homekit-warm-on")
+        assert not any(call[0] == "warm" for call in client.calls)
+        await panel._action("homekit-warm-off")
+        assert ("warm", PROFILE, 2, "42", 5, False) in client.calls
 
 
 @pytest.mark.asyncio

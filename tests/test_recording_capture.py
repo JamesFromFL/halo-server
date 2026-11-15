@@ -280,7 +280,13 @@ async def test_recording_floor_does_not_grant_live_or_replay_old_frames():
 async def test_warm_continuously_accumulates_real_audio_then_cold_lease_survives_warm_stop():
     controller, _, boot, (scope,), now, source, manager = await setup()
     warm = await manager.open(
-        boot, scope, str(uuid4()), audio=True, warm=True, owner_opt_in=True, mains_confirmed=True
+        boot,
+        scope,
+        str(uuid4()),
+        audio=True,
+        warm=True,
+        owner_opt_in=True,
+        recording_supported=True,
     )
     try:
         for index in range(53):
@@ -310,13 +316,18 @@ async def test_warm_continuously_accumulates_real_audio_then_cold_lease_survives
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("owner,mains", [(False, False), (True, False), (False, True)])
-async def test_warm_requires_explicit_owner_and_positive_mains_evidence(owner, mains):
+@pytest.mark.parametrize("owner,supported", [(False, False), (True, False), (False, True)])
+async def test_warm_requires_explicit_owner_and_video_capability(owner, supported):
     controller, _, boot, (scope,), _, source, manager = await setup()
     try:
         with pytest.raises(HomeKitOperationError) as denied:
             await manager.open(
-                boot, scope, str(uuid4()), warm=True, owner_opt_in=owner, mains_confirmed=mains
+                boot,
+                scope,
+                str(uuid4()),
+                warm=True,
+                owner_opt_in=owner,
+                recording_supported=supported,
             )
         assert denied.value.code == "warm_not_authorized"
         assert not source.admissions and manager.pending_resources == 0
@@ -326,8 +337,9 @@ async def test_warm_requires_explicit_owner_and_positive_mains_evidence(owner, m
 
 
 @pytest.mark.asyncio
-async def test_manager_admits_independent_budgets_before_pending_acquisitions_allocate():
-    controller, backend, boot, scopes, _, source, manager = await setup(3)
+@pytest.mark.parametrize("warm", [False, True])
+async def test_manager_reserves_all_seven_cameras_and_rejects_duplicate_pending_capture(warm):
+    controller, backend, boot, scopes, _, source, manager = await setup(7)
     entered, release = asyncio.Event(), asyncio.Event()
     original = backend.acquire_recording
 
@@ -337,16 +349,25 @@ async def test_manager_admits_independent_budgets_before_pending_acquisitions_al
         return await original(*args, **kwargs)
 
     backend.acquire_recording = blocked
-    tasks = [asyncio.create_task(manager.open(boot, scope, str(uuid4()))) for scope in scopes[:2]]
+    options = {"warm": warm, "owner_opt_in": True, "recording_supported": True}
+    tasks = [
+        asyncio.create_task(manager.open(boot, scope, str(uuid4()), **options)) for scope in scopes
+    ]
     try:
         await entered.wait()
-        assert manager.pending_resources == 2
+        await until(lambda: manager.pending_resources == 7)
+        assert not source.admissions
         with pytest.raises(HomeKitOperationError) as busy:
-            await manager.open(boot, scopes[2], str(uuid4()))
+            await manager.open(boot, scopes[0], str(uuid4()), **options)
         assert busy.value.code == "busy"
-        assert manager.pending_resources == 2
+        assert manager.pending_resources == 7
         release.set()
-        await asyncio.gather(*tasks)
+        captures = await asyncio.gather(*tasks)
+        assert len(source.admissions) == 7 and all(
+            capture.handle.is_current() for capture in captures
+        )
+        await captures[0].close()
+        assert manager.pending_resources == 6 and all(c.handle.is_current() for c in captures[1:])
     finally:
         release.set()
         await asyncio.gather(*tasks, return_exceptions=True)
@@ -540,7 +561,7 @@ async def test_recording_audio_false_to_true_has_new_floor_for_old_source_audio(
 
 @pytest.mark.asyncio
 async def test_recording_and_warm_claim_budgets_do_not_consume_live_slots():
-    controller, backend, boot, scopes, _, source, manager = await setup(3)
+    controller, backend, boot, scopes, _, source, manager = await setup(7)
     handles = []
     try:
         scopes = tuple(
@@ -550,13 +571,13 @@ async def test_recording_and_warm_claim_budgets_do_not_consume_live_slots():
             ]
         )
         handles.extend([await controller.open_live(boot, scopes[0]) for _ in range(2)])
-        handles.append(await controller.open_recording(boot, scopes[0]))
-        handles.append(await controller.open_recording(boot, scopes[0], warm=True))
-        handles.append(await controller.open_recording(boot, scopes[1]))
-        handles.append(await controller.open_recording(boot, scopes[1], warm=True))
+        for scope in scopes:
+            handles.append(await controller.open_recording(boot, scope))
+            handles.append(await controller.open_recording(boot, scope, warm=True))
+        assert len(source.admissions) == 14
         for warm in (False, True):
             with pytest.raises(HomeKitOperationError) as busy:
-                await controller.open_recording(boot, scopes[2], warm=warm)
+                await controller.open_recording(boot, scopes[0], warm=warm)
             assert busy.value.code == "busy"
         await handles[2].close()
         assert handles[0].is_current() and handles[1].is_current()
@@ -744,7 +765,9 @@ async def test_cold_open_during_pending_warm_acquire_succeeds_without_invented_s
 
     backend.acquire_recording = delayed
     warming = asyncio.create_task(
-        manager.open(boot, scope, str(uuid4()), warm=True, owner_opt_in=True, mains_confirmed=True)
+        manager.open(
+            boot, scope, str(uuid4()), warm=True, owner_opt_in=True, recording_supported=True
+        )
     )
     try:
         await entered.wait()

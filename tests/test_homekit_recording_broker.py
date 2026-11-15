@@ -215,7 +215,7 @@ async def test_cold_or_mismatched_config_is_rejected_without_waking_recording_so
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "reason", ["privacy", "source", "owner", "mains", "active", "audio", "boot", "stop"]
+    "reason", ["privacy", "source", "owner", "video-capability", "active", "audio", "boot", "stop"]
 )
 async def test_no_queued_packet_escapes_after_ready_when_authority_changes(tmp_path, reason):
     broker, boot, state, manager, channel, _, data = await configured(tmp_path)
@@ -231,8 +231,8 @@ async def test_no_queued_packet_escapes_after_ready_when_authority_changes(tmp_p
             manager.streams[data["job_id"]].current = False
         elif reason == "owner":
             state[0] = replace(state[0], owner_opt_in=False)
-        elif reason == "mains":
-            state[0] = replace(state[0], mains_confirmed=False)
+        elif reason == "video-capability":
+            state[0] = replace(state[0], recording_supported=False)
         elif reason == "active":
             state[0] = replace(state[0], active=False)
         elif reason == "audio":

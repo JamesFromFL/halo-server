@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "source_hash": "a7ee07d6fc04c9224a0342916b79d0ccd047d3c746e98c6b479839de5b3fdce2",
+  "source_hash": "6ba8eaba3e20dcfdcfbfe4b8bd6d74613d746e1527fc4c0602a7493158d849af",
   "source_files": [
     {
       "path": ".prettierignore",
@@ -48,7 +48,7 @@
     },
     {
       "path": "scripts/browser-smoke.mjs",
-      "sha256": "66e32c3338f655cc8c6bf9269e4d976529ed76829c66ab6d59b21b6af9c92570"
+      "sha256": "743d05149383ae3e86ac17fac5b23d543b38a1659f07c7c68e9552bf54dbfe56"
     },
     {
       "path": "scripts/build-manifest.mjs",
@@ -80,7 +80,7 @@
     },
     {
       "path": "scripts/pages-smoke.mjs",
-      "sha256": "a1f2b93ea3c65bda6594c76ef9518d3117a075fd8c7a22e680b96e2e930c6d36"
+      "sha256": "d1946bcbc65f504561111b70281c6d9fd761374a2974ceee8360a4a4c64589ba"
     },
     {
       "path": "scripts/pairing-smoke.mjs",
@@ -199,6 +199,10 @@
       "sha256": "df2227735cb933e92ee9c93feced7b17dba8d674168a54b97d5d87f588765913"
     },
     {
+      "path": "src/lib/recording.ts",
+      "sha256": "359a51113584c0a65ad5de0cd83841a096bece0c3441e01e99e2b58604e634ab"
+    },
+    {
       "path": "src/lib/types.ts",
       "sha256": "f0ade9bf6db0cc6ff5c65a30810467ad7bbbdc4a6d3af684b278bc19baf158ca"
     },
@@ -212,7 +216,7 @@
     },
     {
       "path": "src/pages/Devices.svelte",
-      "sha256": "848fe98d2067414392fe120832d3fccad1759243d74b5dbf69be255985f97d7f"
+      "sha256": "95c72990ef5d20ba91ccc4d2532574b12594c57e37e9ab9f7ddcea97c074a99e"
     },
     {
       "path": "src/pages/Diagnostics.svelte",
@@ -283,6 +287,10 @@
       "sha256": "c9fc83e405380e310bfac0b5c2fa75dba2f6c8cdc333402be08e6c22a43bc312"
     },
     {
+      "path": "tests/recording.test.ts",
+      "sha256": "24d4de35917cadf5110ae56610d512fecf9ab760fadad460d40f9a6d03de853b"
+    },
+    {
       "path": "tsconfig.json",
       "sha256": "0e48324abd4267d1d2183e0d5be45e379512af7ccd2e0a3a58a27d96630ac8bf"
     },
@@ -301,8 +309,8 @@
       "sha256": "7535816b4e8693ab146ba556a9766b5bf9a2c86dfdc12e5cfd1e3057979345f0"
     },
     {
-      "path": "assets/index-cphiC3jO.js",
-      "sha256": "8c285e72bb153b47f06b44d6d5a8c7d933170c60f22085eaf91de0295100f846"
+      "path": "assets/index-dAaj-jEW.js",
+      "sha256": "0638c2047cfb465f95ffddf54e3e580613ff679a82f80676c191721526dd59d2"
     },
     {
       "path": "halo.png",
@@ -310,7 +318,7 @@
     },
     {
       "path": "index.html",
-      "sha256": "af8bb68c031d997e88b9180ab80004b509ea8b2de8c761d98817a0f49af3abe3"
+      "sha256": "e71d32a0109921f95d3e0d20f9cf075a13d29e773cefa53659ea408a5efdd295"
     }
   ]
 }

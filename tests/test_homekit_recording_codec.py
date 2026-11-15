@@ -270,7 +270,7 @@ async def test_initial_actual_cadence_faster_than_SPS_forces_adaptation():
 
 
 @pytest.mark.asyncio
-async def test_actual_native_preflight_and_two_worker_capacity():
+async def test_seven_native_workers_remain_independent_and_retire_cleanly():
     assert (await recording_capabilities()).ready
     source = native_video(320, 240, 15, seconds=1)
     sps, pps = parameter_sets(source[0][0])
@@ -284,18 +284,34 @@ async def test_actual_native_preflight_and_two_worker_capacity():
             config_epoch=1,
         )
 
-    workers = [make(), make(), make()]
+    workers = [make() for _ in range(7)]
     baseline = recording_module._WORKERS
+    owned_before = set(recording_module._OWNED)
+    pids = []
     try:
-        await workers[0].start()
-        await workers[1].start()
-        with pytest.raises(RecordingError, match="unavailable"):
-            await workers[2].start()
-        assert baseline + 2 == recording_module._WORKERS
+        for worker in workers:
+            await worker.start()
+        pids = [worker.pid for worker in workers]
+        assert len(set(pids)) == 7 and all(pid is not None for pid in pids)
+        assert baseline + 7 == recording_module._WORKERS
+        assert owned_before | set(workers) == recording_module._OWNED
+        # A tiny local sample proves each independently admitted native worker
+        # can process media; it does not open a camera or contact Ring/HomeKit.
+        for worker in workers:
+            await worker.feed(sample(source[0][0], 0, 0))
+        # Closing one camera must not retire any other camera's worker.
+        await workers[0].close()
+        assert baseline + 6 == recording_module._WORKERS
+        assert all(worker.pid == pid for worker, pid in zip(workers[1:], pids[1:], strict=True))
+        for worker in workers[1:]:
+            await worker.feed(sample(source[1][0], 6000, 1))
     finally:
         for worker in workers:
             await worker.close()
     assert baseline == recording_module._WORKERS
+    assert owned_before == recording_module._OWNED
+    assert all(worker.pid is None and not worker.pending_resources for worker in workers)
+    assert all(not Path(f"/proc/{pid}").exists() for pid in pids)
 
 
 @pytest.fixture(scope="module")
@@ -565,7 +581,9 @@ async def test_incomplete_or_oversized_native_response_has_finite_retirement(mon
 
 
 @pytest.mark.asyncio
-async def test_failed_reap_keeps_capacity_and_global_retry_ownership(monkeypatch):
+async def test_failed_reap_keeps_accounting_and_global_retry_ownership(monkeypatch):
+    baseline = recording_module._WORKERS
+    owned_before = set(recording_module._OWNED)
     worker, _ = small_worker()
     await worker.start()
     process = worker._process
@@ -583,16 +601,21 @@ async def test_failed_reap_keeps_capacity_and_global_retry_ownership(monkeypatch
             await worker.close()
         assert error.value.code == "cleanup_pending"
         assert worker in recording_module._OWNED and worker.pending_resources
-        monkeypatch.setattr(recording_module, "MAX_WORKERS", recording_module._WORKERS)
-        other, _ = small_worker()
-        with pytest.raises(RecordingError):
-            await other.start()
+        assert baseline + 1 == recording_module._WORKERS
+        # A second failed retry cannot release or double-count a live process.
+        with pytest.raises(RecordingError) as error:
+            await retire_recording_workers()
+        assert error.value.code == "cleanup_pending"
+        assert baseline + 1 == recording_module._WORKERS
+        assert owned_before | {worker} == recording_module._OWNED
     finally:
         monkeypatch.setattr(process, "wait", wait)
         monkeypatch.setattr(process, "terminate", terminate)
         monkeypatch.setattr(process, "kill", kill)
         await retire_recording_workers()
     assert process.returncode is not None and not worker.pending_resources
+    assert baseline == recording_module._WORKERS
+    assert owned_before == recording_module._OWNED
 
 
 @pytest.mark.asyncio

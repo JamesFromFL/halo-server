@@ -29,11 +29,14 @@ class Camera:
 
     def __init__(self, camera_id):
         self.id, self.name = camera_id, camera_id
+        if camera_id == "8000":
+            self.kind = "synthetic_unknown_battery_model"
+            self.battery_life = 80
         self.light_values = []
         self.snapshot_calls = 0
 
     def has_capability(self, capability):
-        return capability in {"video", "light"}
+        return capability in {"video", "light"} or (capability == "battery" and self.id == "8000")
 
     async def async_set_light(self, enabled):
         self.light_values.append(enabled)

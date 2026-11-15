@@ -17,7 +17,6 @@ from uuid import UUID
 from halo_server.homekit.models import HomeKitOperationError, MediaScope
 from halo_server.media.formats import MAX_FRAGMENT_BYTES, MAX_INIT_BYTES, MAX_STAGED_FRAGMENTS
 
-MAX_RECORDINGS = 2
 MAX_CAMERA_RECORDINGS = 1
 SOURCE_SECONDS = 25.0
 IDLE_SECONDS = 5.0
@@ -214,8 +213,7 @@ class HomeKitRecordingManager:
         if job_id in self._jobs:
             raise HomeKitOperationError("session_conflict")
         if (
-            len(self._jobs) >= MAX_RECORDINGS
-            or sum(j.scope.source_key == scope.source_key for j in self._jobs.values())
+            sum(j.scope.source_key == scope.source_key for j in self._jobs.values())
             >= MAX_CAMERA_RECORDINGS
         ):
             raise HomeKitOperationError("capacity")

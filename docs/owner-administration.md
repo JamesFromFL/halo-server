@@ -101,16 +101,17 @@ halo-server homekit warm 42 on
 halo-server homekit warm 42 off
 ```
 
-Warm recording is an explicit owner opt-in for a selected, positively identified mains-only
-camera. A battery-capable camera does not qualify merely because it is plugged in, wired,
-solar-powered, or reports no battery capability. Turning warm mode off remains available
-when the camera is missing.
+Warm recording is an explicit owner opt-in for any selected camera with video capability,
+including battery-capable cameras and models without a recognized power classification.
+Turning warm mode off remains available when the camera is missing. Pre-event capture
+can keep a Ring stream open and use battery power on battery-operated cameras.
 
 Apple Home's recording-active and recording-audio selections remain separate preferences.
-The owner opt-in alone does not enable those permissions. The TUI shows mains evidence,
-owner opt-in and current warm-history state. There are two global warm-source slots and
-two active-recording slots, with one of each purpose per camera. A cold/rebuffering source
-cannot claim four seconds of pre-event media it did not actually retain.
+The owner opt-in alone does not enable those permissions. The TUI shows video capability,
+owner opt-in and current warm-history state. Every selected camera can have one warm source
+and one active recording job; there is no separate two-camera recording limit. Transport
+buffers, timeouts and per-camera cleanup remain bounded. A cold/rebuffering source cannot
+claim four seconds of pre-event media it did not actually retain.
 
 ## Camera light and siren
 

@@ -655,7 +655,7 @@ class RecordingCaptureManager:
         audio=False,
         warm=False,
         owner_opt_in=False,
-        mains_confirmed=False,
+        recording_supported=False,
     ):
         try:
             valid_id = isinstance(session_id, str) and str(UUID(session_id)) == session_id
@@ -665,11 +665,12 @@ class RecordingCaptureManager:
             self._closed
             or not valid_id
             or any(
-                type(value) is not bool for value in (audio, warm, owner_opt_in, mains_confirmed)
+                type(value) is not bool
+                for value in (audio, warm, owner_opt_in, recording_supported)
             )
         ):
             raise HomeKitOperationError("invalid_request")
-        if warm and not (owner_opt_in and mains_confirmed):
+        if warm and not (owner_opt_in and recording_supported):
             raise HomeKitOperationError("warm_not_authorized")
         self.controller.authorize(boot, scope, "recording")
         if audio:
@@ -682,10 +683,8 @@ class RecordingCaptureManager:
         if identity in self._captures or identity in self._history:
             raise HomeKitOperationError("session_conflict")
         same_kind = tuple(c for c in self._captures.values() if c.warm == warm)
-        if (
-            len(self._history) + len(self._captures) >= MAX_IDENTITIES
-            or len(same_kind) >= 2
-            or any(c.scope.source_key == scope.source_key for c in same_kind)
+        if len(self._history) + len(self._captures) >= MAX_IDENTITIES or any(
+            c.scope.source_key == scope.source_key for c in same_kind
         ):
             raise HomeKitOperationError("busy")
         capture = RecordingCapture(self, boot, scope, session_id, audio=audio, warm=warm)

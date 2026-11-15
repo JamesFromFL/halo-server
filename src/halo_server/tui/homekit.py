@@ -69,8 +69,15 @@ class HomeKitPanel(Vertical):
         with Horizontal():
             yield Button("Select", id="homekit-select")
             yield Button("Deselect", id="homekit-deselect")
-            yield Button("Warm on", id="homekit-warm-on")
-            yield Button("Warm off", id="homekit-warm-off")
+        yield Static("Recording: select a camera", id="homekit-recording-summary")
+        yield Static(
+            "Enabling HKSV support may keep a continuous Ring connection for pre-event footage. "
+            "For battery-powered cameras this can drain the battery more quickly, including with "
+            "wired or solar assistance. Choose recording and audio separately in Apple Home."
+        )
+        with Horizontal():
+            yield Button("Enable HKSV", id="homekit-warm-on")
+            yield Button("Disable HKSV", id="homekit-warm-off")
         with Horizontal():
             yield Button("Reveal setup", id="homekit-reveal")
             yield Button("Hide setup", id="homekit-hide")
@@ -101,7 +108,7 @@ class HomeKitPanel(Vertical):
 
     def on_mount(self):
         self.query_one("#homekit-cameras", DataTable).add_columns(
-            "Camera", "ID", "Selected", "Present", "Warm", "Mains", "History", "Paired"
+            "Camera", "ID", "Selected", "Present", "HKSV allowed", "Video", "Buffer", "Paired"
         )
         self._buttons()
 
@@ -127,7 +134,7 @@ class HomeKitPanel(Vertical):
                 f"Native: {native.get('state', 'unavailable')} | {native.get('reason') or ''} | "
                 f"warm ready: {native.get('recording_warm_ready', 0)} | "
                 f"cleanup: {native.get('recording_cleanup_failures', 0)}. "
-                "Warm and active recording each have two global slots."
+                "Recording permission is configured separately for each camera."
             )
         )
 
@@ -230,8 +237,8 @@ class HomeKitPanel(Vertical):
                 _flag(row.get("selected")),
                 _flag(row.get("available")),
                 _flag(state.get("owner_warm")),
-                _flag(state.get("mains_confirmed")),
-                Text(str(state.get("warm_state") or "disabled")),
+                _flag(state.get("recording_supported")),
+                Text(_recording_state(state.get("warm_state"))),
                 _flag(pair.get("paired")) if pair.get("paired_known") is True else "Unknown",
                 key=row["camera_id"],
             )
@@ -349,6 +356,13 @@ class HomeKitPanel(Vertical):
                 self.view["profile_id"], self.view["account_generation"], ids, self.view["revision"]
             )
         elif action in {"homekit-warm-on", "homekit-warm-off"}:
+            warm = _row(self.recording, row["camera_id"])
+            if action == "homekit-warm-on" and (
+                row.get("selected") is not True
+                or self.recording.get("available") is not True
+                or warm.get("recording_supported") is not True
+            ):
+                raise ValueError("Select an available video-capable camera before enabling HKSV")
             await self.client.homekit_recording_warm(
                 self.recording["profile_id"],
                 self.recording["account_generation"],
@@ -455,10 +469,28 @@ class HomeKitPanel(Vertical):
         self.query_one("#homekit-deselect", Button).disabled |= row.get("selected") is not True
         self.query_one("#homekit-warm-on", Button).disabled |= (
             row.get("selected") is not True
-            or warm.get("mains_confirmed") is not True
+            or (self.recording or {}).get("available") is not True
+            or warm.get("recording_supported") is not True
             or warm.get("owner_warm") is True
         )
         self.query_one("#homekit-warm-off", Button).disabled |= warm.get("owner_warm") is not True
+        budget = (self.recording or {}).get("warm_budget") or {}
+        reserved = budget.get("reserved")
+        usage = (
+            f"{reserved} sources reserved; no configured camera cap"
+            if type(reserved) is int
+            and reserved >= 0
+            and "capacity" in budget
+            and budget["capacity"] is None
+            else "source usage unavailable"
+        )
+        self.query_one("#homekit-recording-summary", Static).update(
+            Text(
+                f"HKSV allowed: {_flag(warm.get('owner_warm'))} | "
+                f"Pre-event buffer: {_recording_state(warm.get('warm_state'))} | {usage}. "
+                "Last owner refresh; buffer readiness does not confirm a saved Apple Home event."
+            )
+        )
         self.query_one("#homekit-reveal", Button).disabled |= (
             row.get("selected") is not True
             or paired.get("published") is not True
@@ -493,3 +525,13 @@ def _row(page, camera_id):
 
 def _flag(value):
     return "Yes" if value is True else "No" if value is False else "Unknown"
+
+
+def _recording_state(value):
+    return {
+        "disabled": "Not buffering",
+        "warming": "Preparing",
+        "ready": "Ready",
+        "capacity": "Waiting for capacity",
+        "cleanup_pending": "Waiting for cleanup",
+    }.get(value, "Unknown")

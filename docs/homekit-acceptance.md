@@ -148,9 +148,9 @@ push outage must not silently become a verified no-motion fact.
 
 ## HKSV recording and retained history
 
-1. Use a selected camera that Halo positively identifies as mains-only. A wired,
-   plugged-in or solar-assisted battery-capable device is not eligible for the current
-   warm policy. Record N/A if no supported camera is available; do not bypass the gate.
+1. Use a selected camera with video capability. Include battery-capable and unrecognized
+   models in the acceptance matrix; power classification must not block owner opt-in.
+   Record the power source and observed battery impact of continuous pre-event capture.
 2. Explicitly opt in with `halo-server homekit warm CAMERA_ID on`. Choose the desired
    Home recording and recording-audio settings separately. Owner warm opt-in does not
    grant either recording permission.
@@ -173,8 +173,10 @@ push outage must not silently become a verified no-motion fact.
    its old audio delivery must be fenced. New clips remain silent after restart and
    cannot revive old buffered audio after permissions change.
 7. Turn warm off with `halo-server homekit warm CAMERA_ID off`; verify the warm capture
-   owner retires. Test two eligible cameras if available. A third warm/recording request
-   should expose the configured finite budget rather than create unbounded owners.
+   owner retires without interrupting other cameras. Repeat with all selected cameras,
+   including overlapping events on at least seven cameras when available. Check that
+   transport contention waits without lost init/fragments and retained cleanup prevents
+   a duplicate source or job for the same camera.
 
 Pass requires clips that are actually playable in Apple's timeline with the expected
 privacy and continuity. Receiving fragmented MP4 over synthetic HDS is not this pass.

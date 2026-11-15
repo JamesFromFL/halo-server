@@ -28,7 +28,6 @@ from halo_server.media.manager import owned_thread, settle_owned
 MAX_LIVE_PER_CAMERA = 2
 MAX_LIVE_TOTAL = 8
 MAX_RECORDING_PER_CAMERA = 1
-MAX_RECORDING_TOTAL = 2
 MAX_SNAPSHOTS = 2
 MAX_CONTROLS = 2
 MAX_SPEAKERS = 1
@@ -343,8 +342,7 @@ class HomeKitController:
             if kind == "snapshot" and len(same_kind) >= MAX_SNAPSHOTS:
                 raise HomeKitOperationError("busy")
             if kind in {"recording", "recording_warm"} and (
-                len(same_kind) >= MAX_RECORDING_TOTAL
-                or sum(claim.scope.source_key == scope.source_key for claim in same_kind)
+                sum(claim.scope.source_key == scope.source_key for claim in same_kind)
                 >= MAX_RECORDING_PER_CAMERA
             ):
                 raise HomeKitOperationError("busy")

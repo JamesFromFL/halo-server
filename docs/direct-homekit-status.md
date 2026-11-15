@@ -496,11 +496,12 @@ Node server admission bounds connections before HDS object creation. Generic
 legacy HAP messages retain their format under the same writer/serializer bounds.
 
 Warm recording defaults off and requires trusted owner opt-in, selected current
-scope, positively classified mains-only hardware, saved HomeKit settings and
-actual four-second decodable history. Unknown/battery/shared-power kinds stay
-denied; SDK battery=false alone is insufficient. Budgets allow two warm owners
-and two active jobs globally, one active job per camera. Failed cleanup remains
-charged and finite warm rollover honestly re-enters buffering.
+scope, video capability, saved HomeKit settings and actual four-second decodable
+history. Battery-capable and unrecognized power/model classifications are supported.
+The former two-camera policy was removed: each selected camera can have one warm
+source and one active recording job. Failed cleanup remains owned and finite warm
+rollover honestly re-enters buffering. Shared bulk transport stays bounded and waits
+briefly for capacity instead of immediately dropping another camera's clip.
 
 Ring incident time, never a child-provided timestamp or delayed OPEN time, defines
 pre-event history. Missing pre-event history is rejected. Trusted incident quiet

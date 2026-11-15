@@ -21,7 +21,7 @@ def configuration():
 
 
 @pytest.mark.asyncio
-async def test_warm_requires_owner_mains_and_actual_current_hap_policy():
+async def test_warm_requires_owner_video_capability_and_actual_current_hap_policy():
     controller, _, boot, (scope,), _, source, captures = await setup()
     state = [RecordingAuthority(True, True, configuration())]
     owner = RecordingPolicyOwner(controller, captures, lambda scope: state[0])
@@ -31,7 +31,7 @@ async def test_warm_requires_owner_mains_and_actual_current_hap_policy():
         state[0] = replace(state[0], owner_opt_in=True)
         await owner.refresh(boot)
         assert not source.admissions
-        state[0] = replace(state[0], mains_confirmed=True)
+        state[0] = replace(state[0], recording_supported=True)
         # A trusted setting alone cannot bypass HomeKitCameraActive/policy off.
         controller.fence_camera(boot, scope)
         scope = controller.inventory().cameras[0].scope
@@ -115,7 +115,7 @@ async def test_exact_capture_stop_retries_failed_warm_without_stopping_cold_reco
     controller, _, boot, (scope,), _, source, captures = await setup()
     warm_id, cold_id = str(uuid4()), str(uuid4())
     warm = await captures.open(
-        boot, scope, warm_id, warm=True, owner_opt_in=True, mains_confirmed=True
+        boot, scope, warm_id, warm=True, owner_opt_in=True, recording_supported=True
     )
     cold = await captures.open(boot, scope, cold_id)
     try:
@@ -140,7 +140,8 @@ async def test_exact_capture_stop_retries_failed_warm_without_stopping_cold_reco
 
 
 @pytest.mark.asyncio
-async def test_warm_revocation_retains_failed_cleanup_and_cannot_rearm_around_it():
+@pytest.mark.parametrize("revoked", ["owner_opt_in", "recording_supported"])
+async def test_warm_revocation_retains_failed_cleanup_and_cannot_rearm_around_it(revoked):
     controller, _, boot, (scope,), _, source, captures = await setup()
     state = [RecordingAuthority(True, False, configuration(), True, True)]
     owner = RecordingPolicyOwner(controller, captures, lambda scope: state[0])
@@ -149,11 +150,11 @@ async def test_warm_revocation_retains_failed_cleanup_and_cannot_rearm_around_it
         await until(lambda: len(source.admissions) == 1)
         await until(lambda: owner._entries[scope.source_key].capture is not None)
         source.fail_close = True
-        state[0] = replace(state[0], owner_opt_in=False)
+        state[0] = replace(state[0], **{revoked: False})
         with pytest.raises(ExceptionGroup):
             await owner.refresh(boot)
         assert owner.cleanup_failures == owner.pending_resources == 1
-        assert owner.warm_budget == {"capacity": 2, "reserved": 1}
+        assert owner.warm_budget == {"capacity": None, "reserved": 1}
         assert owner.status(scope).state == "cleanup_pending"
         with pytest.raises(ExceptionGroup):
             await owner.close()
@@ -162,7 +163,7 @@ async def test_warm_revocation_retains_failed_cleanup_and_cannot_rearm_around_it
         source.fail_close = False
         await owner.retired(boot)
         assert not owner.pending_resources and not captures.pending_resources
-        assert owner.warm_budget == {"capacity": 2, "reserved": 0}
+        assert owner.warm_budget == {"capacity": None, "reserved": 0}
         await owner.ready(boot)
         assert not owner.pending_resources  # Revoked owner setting stays off.
     finally:
@@ -173,8 +174,8 @@ async def test_warm_revocation_retains_failed_cleanup_and_cannot_rearm_around_it
 
 
 @pytest.mark.asyncio
-async def test_warm_owner_capacity_counts_pending_acquisitions_and_old_boot_does_not_stop_new():
-    controller, _, boot, scopes, _, _, captures = await setup(3)
+async def test_all_seven_warm_reservations_count_pending_acquisitions_and_fence_old_boot():
+    controller, _, boot, scopes, _, _, captures = await setup(7)
     state = RecordingAuthority(True, False, configuration(), True, True)
     gate = asyncio.Event()
     opened = []
@@ -189,16 +190,16 @@ async def test_warm_owner_capacity_counts_pending_acquisitions_and_old_boot_does
     owner = RecordingPolicyOwner(controller, captures, lambda scope: state)
     try:
         await owner.ready(boot)
-        await until(lambda: len(opened) == 2)
-        assert owner.pending_resources == 2
-        assert owner.warm_budget == {"capacity": 2, "reserved": 2}
+        await until(lambda: len(opened) == 7)
+        assert owner.pending_resources == 7
+        assert owner.warm_budget == {"capacity": None, "reserved": 7}
         assert all(entry.capture is None for entry in owner._entries.values())
-        assert owner.status(scopes[2]).state == "capacity"
+        assert all(owner.status(scope).state == "warming" for scope in scopes)
         assert not owner.status(scopes[2]).history_ready
         await owner.refresh(boot)
-        assert len(opened) == 2
+        assert len(opened) == 7
         await owner.retired(str(uuid4()))
-        assert owner.pending_resources == 2 and owner._maintenance is not None
+        assert owner.pending_resources == 7 and owner._maintenance is not None
     finally:
         gate.set()
         await owner.close()

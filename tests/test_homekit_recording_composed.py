@@ -119,7 +119,7 @@ async def test_warm_recording_has_real_preroll_and_independently_decodable_outpu
             audio=audio,
             warm=True,
             owner_opt_in=True,
-            mains_confirmed=True,
+            recording_supported=True,
         )
         base, audio_cursor = now[0], 0
         for index, native in enumerate(video):

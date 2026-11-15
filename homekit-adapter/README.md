@@ -5,7 +5,7 @@ negotiated audio/talkback, snapshots, motion/doorbell events and the S12 HKSV
 recording path. Python owns Ring accounts, shared capture and native media;
 Node owns public HAP delegates, pairing state and bounded encrypted HDS output.
 Explicit selection and native qualification gate publication. HKSV also requires
-owner opt-in, positively classified mains-only hardware, current HomeKit recording
+owner opt-in, video capability, current HomeKit recording
 settings and four seconds of actual decodable pre-event history. It defaults off.
 
 The adapter uses the approved narrow transport extension to pinned HAP-NodeJS.
@@ -166,12 +166,13 @@ only after actual close. Cryptography, framing and nonce construction retain the
 official implementation. Strict recording metadata validation does not alter
 other released dataSend uses.
 
-Warm capture requires positive hardware evidence; false SDK battery capability,
-display model text, absent battery percentage or a plugged-in battery model is
-insufficient. Initial budgets are two warm captures and two active recording
-jobs globally, one job per camera. Failed cleanup remains charged. Finite warm
+Warm capture supports all selected video-capable cameras, including battery and
+unrecognized power/model classifications. There is one warm capture and one active
+recording job per camera, without a global two-camera gate. Shared bulk transfers
+wait for bounded transport capacity; they do not discard a clip simply because
+another camera is transferring a fragment. Failed cleanup remains owned. Finite warm
 lease rollover closes the old claim before rebuffering. Readiness reports actual
-history and capacity; native sample qualification is separate from Apple HKSV
+history and cleanup; native sample qualification is separate from Apple HKSV
 interoperability. No normal daemon launch installs dependencies or patches HAP.
 
 

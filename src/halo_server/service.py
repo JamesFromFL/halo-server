@@ -33,7 +33,7 @@ from halo_server.homekit.bridge import HomeKitBridge
 from halo_server.homekit.controller import HomeKitController
 from halo_server.homekit.controls import CONTROL_STATE_TTL, observed_controls
 from halo_server.homekit.models import HomeKitOperationError
-from halo_server.homekit.power import mains_confirmed
+from halo_server.homekit.power import mains_confirmed, recording_supported
 from halo_server.homekit.recording_settings import (
     RecordingSettingsConflict,
     RecordingSettingsError,
@@ -711,6 +711,9 @@ class HaloService:
                                 "camera_id": row.camera_id,
                                 "owner_warm": settings.owner_warm if settings else False,
                                 "mains_confirmed": mains_confirmed(cameras.get(row.camera_id)),
+                                "recording_supported": recording_supported(
+                                    cameras.get(row.camera_id)
+                                ),
                                 "active": settings.preferences.active if settings else False,
                                 "audio_active": settings.preferences.audio_active
                                 if settings

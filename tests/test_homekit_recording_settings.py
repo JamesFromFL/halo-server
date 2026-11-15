@@ -16,7 +16,7 @@ from test_native_service import Camera, service_fixture
 from halo_server.api.admin import AdminProtocolError
 from halo_server.homekit.ipc import validate_reply
 from halo_server.homekit.models import CameraCapabilities, CameraPolicy, HomeKitOperationError
-from halo_server.homekit.power import MAINS_ONLY_KINDS, mains_confirmed
+from halo_server.homekit.power import MAINS_ONLY_KINDS, mains_confirmed, recording_supported
 from halo_server.homekit.recording_settings import (
     RecordingPreferences,
     RecordingSettings,
@@ -128,7 +128,7 @@ def test_recording_cas_has_one_durable_winner_and_corrupt_state_never_grants_opt
 
 
 @pytest.mark.parametrize("kind", sorted(MAINS_ONLY_KINDS))
-def test_only_reviewed_mains_hardware_can_qualify(kind):
+def test_reviewed_mains_hardware_is_informational_power_evidence(kind):
     camera = inventory().cameras[0]
     camera = replace(
         camera, kind=kind, capabilities=CameraCapabilities(video=True, evidence=("sdk:video",))
@@ -283,7 +283,7 @@ async def test_uncertain_recording_save_reloads_truth_and_lost_store_fences(tmp_
 
 
 @pytest.mark.asyncio
-async def test_owner_admin_optin_is_persistent_power_checked_and_never_starts_capture_by_itself(
+async def test_owner_optin_checks_capability_and_persists_without_starting_capture(
     tmp_path,
 ):
     service, client, _ = service_fixture(tmp_path)
@@ -299,7 +299,8 @@ async def test_owner_admin_optin_is_persistent_power_checked_and_never_starts_ca
     )
     page = await service.handle_admin("homekit_recording_list", {})
     assert not page["cameras"][0]["owner_warm"] and page["cameras"][0]["mains_confirmed"]
-    assert page["warm_budget"] == {"capacity": 2, "reserved": 0}
+    assert page["cameras"][0]["recording_supported"] is True
+    assert page["warm_budget"] == {"capacity": None, "reserved": 0}
     parameters = {
         "profile_id": page["profile_id"],
         "account_generation": page["account_generation"],
@@ -311,7 +312,7 @@ async def test_owner_admin_optin_is_persistent_power_checked_and_never_starts_ca
     assert result["saved"] and service._homekit_bridge._recording_store.load().entries[0].owner_warm
     assert not service._media_sessions and client.submissions == 0
     assert (await service.handle_admin("homekit_recording_list", {}))["warm_budget"] == {
-        "capacity": 2,
+        "capacity": None,
         "reserved": 0,
     }
     with pytest.raises(AdminProtocolError) as stale:
@@ -322,10 +323,22 @@ async def test_owner_admin_optin_is_persistent_power_checked_and_never_starts_ca
 
 
 @pytest.mark.asyncio
-async def test_owner_admin_rejects_battery_shared_kind_without_changing_optin(tmp_path):
-    camera = Camera()
-    camera.kind = "cocoa_spotlight"
-    service, _, _ = service_fixture(tmp_path, cameras=[camera])
+async def test_owner_admin_all_seven_video_cameras_can_opt_in_without_starting_capture(tmp_path):
+    kinds = (
+        ("stickup_cam_mini", False),
+        ("cocoa_spotlight", True),
+        ("doorbell", True),
+        ("stickup_cam_longfin", True),
+        ("stickup_cam_v4", False),
+        ("unknown", False),
+        ("future_video_model", True),
+    )
+    cameras = []
+    for index, (kind, battery) in enumerate(kinds):
+        camera = Camera(str(index), capabilities=("video", "battery") if battery else ("video",))
+        camera.kind = kind
+        cameras.append(camera)
+    service, client, _ = service_fixture(tmp_path, cameras=cameras)
     page = await service.handle_admin("homekit_list", {})
     await service.handle_admin(
         "homekit_select",
@@ -333,20 +346,122 @@ async def test_owner_admin_rejects_battery_shared_kind_without_changing_optin(tm
             "profile_id": page["profile_id"],
             "account_generation": page["account_generation"],
             "expected_revision": page["revision"],
-            "camera_ids": ["42"],
+            "camera_ids": [camera.id for camera in cameras],
         },
     )
-    page = await service.handle_admin("homekit_recording_list", {})
-    with pytest.raises(AdminProtocolError) as denied:
-        await service.handle_admin(
+    for camera in cameras:
+        page = await service.handle_admin("homekit_recording_list", {})
+        row = next(row for row in page["cameras"] if row["camera_id"] == camera.id)
+        assert row["recording_supported"] is True
+        result = await service.handle_admin(
             "homekit_recording_warm",
             {
                 "profile_id": page["profile_id"],
                 "account_generation": page["account_generation"],
-                "camera_id": "42",
+                "camera_id": camera.id,
                 "expected_revision": page["revision"],
                 "enabled": True,
             },
         )
-    assert denied.value.code == "unsupported"
-    assert not service._homekit_bridge._recording_store.load().entries[0].owner_warm
+        assert result["saved"]
+    final = await service.handle_admin("homekit_recording_list", {})
+    assert len(final["cameras"]) == 7 and all(row["owner_warm"] for row in final["cameras"])
+    assert sum(row["mains_confirmed"] for row in final["cameras"]) == 1
+    assert final["warm_budget"] == {"capacity": None, "reserved": 0}
+    assert not service._media_sessions and client.submissions == 0
+
+
+@pytest.mark.parametrize("battery", [False, True])
+@pytest.mark.parametrize(
+    "kind", ["stickup_cam_mini", "cocoa_spotlight", "unknown", "future_video_model"]
+)
+def test_recording_support_uses_video_capability_only(kind, battery):
+    camera = replace(
+        inventory().cameras[0],
+        kind=kind,
+        capabilities=CameraCapabilities(
+            video=True,
+            battery=battery,
+            evidence=("sdk:video", "sdk:battery") if battery else ("sdk:video",),
+        ),
+    )
+    assert recording_supported(camera)
+    assert not recording_supported(replace(camera, capabilities=CameraCapabilities()))
+    assert not recording_supported(None)
+
+
+@pytest.mark.asyncio
+async def test_lost_video_capability_fences_recording_and_cannot_grant_optin(tmp_path):
+    bridge, boot, scope, service, client, _ = await selected_bridge(tmp_path)
+    camera = client.all_devices[0]
+    try:
+        camera.capabilities.remove("video")
+        await bridge._load_registry()
+        with pytest.raises(HomeKitOperationError):
+            service.homekit.validate_selected_scope(boot, scope)
+        page = await service.handle_admin("homekit_recording_list", {})
+        assert page["cameras"][0]["recording_supported"] is False
+        with pytest.raises(AdminProtocolError) as denied:
+            await service.handle_admin(
+                "homekit_recording_warm",
+                {
+                    "profile_id": page["profile_id"],
+                    "account_generation": page["account_generation"],
+                    "camera_id": camera.id,
+                    "expected_revision": page["revision"],
+                    "enabled": True,
+                },
+            )
+        assert denied.value.code == "unsupported"
+        assert not bridge._recording_store.load().entries[0].owner_warm
+        assert client.submissions == 0
+    finally:
+        await bridge._broker.retired(boot)
+
+
+@pytest.mark.asyncio
+async def test_publication_advertises_all_seven_cameras_and_revokes_only_lost_video(
+    tmp_path, monkeypatch
+):
+    bridge, boot, _, service, client, _ = await selected_bridge(tmp_path, count=7)
+    # Changing hardware power/model metadata must not suppress HKSV support.
+    for index, camera in enumerate(client.all_devices):
+        camera.kind = "unknown" if index % 2 else "cocoa_spotlight"
+        if index % 2:
+            camera.capabilities.add("battery")
+    await bridge._load_registry()
+    monkeypatch.setattr(bridge._recording, "ready", True)
+    monkeypatch.setattr(bridge, "_publication_enabled", True)
+    pages = []
+
+    class Peer:
+        async def request(self, kind, payload, *, expected):
+            assert kind == "accessory_config" and expected == "accessory_config_ack"
+            pages.append(payload)
+            return {"accepted": True, "code": "ok"}
+
+    bridge._runtime = Peer()
+    try:
+        for camera in client.all_devices:
+            observed = bridge._backend.inventory()
+            await bridge.set_recording_owner_warm(
+                observed.profile_id,
+                observed.account_generation,
+                camera.id,
+                bridge._recording_settings.revision,
+                True,
+            )
+        await bridge._configure()
+        assert len(pages[-1]["entries"]) == 7
+        assert all(entry["recording"]["enabled"] for entry in pages[-1]["entries"])
+        assert not bridge._recording_policy.pending_resources and client.submissions == 0
+        client.all_devices[0].capabilities.remove("video")
+        await bridge._load_registry()
+        await bridge._configure()
+        support = {
+            entry["camera_id"]: entry["recording"]["enabled"] for entry in pages[-1]["entries"]
+        }
+        assert support[client.all_devices[0].id] is False and sum(support.values()) == 6
+        assert client.submissions == 0
+    finally:
+        await bridge._broker.retired(boot)

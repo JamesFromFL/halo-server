@@ -191,7 +191,9 @@ try {
   await search.waitFor();
   checks.push('seven devices; long/empty search; details and history Back');
   const recording = await readApi('recording');
-  const recordingCamera = recording.cameras.find((camera) => camera.mains_confirmed === true);
+  const recordingCamera = recording.cameras.find(
+    (camera) => camera.recording_supported === true && camera.mains_confirmed === false,
+  );
   assert.ok(recording.available && recordingCamera, 'fixture supplies recording eligibility');
   const recordingRoute = `devices/${encodeURIComponent(recordingCamera.camera_id)}`;
   await navigate(recordingRoute);
@@ -199,16 +201,16 @@ try {
     name: 'Enable HomeKit Secure Video support',
     exact: true,
   });
-  await page.getByText('Mains-only confirmed', { exact: true }).waitFor();
+  await page.getByText('Supported', { exact: true }).waitFor();
   assert.equal(await hksv.isChecked(), false, 'viewing a camera does not opt into capture');
   await page
-    .getByText(
-      `${recording.warm_budget.reserved} of ${recording.warm_budget.capacity} slots reserved`,
-      { exact: true },
-    )
+    .getByText(`${recording.warm_budget.reserved} sources reserved · No configured camera cap`, {
+      exact: true,
+    })
     .waitFor();
   await hksv.click();
   await page.getByRole('dialog', { name: 'Enable HomeKit Secure Video support?' }).waitFor();
+  await page.getByText('This camera supports battery power.', { exact: false }).waitFor();
   await page.getByRole('button', { name: 'Cancel', exact: true }).click();
   await page.getByRole('dialog').waitFor({ state: 'hidden' });
   assert.equal(await hksv.isChecked(), false, 'canceled confirmation preserves recording opt-out');
@@ -231,9 +233,9 @@ try {
     [
       {
         ...recording,
-        cameras: recording.cameras.map((camera) => ({ ...camera, mains_confirmed: false })),
+        cameras: recording.cameras.map((camera) => ({ ...camera, recording_supported: false })),
       },
-      'Not confirmed',
+      'Video unavailable',
     ],
     [{ ...recording, available: false }, 'Unavailable'],
   ]) {
@@ -250,12 +252,43 @@ try {
     assert.equal(
       await hksv.isDisabled(),
       true,
-      'unconfirmed or unavailable recording cannot be enabled',
+      'undiscovered video support or unavailable recording cannot be enabled',
     );
     await page.unroute('**/api/web/v1/recording');
   }
+  await navigate('devices');
+  await navigate(recordingRoute);
+  await hksv.waitFor();
+  await page.waitForFunction(() => {
+    const input = document.querySelector('input[aria-label="Enable HomeKit Secure Video support"]');
+    return input && !input.disabled;
+  });
+  await hksv.click();
+  await page.getByRole('button', { name: 'Enable HKSV support', exact: true }).click();
+  await page.waitForFunction(() => {
+    const input = document.querySelector('input[aria-label="Enable HomeKit Secure Video support"]');
+    return input?.checked && !input.disabled;
+  });
+  assert.equal(
+    (await readApi('recording')).cameras.find(
+      (camera) => camera.camera_id === recordingCamera.camera_id,
+    ).owner_warm,
+    true,
+  );
+  await page.getByText('Not buffering', { exact: true }).waitFor();
+  await hksv.click();
+  await page.waitForFunction(() => {
+    const input = document.querySelector('input[aria-label="Enable HomeKit Secure Video support"]');
+    return input && !input.checked && !input.disabled;
+  });
+  assert.equal(
+    (await readApi('recording')).cameras.find(
+      (camera) => camera.camera_id === recordingCamera.camera_id,
+    ).owner_warm,
+    false,
+  );
   checks.push(
-    'HKSV support explains power eligibility and actual budget; viewing/canceling cannot enable capture; unavailable or unconfirmed support stays disabled',
+    'Battery and unknown-model video cameras can opt into HKSV with explicit confirmation and opt out again; viewing/canceling never opts in; readiness and uncapped source count are shown; missing video support and unavailable source details prevent enable',
   );
 
   const controls = await readApi('controls');

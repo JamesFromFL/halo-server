@@ -18,7 +18,6 @@ const SNAPSHOT_REJECTION_CODES = new Set([
   "stale-scope", "policy-denied", "conflict", "not-ready", "invalid-request", "source-failed",
 ]);
 const MAX_LIVE_SESSIONS = 8;
-const MAX_RECORDINGS = 2;
 const RECORDING_CLEANUP_MS = 60_000;
 export const RECORDING_LIFETIME_MS = 180_000;
 
@@ -403,7 +402,7 @@ export class AdapterSession {
       throw new ProtocolError("recording-cancelled");
     if (!this.options.bulk)
       throw new ProtocolError("bulk-unavailable");
-    if (this.activeRecordings >= MAX_RECORDINGS || this.recordings.size >= MAX_SESSION_REQUESTS ||
+    if (this.recordings.size >= MAX_INVENTORY_DEVICES ||
       [...this.recordings.values()].some(job => !job.finished && (!job.retired || !job.cleanupProven) && sameScope(job.scope, scope)))
       throw new ProtocolError("recording-capacity");
     const jobId = randomUUID(), payload = { scope: { ...scope }, job_id: jobId, configuration: structuredClone(configuration) };

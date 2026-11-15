@@ -178,7 +178,7 @@ function replayCameraPage(kind) {
     registry_revision: state.homekit.registry_revision,
     available: true,
     total: state.devices.length,
-    warm_budget: { capacity: 2, reserved: 0 },
+    warm_budget: { capacity: null, reserved: 0 },
     cameras: state.devices.map((device) => ({
       ...device.scope,
       camera_id: device.camera_id,
@@ -198,6 +198,8 @@ function replayCameraPage(kind) {
         ? {
             owner_warm: device.homekit.owner_warm,
             mains_confirmed: false,
+            recording_supported: device.capabilities.includes('video'),
+            warm_state: 'disabled',
           }
         : {}),
       ...(kind === 'controls'

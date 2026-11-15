@@ -29,6 +29,7 @@ MAX_SESSION_IDENTITIES = 512
 RETIRED_SESSION_SECONDS = 60.0
 RECORDING_POSTROLL_SECONDS = 2.0
 RECORDING_EVENT_SECONDS = 150.0
+RECORDING_TRANSFER_SECONDS = 5.0
 
 
 @dataclass(frozen=True)
@@ -661,8 +662,7 @@ class HomeKitBroker:
                 if identity in self._recording_history or job is not None:
                     raise HomeKitOperationError("session_conflict")
                 if (
-                    len(self._recording_jobs) >= 2
-                    or len(self._recording_history) + len(self._recording_jobs)
+                    len(self._recording_history) + len(self._recording_jobs)
                     >= MAX_SESSION_IDENTITIES
                     or any(
                         j.scope.source_key == scope.source_key
@@ -760,7 +760,9 @@ class HomeKitBroker:
                 ):
                     raise HomeKitOperationError("invalid_recording_output")
                 delivery = _SnapshotDelivery(boot, scope, identity, str(uuid4()), image=packet)
-                delivery.prepared = channel.prepare_send(
+                delivery.prepared = await self._prepare_recording_transfer(
+                    job,
+                    channel,
                     scope=data["scope"],
                     operation_id=identity,
                     transfer_id=delivery.transfer_id,
@@ -799,6 +801,21 @@ class HomeKitBroker:
             return result | {"status": "rejected", "code": "unsupported"}
         except BulkTransferError as error:
             return result | {"status": "rejected", "code": error.code}
+
+    async def _prepare_recording_transfer(self, job, channel, **parameters):
+        """Share the bounded transport window without dropping another camera's clip."""
+        from halo_server.homekit.bulk import BulkTransferError
+
+        deadline = asyncio.get_running_loop().time() + RECORDING_TRANSFER_SECONDS
+        while True:
+            if not self._recording_current(job):
+                raise HomeKitOperationError("cancelled")
+            try:
+                return channel.prepare_send(**parameters)
+            except BulkTransferError as error:
+                if error.code != "busy" or asyncio.get_running_loop().time() >= deadline:
+                    raise
+                await asyncio.sleep(0.01)
 
     async def _deliver_recording(self, job, delivery):
         async def chunks():

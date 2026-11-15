@@ -179,13 +179,14 @@ Camera light and siren responses distinguish accepted, rejected, and unknown out
 An accepted command is not proof of the physical device state. The existing
 30-second siren bound remains in force. In a camera’s **Recording** section,
 **Enable HomeKit Secure Video support** opts into Halo’s recording capability and
-pre-event source capture. Enable it for a selected, supported mains-only camera,
+pre-event source capture. Enable it for any selected camera with video capability,
 then choose that camera’s recording and audio options in Apple Home. The Halo
-switch does not grant Apple Home’s recording permission. Battery-capable models
-remain ineligible even when wired or solar-assisted. The shared source budget is
-reported by the server (currently two slots); starting sources and pending cleanup
-also reserve slots. Installing the interface never enables capture. Eligibility
-and budget information describe the last device refresh, not verified clip delivery.
+switch does not grant Apple Home’s recording permission. Battery-capable and unknown
+power/model classifications do not block recording. Pre-event capture can keep a Ring
+stream open and use battery power. The interface reports reserved sources and actual
+warm-history state without a fixed camera-count cap. Starting sources and pending cleanup
+are included in the count. Installing the interface never enables capture. These states
+describe the last device refresh, not verified Apple Home clip delivery.
 
 ## Scope
 

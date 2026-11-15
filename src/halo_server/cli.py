@@ -117,7 +117,7 @@ def build_parser() -> argparse.ArgumentParser:
     selection = commands.add_parser("select", help="Replace the explicit selected camera set")
     selection.add_argument("camera_ids", nargs="*")
     selection.add_argument("--none", action="store_true", help="Explicitly deselect every camera")
-    warm = commands.add_parser("warm", help="Opt a selected mains-only camera into warm recording")
+    warm = commands.add_parser("warm", help="Opt a selected camera into warm recording")
     warm.add_argument("camera_id")
     warm.add_argument("state", choices=("on", "off"))
     pairing = commands.add_parser("pairing", help="Inspect or explicitly reveal/reset setup data")

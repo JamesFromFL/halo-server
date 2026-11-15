@@ -19,7 +19,6 @@ from halo_server.media.worker_limits import worker_environment
 from halo_server.release_execution import python_worker_command
 from halo_server.release_guard import inherited_guard_fds
 
-MAX_WORKERS = 2
 START_SECONDS = 3.0
 FRAME_SECONDS = 2.0
 STOP_SECONDS = 1.0
@@ -182,8 +181,9 @@ class RecordingWorker:
             command = python_worker_command(Path(__file__).with_name("recording_worker.py"))
             inherited = inherited_guard_fds()
             with _LOCK:
-                if _WORKERS >= MAX_WORKERS:
-                    raise RecordingError("busy")
+                # Recording admission is scoped to each published camera by
+                # the owning manager. Keep every process tracked until reaped,
+                # without imposing a second, unrelated camera-count ceiling.
                 _WORKERS += 1
                 self._reserved = True
                 _OWNED.add(self)
