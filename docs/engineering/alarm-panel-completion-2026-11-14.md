@@ -55,13 +55,12 @@ and surfaced in the bridge UI.
 History is fenced by account, provider binding, source epoch, selected graph,
 accessory identity and adapter boot. Admission rechecks these and expiry at the
 actual IPC send. One location's reconnect does not discard another location's
-valid events. Historical observations carry only mode and trigger values. Control permission
-always comes from the current policy/source snapshot, and history never replaces
+valid events. Historical observations carry only mode and trigger values. Control
+permission always comes from the current policy/source snapshot, and history never replaces
 the current snapshot used to admit a new command. Temporarily forcing permission
 off would incorrectly revoke a pending normal command when its readback arrived;
 the final implementation preserves that live permission without restoring an old
-grant. Repeated identical
-observations do not produce repeated alarm events. Retired history is not replayed
+grant. Repeated identical observations do not produce repeated alarm events. Retired history is not replayed
 on startup or reconnection.
 
 HAP 2.3.0-halo.2 adds only SecuritySystemCurrentState to the immediate notification
@@ -105,10 +104,47 @@ from halo.1 are the package version, notification condition, and source maps.
 
 Production verification is passive only. Deployment must preserve the enabled,
 paired device bridge, all camera pairings, alarm grants and import selections.
-The HAP firmware version marker may migrate from halo.1 to halo.2; no other pairing
-record change is accepted. Physical normal-mode behavior and phone alert delivery
+The initial guard allowed only the HAP firmware version marker migration from
+halo.1 to halo.2. The exact, independently proved display-name exception discovered
+during deployment is recorded below. Physical normal-mode behavior and phone alert delivery
 remain for the user's later test, and are not claimed from synthetic results.
 
 Local evidence roots: `work/halo-alarm-panel-2026-11-14`,
 `work/halo-alarm-notifications-2026-11-14`, and
 `work/halo-alarm-completion-2026-11-14` in the Codex workspace.
+
+
+## Installed result
+
+Source `7f8019847e5b7f44c7a5d79f7d72f07e2dc05224` is deployed as release
+`d979e7aa2de55218f4fd0167efeb9680221b68d8f6cadafdd68583a33ba9a419`, selection
+revision 26. Its complete installed-package qualification passed 1,040 Python
+tests with no skips, 328 adapter tests, 63 frontend unit tests and 132 browser
+layouts across Chromium and Firefox. Real installed daemon and adapter lifecycle
+probes passed in isolation. The earlier 4,025-test full-source run is explicitly
+inherited; it was not rerun or represented as fresh coverage of this commit.
+
+The final passive production check reports the panel online with current mode,
+phase and signal receipts, no stale flag, and its security-system mapping selected
+and ready. Halo Bridge is published and paired; all 17 device selections and seven
+camera pairings remain present. Normal alarm authority is available according to
+Ring's current allowed targets. Pending and dropped alarm-event counts are zero.
+No physical alarm commands or simulated production alarm events were sent.
+
+The first pairing-preservation check rejected two camera records. Exact in-memory
+reconstruction of the original complete file hashes proved that HAP had reset the
+two original pilot cameras' mDNS names from their prior ` (3)` collision suffixes
+to their configured names. Only those two display names and eight firmware markers
+changed. Keys, client permissions, configuration hashes/counters and all remaining
+original bytes are preserved; no pairing file was restored or edited by the
+verification. The narrow postcheck exception binds the exact two files and names,
+requires the original full-file SHA256, and applies only after activation. Eleven
+synthetic acceptance and tamper-rejection checks passed independently twice. The
+initial failed check and original helper are retained alongside the amendment.
+
+The corrected read-only postcheck passed. Owner login, TLS, alarm grants, import
+choices and recording preferences are preserved, and the previous package remains
+available for rollback. Deployment evidence is bound in
+`work/halo-alarm-completion-2026-11-14/deployment-result.json`. Real normal-mode
+operation and Apple phone notification presentation remain untested and reserved
+for the owner. No GitHub push was performed.
