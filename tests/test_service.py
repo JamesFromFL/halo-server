@@ -1514,37 +1514,23 @@ async def test_plugin_camera_controls_use_reservation_or_ordering_per_control(tm
     second = None
     try:
         await asyncio.wait_for(started.wait(), timeout=1)
-        if control == "light":
-            # Lighting also overlaps groups/Beams, so it must not queue an
-            # opposite command behind the in-flight shared reservation.
-            with pytest.raises(PluginCameraOperationError) as raised:
-                await asyncio.wait_for(
-                    service._set_plugin_camera_control("42", control, False), timeout=1
-                )
-            assert raised.value.code == "lighting_busy"
-            assert raised.value.status == 409
-        else:
-            requested = asyncio.Event()
+        requested = asyncio.Event()
 
-            async def queued_siren():
-                requested.set()
-                await service._set_plugin_camera_control("42", control, False)
+        async def queued_control():
+            requested.set()
+            await service._set_plugin_camera_control("42", control, False)
 
-            second = asyncio.create_task(queued_siren())
-            await asyncio.wait_for(requested.wait(), timeout=1)
-            assert not second.done()
+        # Both controls retain per-camera order. Lighting additionally waits
+        # for the exclusive account reservation within its original deadline.
+        second = asyncio.create_task(queued_control())
+        await asyncio.wait_for(requested.wait(), timeout=1)
+        assert not second.done()
 
         assert order == [("start", first_value)]
         assert client.submissions == 1
         release.set()
         await asyncio.wait_for(first, timeout=1)
-        if control == "light":
-            # The rejected request was not retained for automatic replay.
-            assert order == [("start", first_value), ("end", first_value)]
-            assert client.submissions == 1
-            await service._set_plugin_camera_control("42", control, False)
-        else:
-            await asyncio.wait_for(second, timeout=1)
+        await asyncio.wait_for(second, timeout=1)
 
         assert client.submissions == 2
         assert order == [
@@ -2050,7 +2036,7 @@ async def test_revoked_control_waiting_for_camera_lock_is_never_submitted(tmp_pa
     lock.release()
     with pytest.raises(PluginCameraOperationError) as raised:
         await task
-    assert raised.value.code == "unauthorized"
+    assert raised.value.code == "control_superseded"
     assert client.submissions == 0
 
 

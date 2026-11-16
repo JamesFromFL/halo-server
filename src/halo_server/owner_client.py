@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import itertools
 import json
+import math
 import re
 from pathlib import Path
 from typing import Any
@@ -396,6 +397,7 @@ class AdminClient:
                 not isinstance(row, dict)
                 or not isinstance(row.get("camera_id"), str)
                 or type(row.get("device_generation")) is not int
+                or ("lighting" in row and not _valid_camera_lighting(row["lighting"]))
                 for row in result["cameras"]
             )
         ):
@@ -533,6 +535,52 @@ class AdminClient:
 
     async def support_report(self) -> dict[str, Any]:
         return await self._object("support_report")
+
+
+def _valid_camera_lighting(value):
+    """Reject malformed or optimistic lighting projections at the IPC boundary."""
+    fields = {
+        "fresh",
+        "observed_age_seconds",
+        "light",
+        "motion_duration_seconds",
+        "manual_timer_status",
+        "activation_source",
+        "reason",
+    }
+    if not isinstance(value, dict) or set(value) != fields:
+        return False
+    age, light, duration = (
+        value["observed_age_seconds"],
+        value["light"],
+        value["motion_duration_seconds"],
+    )
+    if (
+        type(value["fresh"]) is not bool
+        or (
+            age is not None
+            and (
+                type(age) not in {int, float} or not 0 <= age <= 2**53 - 1 or not math.isfinite(age)
+            )
+        )
+        or (light is not None and type(light) is not bool)
+        or (duration is not None and (type(duration) is not int or not 30 <= duration <= 900))
+        or value["manual_timer_status"] != "unverified"
+        or value["activation_source"] is not None
+        or value["reason"] not in (None, "source_unknown", "source_stale", "lighting_changed")
+    ):
+        return False
+    if value["fresh"]:
+        return (
+            age is not None
+            and age <= 90
+            and value["reason"] in (None, "source_unknown")
+            and (
+                (value["reason"] is None and light is not None and duration is not None)
+                or (value["reason"] == "source_unknown" and (light is None or duration is None))
+            )
+        )
+    return light is None and duration is None and value["reason"] is not None
 
 
 def _camera_page(value: dict[str, Any], offset: int) -> dict[str, Any]:

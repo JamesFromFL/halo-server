@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "source_hash": "241313498888c974505b2105dd4f0b67aa295369167a4d868e5e43c6fc08322a",
+  "source_hash": "bed05c13295fa33b824e4f9f74db28fe67384839ed485c117b59871fe271054f",
   "source_files": [
     {
       "path": ".prettierignore",
@@ -53,6 +53,10 @@
     {
       "path": "scripts/build-manifest.mjs",
       "sha256": "45b68e586c795291dd929ca4e4e0a23605fd8769bd3489379ff106d9aadc6d17"
+    },
+    {
+      "path": "scripts/camera-light-smoke.mjs",
+      "sha256": "db4a7ced3cd6cb441f828b935751a9e3ecbff09153587b175afab98c4e90197a"
     },
     {
       "path": "scripts/chime-smoke.mjs",
@@ -119,6 +123,10 @@
       "sha256": "0c7dfc0ead5a0e397f56233127b4b4e217903b9f235346a1db0c22fccf0112ab"
     },
     {
+      "path": "src/components/CameraLighting.svelte",
+      "sha256": "f0d5fea0f3403f8ec6e64fc709b79d639b85ab3c73a574350a04bceb2803a19c"
+    },
+    {
       "path": "src/components/ChimeControls.svelte",
       "sha256": "781c20bfd1eab6eb1ed2e5fee87f78b7f20b7c914ffce1c5040469cb13304c6f"
     },
@@ -179,6 +187,10 @@
       "sha256": "4cc1f248eaffb0109d3be6e2a39c03e1be05a619f659aac0f2ff33c132650ea5"
     },
     {
+      "path": "src/lib/camera-light.ts",
+      "sha256": "9179da9fc374846b2540fbf34cc6548b3b78b4e7d2ad1c96e4437ca0e09c3108"
+    },
+    {
       "path": "src/lib/chime.ts",
       "sha256": "fc1645d4e2dfd7de7f7a343405314207f4177c01421a59753a1061aa1d58b32e"
     },
@@ -212,7 +224,7 @@
     },
     {
       "path": "src/lib/types.ts",
-      "sha256": "6bef724eae24819f4983d82e60d54003cc0d057f04ebbb957cee3d73526e8cef"
+      "sha256": "9cbf2b899c60f0a01a5356ff8ae694775376f9824ca1eed3f526a4be5602f667"
     },
     {
       "path": "src/main.ts",
@@ -224,7 +236,7 @@
     },
     {
       "path": "src/pages/Devices.svelte",
-      "sha256": "6615aa10e41c41ae8d1bf7736c954dfd5e7fe28001386f1ba46bd0c757352b74"
+      "sha256": "7bebb9c93fd8a0c8e32c7cd19c6c836d45222517e2726babab10537bfe1911dc"
     },
     {
       "path": "src/pages/Diagnostics.svelte",
@@ -269,6 +281,10 @@
     {
       "path": "tests/bridge.test.ts",
       "sha256": "f13a554989aaa5c384bbb7defa7ae65edbbb74da117c44d4d8905b3d198794a0"
+    },
+    {
+      "path": "tests/camera-light.test.ts",
+      "sha256": "30f708ba91df73ebacd29a0d21ef2ec78288a3b5cbace1fa8d3a9b48116f9737"
     },
     {
       "path": "tests/chime.test.ts",
@@ -321,8 +337,8 @@
       "sha256": "7535816b4e8693ab146ba556a9766b5bf9a2c86dfdc12e5cfd1e3057979345f0"
     },
     {
-      "path": "assets/index-ea-Hri1w.js",
-      "sha256": "c089faf80299aa0e67e54fbb754fda4ccf48c0fd07d1d0e2edb7e3938bed5776"
+      "path": "assets/index-CBhw56mj.js",
+      "sha256": "f45a5bc5f601bc73ba728ac6d617f4b8857f6c94138496c4ed19d0685507fcf8"
     },
     {
       "path": "halo.png",
@@ -330,7 +346,7 @@
     },
     {
       "path": "index.html",
-      "sha256": "79c0d93a254828ccb90e1f2257bf7eda289ecf4859fc96c1e3783553878d6edd"
+      "sha256": "940f3c4eba8d7816722f18cb1dcca92adbaeb6dd5fb97d0478c6f41412a36db9"
     }
   ]
 }

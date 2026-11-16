@@ -1,5 +1,9 @@
 # Halo Server engineering
 
+[Camera lighting and manual switch controls](camera-light-controls-2026-11-15.md)
+records the native-motion/manual-switch goal, post-command confirmation repair,
+read-only lighting observations, and remaining owner-operated hold test.
+
 [Non-camera implementation wave 3](noncamera-wave3-2026-11-14.md) records the
 separate read-only HomeKit bridge, explicit publication, sensor freshness, pairing
 and resumable reset, owner interface and local qualification. Live deployment and

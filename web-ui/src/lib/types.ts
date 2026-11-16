@@ -283,6 +283,29 @@ export interface CameraPage<T = Record<string, Json>> {
   [key: string]: unknown;
 }
 export type CameraPrivacyMode = 'ring' | 'homekit';
+export interface CameraLighting {
+  fresh: boolean;
+  observed_age_seconds: number | null;
+  light: boolean | null;
+  motion_duration_seconds: number | null;
+  manual_timer_status: 'unverified';
+  activation_source: null;
+  reason: null | 'source_unknown' | 'source_stale' | 'lighting_changed';
+}
+export interface CameraControl {
+  camera_id: string;
+  device_generation: number;
+  has_light: boolean;
+  has_siren: boolean;
+  light: boolean | null;
+  siren: boolean | null;
+  lighting?: CameraLighting;
+}
+export interface CameraControlPage {
+  profile_id: string;
+  account_generation: number;
+  cameras: CameraControl[];
+}
 export interface CameraPrivacy {
   camera_id: string;
   revision: number;

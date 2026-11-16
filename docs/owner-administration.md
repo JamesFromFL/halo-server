@@ -128,6 +128,12 @@ to the currently observed account/device generation and has a fresh operation UU
 `accepted`, `rejected`, and `unknown` are distinct outcomes. An unknown outcome is not a
 confirmed switch state and is never retried automatically.
 
+Camera-light commands get one bounded inventory read after acknowledgement. The
+web interface shows Ring's observed light state and motion shutoff interval when
+fresh data is available. It does not add a manual timer or change Ring's motion
+settings. A persistent manual On through the native motion timeout still requires
+owner verification for each camera model; no automatic On keepalive is used.
+
 ## Diagnostics and support
 
 ```sh

@@ -7,22 +7,65 @@ import pytest
 from test_native_service import service_fixture
 
 from halo_server.api.plugin import PluginCameraOperationError
-from halo_server.ring.lighting import client_lighting
+from halo_server.ring.lighting import LightingReservation, client_lighting
 
 
 @pytest.mark.asyncio
-async def test_group_reservation_blocks_camera_write_without_queue(tmp_path):
+async def test_group_reservation_defers_camera_until_exclusive_owner_releases(tmp_path):
     service, client, _ = service_fixture(tmp_path)
     reservation = client_lighting(client)
     token = reservation.try_acquire()
+    command = asyncio.create_task(service._set_camera_control("42", "light", True))
+    try:
+        await asyncio.sleep(0)
+        assert not command.done()
+        assert client.submissions == 0 and not client.all_devices[0].light_values
+        assert reservation.valid(token)
+        reservation.release(token)
+        await command
+        assert client.all_devices[0].light_values == [True]
+        assert reservation.revision == 2
+    finally:
+        reservation.release(token)
+        if not command.done():
+            command.cancel()
+        await asyncio.gather(command, return_exceptions=True)
+
+
+def test_acknowledgement_is_idempotent_and_requires_active_sent_token():
+    reservation = LightingReservation()
+    first = reservation.try_acquire()
+    assert reservation.acknowledge(None) is None
+    assert reservation.acknowledge(first) is None and reservation.revision == 0
+    assert reservation.mark_sent(first) and reservation.revision == 1
+    assert reservation.acknowledge(first) == 2
+    assert reservation.acknowledge(first) == 2 and reservation.revision == 2
+    reservation.release(first)
+    second = reservation.try_acquire()
+    assert reservation.acknowledge(first) is None and reservation.revision == 2
+    assert reservation.mark_sent(second) and reservation.revision == 3
+    reservation.retire()
+    assert reservation.acknowledge(second) is None and reservation.revision == 3
+
+
+@pytest.mark.asyncio
+async def test_failed_camera_setter_never_records_ack_or_retries(tmp_path):
+    service, client, _ = service_fixture(tmp_path)
+    camera = client.all_devices[0]
+
+    async def failed(value):
+        camera.light_values.append(value)
+        raise RuntimeError("synthetic setter failure")
+
+    camera.async_set_light = failed
     with pytest.raises(PluginCameraOperationError) as error:
         await service._set_camera_control("42", "light", True)
-    assert error.value.code == "lighting_busy"
-    assert client.submissions == 0 and not client.all_devices[0].light_values
+    assert error.value.code == "control_failed"
+    reservation = client_lighting(client)
+    assert camera.light_values == [True] and reservation.revision == 1
+    token = reservation.try_acquire()
+    assert token is not None
     reservation.release(token)
-    await service._set_camera_control("42", "light", True)
-    assert client.all_devices[0].light_values == [True]
-    assert reservation.revision == 1
 
 
 @pytest.mark.asyncio
@@ -66,7 +109,10 @@ async def test_camera_cancelled_before_ring_admission_releases_without_late_actu
     await lock.acquire()
     command = asyncio.create_task(service._set_camera_control("42", "light", True))
     await asyncio.sleep(0)
-    assert reservation.try_acquire() is None
+    # Waiting for this camera's FIFO lock must not block other cameras/groups.
+    other_owner = reservation.try_acquire()
+    assert other_owner is not None
+    reservation.release(other_owner)
     command.cancel()
     with pytest.raises(asyncio.CancelledError):
         await command

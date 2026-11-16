@@ -10,6 +10,7 @@
   } from '../lib/model.ts';
   import { cameraDetailTarget, noncameraDevice } from '../lib/noncamera.ts';
   import { recordingEligibility, recordingReadiness, recordingSources } from '../lib/recording.ts';
+  import { cameraControl } from '../lib/camera-light.ts';
   import {
     cameraPrivacy,
     privacyAccess,
@@ -25,6 +26,7 @@
     Operation,
     CameraPrivacyMode,
     CameraPrivacyPage,
+    CameraControlPage,
   } from '../lib/types.ts';
   import Row from '../components/Row.svelte';
   import Status from '../components/Status.svelte';
@@ -33,6 +35,7 @@
   import PairingCode from '../components/PairingCode.svelte';
   import OperationStatus from '../components/OperationStatus.svelte';
   import NoncameraDevices from '../components/NoncameraDevices.svelte';
+  import CameraLighting from '../components/CameraLighting.svelte';
   let {
     snapshot,
     fresh,
@@ -55,7 +58,7 @@
   let selection = $state<CameraPage | null>(null);
   let pairing = $state<CameraPage<PairingCamera> | null>(null);
   let recording = $state<CameraPage | null>(null);
-  let controls = $state<CameraPage | null>(null);
+  let controls = $state<CameraControlPage | null>(null);
   let privacy = $state<CameraPrivacyPage | null>(null);
   let secret = $state<PairingSecret | null>(null);
   let error = $state('');
@@ -63,6 +66,7 @@
   let busy = $state(false);
   let confirmation = $state<'reset' | 'siren' | 'warm' | 'privacy' | null>(null);
   let operation = $state<Operation | null>(null);
+  let controlOperation = $state('');
   let serial = 0;
   let destroyed = false;
   let operationScope = '';
@@ -91,7 +95,7 @@
     recordingEligibility(fresh, device?.homekit.selected === true, recording?.available, warm),
   );
   const batteryCapable = $derived(device?.capabilities.includes('battery') === true);
-  const control = $derived(controls?.cameras.find((d) => d.camera_id === device?.camera_id));
+  const control = $derived(cameraControl(controls, device));
   const privacyCamera = $derived(cameraPrivacy(privacy, device));
   const privacyFresh = $derived(fresh && privacyCamera?.source_fresh === true);
   const privacyEffectiveFresh = $derived(fresh && privacy?.available === true && !!privacyCamera);
@@ -103,6 +107,7 @@
     const scope = JSON.stringify([key, epoch]);
     if (operationScope !== scope) {
       operation = null;
+      controlOperation = '';
       confirmation = null;
       operationScope = scope;
     }
@@ -148,7 +153,7 @@
       api.get<CameraPage>('selection'),
       api.get<CameraPage<PairingCamera>>('pairing'),
       api.get<CameraPage>('recording'),
-      api.get<CameraPage>('controls'),
+      api.get<CameraControlPage>('controls'),
       api.get<unknown>('privacy'),
     ]);
     if (destroyed || token !== serial) return;
@@ -170,6 +175,7 @@
     busy = true;
     error = '';
     secret = null;
+    controlOperation = path === 'controls' ? id : '';
     const target = deviceId;
     const expected = generation;
     try {
@@ -180,12 +186,20 @@
         notify('Halo received the change.');
         await refresh();
         await load();
+      } else if (path === 'controls') {
+        await refresh();
+        await load();
       } else if (path === 'pairing/reset' && operation.status === 'pending') await load();
     } catch (e) {
       if (destroyed || target !== deviceId || expected !== generation) return;
       error = errorMessage(e);
-      if (e instanceof ApiError && e.possiblySent)
+      if (e instanceof ApiError && e.possiblySent) {
         operation = { operation_id: id, status: 'unknown', possibly_sent: true };
+        if (path === 'controls') {
+          await refresh();
+          await load();
+        }
+      }
     } finally {
       busy = false;
       confirmation = null;
@@ -257,7 +271,7 @@
       !fresh ||
       busy ||
       loading ||
-      (unsettled && !(kind === 'siren' && !enabled))
+      (unsettled && !(!enabled && (kind === 'siren' || operation?.status !== 'pending')))
     )
       return;
     if (kind === 'siren' && enabled && confirmation !== 'siren') {
@@ -431,7 +445,10 @@
       onupdate={(value) => {
         if (!operation?.operation_id || value.operation_id !== operation.operation_id) return;
         operation = value;
-        if (value.status === 'completed') {
+        if (
+          value.status === 'completed' ||
+          (value.operation_id === controlOperation && value.status !== 'pending')
+        ) {
           void refresh();
           void load();
         }
@@ -617,17 +634,16 @@
       ></Row
     >
   </div>
-  {#if control?.has_light === true || control?.has_siren === true}<h3>Camera controls</h3>
+  {#if control?.has_light === true}<CameraLighting
+      lighting={control.lighting}
+      legacyLight={device.observed.light}
+      {fresh}
+      onDisabled={disabled}
+      offDisabled={!fresh || busy || loading || operation?.status === 'pending'}
+      oncommand={(enabled) => void command('light', enabled)}
+    />{/if}
+  {#if control?.has_siren === true}<h3>Camera controls</h3>
     <div class="group">
-      {#if control.has_light === true}<Row
-          title="Camera light"
-          subtitle={`Observed: ${fresh ? tri(device.observed.light, 'On', 'Off') : 'Unknown'}`}
-          icon="light"
-          ><button {disabled} onclick={() => command('light', true)}>On</button><button
-            {disabled}
-            onclick={() => command('light', false)}>Off</button
-          ></Row
-        >{/if}
       {#if control.has_siren === true}<Row
           title="Siren"
           subtitle="Ring command is bounded to 30 seconds"

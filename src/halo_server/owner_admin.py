@@ -180,6 +180,8 @@ class OwnerAdministration:
                 raise AdminProtocolError("bad_params", "Camera privacy preferences are required")
             return await self.service.camera_privacy_set(**params)
         if method == "camera_control_list":
+            from halo_server.camera_lighting import camera_lighting_view
+
             _only(params, set())
             inventory = self.control_backend.inventory()
             cameras = []
@@ -198,6 +200,15 @@ class OwnerAdministration:
                         "has_siren": camera.capabilities.siren,
                         "light": light,
                         "siren": siren,
+                        **(
+                            {
+                                "lighting": camera_lighting_view(
+                                    self.service, camera.scope.camera_id, device
+                                )
+                            }
+                            if camera.capabilities.light
+                            else {}
+                        ),
                     }
                 )
             return {

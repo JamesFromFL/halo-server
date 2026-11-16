@@ -30,6 +30,7 @@ MAX_LIVE_TOTAL = 8
 MAX_RECORDING_PER_CAMERA = 1
 MAX_SNAPSHOTS = 2
 MAX_CONTROLS = 2
+MAX_LIGHT_CONTROLS = 64
 MAX_SPEAKERS = 1
 ACQUIRE_SECONDS = 20.0
 SNAPSHOT_SECONDS = 8.0
@@ -331,7 +332,7 @@ class HomeKitController:
                 and self._loop is not None
                 and (claim.handle is not None or self._loop.time() < claim.deadline)
             )
-            if allowed and claim.kind == "control":
+            if allowed and claim.kind in {"control", "light_control"}:
                 claim.possibly_sent = True
             return bool(allowed)
 
@@ -385,6 +386,8 @@ class HomeKitController:
             ):
                 raise HomeKitOperationError("busy")
             if kind == "control" and len(same_kind) >= MAX_CONTROLS:
+                raise HomeKitOperationError("busy")
+            if kind == "light_control" and len(same_kind) >= MAX_LIGHT_CONTROLS:
                 raise HomeKitOperationError("busy")
             if kind == "speaker" and len(same_kind) >= MAX_SPEAKERS:
                 raise HomeKitOperationError("busy")
@@ -514,7 +517,10 @@ class HomeKitController:
             raise HomeKitOperationError("invalid_control")
         if not getattr(self._camera(scope).capabilities, control):
             raise HomeKitOperationError("capability_unsupported")
-        claim, _ = self._reserve(boot_id, scope, "control", None, CONTROL_SECONDS)
+        # A scene can address several lights at once. The service serializes
+        # their physical writes; this bounded lane must not expand siren access.
+        kind = "light_control" if control == "light" else "control"
+        claim, _ = self._reserve(boot_id, scope, kind, None, CONTROL_SECONDS)
         await self._once(
             claim,
             lambda: self._backend.set_control(
@@ -539,8 +545,24 @@ class HomeKitController:
             except asyncio.CancelledError:
                 raise
             except HomeKitOperationError as exc:
+                # Admission checks run while a light waits, before any setter.
+                # These service errors prove that no physical handoff occurred;
+                # do not relabel them uncertain merely because authority was read.
+                unsent_light = (
+                    claim.kind == "light_control"
+                    and not exc.possibly_sent
+                    and exc.code
+                    in {
+                        "lighting_timeout",
+                        "lighting_busy",
+                        "lighting_unavailable",
+                        "control_superseded",
+                    }
+                )
                 raise HomeKitOperationError(
-                    exc.code, str(exc), possibly_sent=exc.possibly_sent or claim.possibly_sent
+                    exc.code,
+                    str(exc),
+                    possibly_sent=exc.possibly_sent or claim.possibly_sent and not unsent_light,
                 ) from None
             except Exception as exc:
                 raise HomeKitOperationError(
@@ -932,4 +954,5 @@ def _permission(kind):
         "snapshot": "snapshots",
         "speaker": "talkback",
         "control": "controls",
+        "light_control": "controls",
     }[kind]
