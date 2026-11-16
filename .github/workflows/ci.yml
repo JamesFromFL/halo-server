@@ -62,7 +62,21 @@ jobs:
           npm run build
       - run: .venv/bin/ruff check --no-cache src tests scripts/check_web_browser.py scripts/check_web_pairing_browser.py
       - run: .venv/bin/ruff format --check --no-cache src tests scripts/check_web_browser.py scripts/check_web_pairing_browser.py
-      - run: .venv/bin/pytest -v -x -o faulthandler_timeout=60 -p pytest_asyncio.plugin -p no:cacheprovider
+      - name: Run Python suite with bounded execution
+        run: |
+          set -o pipefail
+          mkdir -p test-evidence
+          PYTHONUNBUFFERED=1 timeout --signal=INT --kill-after=30s 10m \
+            .venv/bin/pytest -v -x -o faulthandler_timeout=60 \
+            -p pytest_asyncio.plugin -p no:cacheprovider \
+            2>&1 | tee test-evidence/pytest.log
+      - name: Preserve Python test output
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: python-test-output
+          path: test-evidence/
+          retention-days: 14
       - name: Audit locked runtime and tooling separately
         run: |
           mkdir -p audit
