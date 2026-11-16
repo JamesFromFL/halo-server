@@ -661,13 +661,10 @@ class HomeKitBroker:
             if kind == "recording_open":
                 if identity in self._recording_history or job is not None:
                     raise HomeKitOperationError("session_conflict")
-                if (
-                    len(self._recording_history) + len(self._recording_jobs)
-                    >= MAX_SESSION_IDENTITIES
-                    or any(
-                        j.scope.source_key == scope.source_key
-                        for j in self._recording_jobs.values()
-                    )
+                if len(self._recording_history) + len(
+                    self._recording_jobs
+                ) >= MAX_SESSION_IDENTITIES or any(
+                    j.scope.source_key == scope.source_key for j in self._recording_jobs.values()
                 ):
                     raise HomeKitOperationError("busy")
                 configuration = recording_configuration(data["configuration"])
