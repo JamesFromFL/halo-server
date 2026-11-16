@@ -86,11 +86,11 @@ async def _probe(command: list[str]) -> bytes:
                 raise ValueError("diagnostic worker failed")
             return stdout
     finally:
-        await settle_owned(asyncio.create_task(_reap_probe(process)))
         for reader in readers:
             if not reader.done():
                 reader.cancel()
         await settle_owned(asyncio.create_task(_join_readers(readers)))
+        await settle_owned(asyncio.create_task(_reap_probe(process)))
 
 
 async def _join_readers(readers):
@@ -101,7 +101,15 @@ async def _reap_probe(process):
     # A probe may inherit descendants; the isolated process group is its owner.
     with contextlib.suppress(ProcessLookupError):
         os.killpg(process.pid, signal.SIGKILL)
-    await process.wait()
+
+    # Older asyncio versions wait for pipe closure as well as process exit.
+    # An overflowing reader can leave its transport paused, so discard the
+    # remaining bytes without retaining output or waiting for an unread pipe.
+    async def drain(stream):
+        while await stream.read(PROBE_OUTPUT_LIMIT):
+            pass
+
+    await asyncio.gather(drain(process.stdout), drain(process.stderr), process.wait())
 
 
 async def local_doctor(

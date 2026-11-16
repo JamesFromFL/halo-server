@@ -62,7 +62,7 @@ jobs:
           npm run build
       - run: .venv/bin/ruff check --no-cache src tests scripts/check_web_browser.py scripts/check_web_pairing_browser.py
       - run: .venv/bin/ruff format --check --no-cache src tests scripts/check_web_browser.py scripts/check_web_pairing_browser.py
-      - run: .venv/bin/pytest -q -x -o faulthandler_timeout=60 -p pytest_asyncio.plugin -p no:cacheprovider
+      - run: .venv/bin/pytest -v -x -o faulthandler_timeout=60 -p pytest_asyncio.plugin -p no:cacheprovider
       - name: Audit locked runtime and tooling separately
         run: |
           mkdir -p audit
@@ -184,9 +184,10 @@ jobs:
           python-version: ${{ matrix.python }}
           enable-cache: true
       - run: uv sync --frozen --all-groups
-      - name: Verify portable codec, buffer and authenticated download contracts
+      - name: Verify portable media, download and subprocess contracts
         run: |
           uv run --frozen pytest -q -p pytest_asyncio.plugin -p no:cacheprovider \
             tests/test_media_audio.py tests/test_media_buffer.py \
             tests/test_media_leases.py tests/test_ring_snapshots.py \
-            tests/test_plugin_api.py tests/test_ring_client.py
+            tests/test_plugin_api.py tests/test_ring_client.py \
+            tests/test_diagnostics.py

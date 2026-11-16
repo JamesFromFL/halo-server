@@ -1,8 +1,10 @@
 """Local diagnostics are read-only and explicit worker probes retain ownership."""
 
 import asyncio
+import contextlib
 import json
 import os
+import signal
 import sys
 from pathlib import Path
 
@@ -150,3 +152,52 @@ async def test_probe_checks_entire_fragmented_output_before_success():
     code = "import sys,time;print('prefix',flush=True);time.sleep(.03);print('x'*8192,flush=True)"
     with pytest.raises(ValueError, match="output limit"):
         await diagnostics._probe([sys.executable, "-I", "-c", code])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stream,descriptor", [("stdout", 1), ("stderr", 2)])
+@pytest.mark.parametrize("cancel_during_spawn", [False, True])
+async def test_probe_reaps_with_full_pipe_before_readers_start(
+    monkeypatch, stream, descriptor, cancel_during_spawn
+):
+    original = asyncio.create_subprocess_exec
+    entered, release = asyncio.Event(), asyncio.Event()
+    children = []
+
+    async def delayed_spawn(*args, **kwargs):
+        child = await original(*args, **kwargs)
+        children.append(child)
+        # Let pipe transport collect more than twice its limit before the
+        # probe readers can consume anything, as on a busy CI event loop.
+        await asyncio.sleep(0.1)
+        entered.set()
+        await release.wait()
+        return child
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", delayed_spawn)
+    code = f"import os,time;os.write({descriptor},b'x'*12288);time.sleep(60)"
+    task = asyncio.create_task(diagnostics._probe([sys.executable, "-I", "-c", code]))
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=3)
+        if cancel_during_spawn:
+            task.cancel()
+        release.set()
+        _done, pending = await asyncio.wait({task}, timeout=2)
+        if pending:
+            # Rescue the old deadlock so this regression fails rather than
+            # hanging the suite or abandoning an owned child process.
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(children[0].pid, signal.SIGKILL)
+            await asyncio.wait_for(getattr(children[0], stream).read(), timeout=2)
+        expected = asyncio.CancelledError if cancel_during_spawn else ValueError
+        with pytest.raises(expected):
+            await asyncio.wait_for(task, timeout=2)
+        assert not pending, "Probe reaping waited for a paused pipe to be drained externally"
+        assert children[0].returncode is not None
+        with pytest.raises(ProcessLookupError):
+            os.kill(children[0].pid, 0)
+    finally:
+        release.set()
+        for child in children:
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(child.pid, signal.SIGKILL)
