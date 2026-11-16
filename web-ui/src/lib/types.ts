@@ -282,6 +282,28 @@ export interface CameraPage<T = Record<string, Json>> {
   total: number;
   [key: string]: unknown;
 }
+export type CameraPrivacyMode = 'ring' | 'homekit';
+export interface CameraPrivacy {
+  camera_id: string;
+  revision: number;
+  mode: CameraPrivacyMode;
+  ring_live_allowed: boolean | null;
+  ring_recording_allowed: boolean | null;
+  ring_snapshot_allowed: boolean | null;
+  ring_audio_allowed: boolean | null;
+  source_fresh: boolean;
+  effective_live_allowed: boolean;
+  effective_recording_allowed: boolean;
+  effective_snapshot_allowed: boolean;
+  effective_audio_allowed: boolean;
+  reason: string | null;
+}
+export interface CameraPrivacyPage {
+  profile_id: string | null;
+  account_generation: number | null;
+  available: boolean;
+  cameras: CameraPrivacy[];
+}
 export interface PairingCamera {
   camera_id: string;
   accessory_id: string;

@@ -1,13 +1,17 @@
 import asyncio
 import concurrent.futures
 import threading
+import time
 from types import SimpleNamespace
+from uuid import uuid4
 
 import pytest
 from ring_doorbell import AuthenticationError, Requires2FAError
 
+from halo_server.account_scope import AccountScope
 from halo_server.api.admin import AdminProtocolError
 from halo_server.api.plugin import PluginCameraOperationError, PluginIntercomOpenError
+from halo_server.camera_privacy import ring_privacy_receipt
 from halo_server.media.session import MediaSessionState
 from halo_server.paths import ServerPaths
 from halo_server.ring.credentials import CredentialStoreError
@@ -21,7 +25,33 @@ from halo_server.service import SIREN_ON_DURATION_SECONDS, HaloService
 
 class FakeClient:
     is_authenticated = True
-    all_devices = []
+
+    def __init__(self):
+        self.all_devices = []
+
+
+def _fixture_privacy(client):
+    """An explicit successful synthetic inventory read, never a production fallback."""
+    for device in client.all_devices:
+        if not hasattr(device, "family"):
+            device.family = "doorbots"
+        if not hasattr(device, "_attrs"):
+            device._attrs = {
+                "settings": {
+                    "live_view_disabled": False,
+                    "motion_detection_enabled": True,
+                    "enable_audio_recording": True,
+                }
+            }
+    client._camera_privacy_receipt = ring_privacy_receipt(client.all_devices, time.monotonic())
+
+
+def _install_fixture_privacy(service, client):
+    _fixture_privacy(client)
+    service._media_scope = service._sessions.active_scope
+    service._camera_privacy.observe(
+        service._media_scope, client, client.all_devices, client._camera_privacy_receipt
+    )
 
 
 class FakeAccessoryDevice:
@@ -52,6 +82,7 @@ class FakeAccessoryClient:
 
     def __init__(self, device, *, snapshot=b"\xff\xd8cached\xff\xd9"):
         self.all_devices = [device]
+        _fixture_privacy(self)
         self.snapshot = snapshot
         self.snapshot_calls = []
         self.submissions = 0
@@ -80,6 +111,8 @@ class FakeAccessoryClient:
 class FakeSessions:
     def __init__(self):
         self.active_client = None
+        self._fixture_scope = AccountScope(str(uuid4()), 1)
+        self._scope_client = None
         self.account_email = None
         self.login_error = None
         self.logout_error = None
@@ -89,6 +122,19 @@ class FakeSessions:
         self.restore_calls = 0
         self.restore_results = []
 
+    @property
+    def active_scope(self):
+        if self.active_client is not self._scope_client:
+            self._scope_client = self.active_client
+            self._fixture_scope = AccountScope(
+                self._fixture_scope.profile_id, self._fixture_scope.generation + 1
+            )
+        return self._fixture_scope if self.active_client is not None else None
+
+    @property
+    def active_context(self):
+        return (self.active_client, self.active_scope) if self.active_client is not None else None
+
     def restore(self):
         self.restore_calls += 1
         if self.restore_results:
@@ -96,6 +142,7 @@ class FakeSessions:
             if isinstance(result, BaseException):
                 raise result
             if result is not None:
+                _fixture_privacy(result)
                 self.active_client = result
             return result
         return None
@@ -106,6 +153,7 @@ class FakeSessions:
     def login(self, email, _password, _otp):
         if self.login_error is not None:
             raise self.login_error
+        _fixture_privacy(self.client)
         self.active_client = self.client
         self.account_email = email
         return self.client
@@ -199,12 +247,16 @@ class FakeMediaSession:
 
 def _service(tmp_path, sessions=None, media_session_factory=FakeMediaSession):
     paths = ServerPaths(tmp_path / "state", tmp_path / "runtime")
-    return HaloService(
+    service = HaloService(
         paths,
         session_manager=sessions or FakeSessions(),
         listener_factory=FakeListener,
         media_session_factory=media_session_factory,
     )
+    if service._sessions.active_client is not None:
+        _install_fixture_privacy(service, service._sessions.active_client)
+        service._account_integrations_ready = True
+    return service
 
 
 async def _start_service(service):
@@ -1411,6 +1463,7 @@ async def test_plugin_camera_control_rechecks_sdk_capability_and_contains_failur
     failing_client = FakeAccessoryClient(failing)
     sessions.active_client = failing_client
     service._media_client = failing_client
+    _install_fixture_privacy(service, failing_client)
     with pytest.raises(PluginCameraOperationError) as raised:
         await service._set_plugin_camera_control("42", "light", True)
     assert raised.value.code == "control_failed"
@@ -1664,6 +1717,7 @@ async def test_plugin_snapshot_contains_submission_and_empty_result_failures(tmp
     failing = FailingSnapshotClient(device)
     sessions.active_client = failing
     service._media_client = failing
+    _install_fixture_privacy(service, failing)
     with pytest.raises(PluginCameraOperationError) as raised:
         await service._get_plugin_snapshot("42", False)
     assert raised.value.code == "snapshot_failed"
@@ -1672,6 +1726,7 @@ async def test_plugin_snapshot_contains_submission_and_empty_result_failures(tmp
     empty = FakeAccessoryClient(device, snapshot=None)
     sessions.active_client = empty
     service._media_client = empty
+    _install_fixture_privacy(service, empty)
     with pytest.raises(PluginCameraOperationError) as raised:
         await service._get_plugin_snapshot("42", False)
     assert raised.value.code == "snapshot_unavailable"
@@ -1901,6 +1956,7 @@ async def test_retiring_capture_blocks_replacement_after_stop_timeout(tmp_path):
     media, _lease = await service._acquire_rtsp_consumer("42")
     await service._stop_media_sessions("account_replaced")
     service._media_client = sessions.client
+    _install_fixture_privacy(service, sessions.client)
 
     with pytest.raises(RuntimeError, match="unavailable"):
         await service._acquire_rtsp_consumer("42")
@@ -1934,6 +1990,7 @@ async def test_inventory_hardware_replacement_retires_capture_even_when_api_id_m
 
     assert media.stop_reasons == ["inventory_refreshed"]
     assert service._media_sessions == {}
+    _install_fixture_privacy(service, sessions.client)
     replacement, lease = await service._acquire_rtsp_consumer("42")
     assert replacement is not media
     await service._close_rtsp_consumer_async("42", lease)

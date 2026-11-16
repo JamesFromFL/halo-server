@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {test} from 'node:test';
-import {HAPStatus, ResourceRequestReason} from '@homebridge/hap-nodejs';
+import {Characteristic, HAPStatus, ResourceRequestReason, Service} from '@homebridge/hap-nodejs';
 import {CameraAccessory} from '../src/camera.js';
 import {HapVideoDelegate} from '../src/video.js';
 import {AdapterSession, type CameraDelegate, type NativeCamera, type SnapshotReason} from '../src/session.js';
@@ -38,6 +38,63 @@ test('real public CameraController invokes bounded JPEG delegate without publica
   const bytes=await camera.controller.handleSnapshotRequest(240,320,undefined,ResourceRequestReason.EVENT);
   assert.deepEqual(bytes,image);assert.deepEqual([f.calls[0]!.width,f.calls[0]!.height,f.calls[0]!.reason],[320,240,'event']);
   camera.retire();await camera.closeStreams();
+});
+
+for (const [type, reason, other] of [
+  [Characteristic.EventSnapshotsActive, ResourceRequestReason.EVENT, ResourceRequestReason.PERIODIC],
+  [Characteristic.PeriodicSnapshotsActive, ResourceRequestReason.PERIODIC, ResourceRequestReason.EVENT],
+] as const) {
+  test(`HAP ${type.name} revocation cancels an admitted image without disabling the other reason`, async () => {
+    const f = fixture();
+    const camera = new CameraAccessory({camera_id:'front',accessory_id:'00000000-0000-0000-0000-000000000002',
+      username:'02:11:22:33:44:55',doorbell:false,audio:null,
+      recording:{revision:0,enabled:true,active:false,audio_active:false,configuration:null}}, f.info, {native:f.native});
+    let release!: (bytes: Buffer) => void;
+    f.handler(() => new Promise<Buffer>(resolve => {release = resolve;}));
+    try {
+      const pending = camera.controller.handleSnapshotRequest(240,320,undefined,reason);
+      const rejected = assert.rejects(pending);
+      await tick();
+      assert.equal(f.calls.length,1);
+      const flag = camera.controller.recordingManagement!.operatingModeService.getCharacteristic(type);
+      flag.updateValue(false);
+      await rejected;
+      assert.equal(f.calls[0]!.signal!.aborted,true);
+      release(image); await tick();
+      assert.ok(f.policies.some(policy => !policy.snapshots));
+      assert.equal(f.policies.at(-1)!.snapshots,true);
+      await assert.rejects(camera.controller.handleSnapshotRequest(240,320,undefined,reason));
+      await assert.rejects(camera.controller.handleSnapshotRequest(240,320));
+      // Unknown future enum values cannot bypass a disabled reason.
+      await assert.rejects(snapshot(camera.streamingDelegate!,99 as ResourceRequestReason));
+      assert.equal(f.calls.length,1);
+      f.handler(async () => image);
+      assert.deepEqual(await camera.controller.handleSnapshotRequest(240,320,undefined,other),image);
+      assert.equal(f.calls.length,2);
+      flag.updateValue(true); await tick();
+      assert.deepEqual(await camera.controller.handleSnapshotRequest(240,320,undefined,reason),image);
+    } finally {camera.retire(); await camera.closeStreams();}
+  });
+}
+
+test('HAP camera-off and stream-off still reject snapshots independently of upstream admission', async () => {
+  const f = fixture();
+  const camera = new CameraAccessory({camera_id:'front',accessory_id:'00000000-0000-0000-0000-000000000002',
+    username:'02:11:22:33:44:55',doorbell:false,audio:null,
+    recording:{revision:0,enabled:true,active:false,audio_active:false,configuration:null}}, f.info, {native:f.native});
+  try {
+    const active = camera.controller.recordingManagement!.operatingModeService.getCharacteristic(Characteristic.HomeKitCameraActive);
+    active.updateValue(false); await tick();
+    await assert.rejects(camera.controller.handleSnapshotRequest(240,320,undefined,ResourceRequestReason.EVENT));
+    assert.equal(f.calls.length,0);
+    active.updateValue(true); await tick();
+    for (const service of camera.accessory.services.filter(value => value.UUID === Service.CameraRTPStreamManagement.UUID)) {
+      service.getCharacteristic(Characteristic.Active).updateValue(false);
+    }
+    await tick();
+    await assert.rejects(camera.controller.handleSnapshotRequest(240,320,undefined,ResourceRequestReason.PERIODIC));
+    assert.equal(f.calls.length,0);
+  } finally {camera.retire(); await camera.closeStreams();}
 });
 
 test('snapshot fence aborts native work and invokes each callback once even if a late JPEG arrives',async()=>{

@@ -27,6 +27,7 @@ OWNER_ACTIONS = frozenset(
         "devices_bridge_pairing_reveal",
         "devices_bridge_pairing_reset",
         "camera_control",
+        "camera_privacy_set",
         "homekit_select",
         "homekit_recording_warm",
         "homekit_pairing_reveal",

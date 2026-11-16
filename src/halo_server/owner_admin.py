@@ -41,6 +41,8 @@ class OwnerAdministration:
             "configuration_set",
             "camera_control_list",
             "camera_control",
+            "camera_privacy_list",
+            "camera_privacy_set",
             "homekit_pairing_list",
             "homekit_pairing_reveal",
             "homekit_pairing_reset",
@@ -162,6 +164,21 @@ class OwnerAdministration:
             return await self.service._device_monitor.set_enabled(**params)
         if method.startswith("configuration_"):
             return await self._configuration(method, params)
+        if method == "camera_privacy_list":
+            _only(params, set())
+            return self.service.camera_privacy_list()
+        if method == "camera_privacy_set":
+            required = {
+                "profile_id",
+                "account_generation",
+                "camera_id",
+                "expected_revision",
+                "mode",
+            }
+            _only(params, required)
+            if set(params) != required:
+                raise AdminProtocolError("bad_params", "Camera privacy preferences are required")
+            return await self.service.camera_privacy_set(**params)
         if method == "camera_control_list":
             _only(params, set())
             inventory = self.control_backend.inventory()

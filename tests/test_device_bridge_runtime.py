@@ -477,10 +477,12 @@ async def test_cancelled_request_retires_ambiguous_child_and_releases_pending(tm
 
 @pytest.mark.asyncio
 async def test_timeout_terminates_child_and_queue_has_finite_capacity(tmp_path, monkeypatch):
-    monkeypatch.setattr("halo_server.devices.runtime.REQUEST_SECONDS", 0.1)
     child = runtime(tmp_path, entry=fake_child(tmp_path, ping="continue;"), max_restarts=0)
     try:
         await child.start()
+        # Exercise request expiry after startup; the synthetic child's process
+        # launch and handshake are not part of this 100 ms timeout assertion.
+        monkeypatch.setattr("halo_server.devices.runtime.REQUEST_SECONDS", 0.1)
         pending = [asyncio.create_task(child.request("ping", {})) for _ in range(8)]
         await asyncio.sleep(0.02)
         with pytest.raises(DeviceBridgeRuntimeError, match="queue is full"):

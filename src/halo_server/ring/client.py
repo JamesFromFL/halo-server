@@ -12,6 +12,7 @@ from collections.abc import Callable
 from typing import Any
 
 from halo_server.account_scope import AccountScope, new_profile_id
+from halo_server.camera_privacy import ring_privacy_receipt
 from halo_server.ring.credentials import CredentialStore, CredentialStoreError
 from halo_server.ring.lighting import LightingReservation
 from halo_server.ring.snapshots import SnapshotHttpSession, SnapshotReader
@@ -78,6 +79,7 @@ class RingClient:
         self._loop_lock = threading.Lock()
         self._last_device_update_at = 0.0
         self._last_device_update_receipt: tuple[float, int] | None = None
+        self._camera_privacy_receipt = None
         self._inventory_refresh_lock = asyncio.Lock()
         self._snapshot_transport: SnapshotHttpSession | None = None
         self._snapshot_reader: SnapshotReader | None = None
@@ -397,6 +399,7 @@ class RingClient:
         # One immutable publication pairs the actual GET's receipt time with
         # its pre-request mutation revision. Cache hits never rewrite either.
         self._last_device_update_receipt = (now, lighting_revision)
+        self._camera_privacy_receipt = ring_privacy_receipt(self.all_devices, now)
 
     @staticmethod
     async def _async_update_inventory(ring) -> None:
@@ -472,6 +475,7 @@ class RingClient:
         self._pending_auth_token = None
         self._token_updater = None
         self._last_device_update_receipt = None
+        self._camera_privacy_receipt = None
         return ring
 
     async def _close_ring_auth(self, ring) -> None:

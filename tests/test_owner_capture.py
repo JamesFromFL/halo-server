@@ -8,6 +8,7 @@ import pytest
 from test_native_service import Camera, Capture, service_fixture
 
 from halo_server.api.admin import AdminProtocolError
+from halo_server.camera_privacy import PRIVACY_TTL, ring_privacy_receipt
 from halo_server.cli import build_parser
 from halo_server.media.leases import LeasePurpose
 
@@ -208,4 +209,59 @@ async def test_stop_fences_producers_before_join_worker_runs(tmp_path, monkeypat
     finally:
         release_worker.set()
         await stop
+        await service._owner_admin.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("deny", ["live", "audio", "unknown", "stale", "override"])
+async def test_diagnostic_media_requires_fresh_ring_live_and_audio(tmp_path, deny):
+    service, client, sessions = service_fixture(tmp_path)
+    camera = client.all_devices[0]
+    if deny == "live":
+        camera._attrs["settings"]["live_view_disabled"] = True
+    elif deny in {"audio", "override"}:
+        camera._attrs["settings"]["enable_audio_recording"] = False
+    elif deny == "unknown":
+        camera._attrs["settings"].pop("enable_audio_recording")
+    received = service._camera_privacy._clock()
+    if deny == "stale":
+        received -= PRIVACY_TTL + 1
+    client._camera_privacy_receipt = ring_privacy_receipt(client.all_devices, received)
+    service._remember_camera_privacy(client)
+    if deny == "override":
+        service._camera_privacy.set_mode(
+            sessions.active_scope.profile_id, "42", "homekit", expected_revision=0
+        )
+        assert service._camera_privacy_allowed("42", "audio", homekit=True)
+    try:
+        with pytest.raises(AdminProtocolError) as error:
+            await service.handle_admin("stream_capture_start", request())
+        assert error.value.code == "privacy_denied"
+        assert not (service.paths.state_directory / "diagnostic-captures").exists()
+        assert client.submissions == 0 and not service._media_sessions
+    finally:
+        await service._owner_admin.close()
+
+
+@pytest.mark.asyncio
+async def test_diagnostic_trace_revokes_on_privacy_change_and_cannot_resume(tmp_path):
+    service, client, _ = service_fixture(tmp_path)
+    service.paths.prepare()
+    await service.handle_admin("stream_capture_start", request())
+    owner = service._owner_admin.stream_capture
+    trace = owner.trace_for("42")
+    try:
+        for allowed in (False, True):
+            client.all_devices[0]._attrs["settings"]["enable_audio_recording"] = allowed
+            client._camera_privacy_receipt = ring_privacy_receipt(
+                client.all_devices, service._camera_privacy._clock()
+            )
+            service._remember_camera_privacy(client)
+            assert not trace.media("source_frame", "audio", b"private", rtp_timestamp=0)
+            assert not trace.media("source_frame", "video", b"private", rtp_timestamp=0)
+            assert owner.trace_for("42") is None
+        await owner.reconcile()
+        assert trace.revoked.is_set() and owner.capture.closed
+        assert client.submissions == 0
+    finally:
         await service._owner_admin.close()

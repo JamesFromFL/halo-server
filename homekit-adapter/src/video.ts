@@ -20,6 +20,7 @@ export interface VideoCameraOptions {
   active: () => boolean;
   audio?: () => AccessoryAudio | null;
   policy?: () => CameraPolicy;
+  snapshotAllowed?: (reason?: ResourceRequestReason) => boolean;
   forceStop: (hapId: string) => void;
   failure: () => void;
   reportError?: (stage: string, code: string) => void;
@@ -82,7 +83,8 @@ const level = (value: H264Level): VideoConfiguration["level"] => {
 export class HapVideoDelegate implements CameraStreamingDelegate {
   private readonly sessions = new Map<string, OwnedVideo>();
   private closed = false;
-  private readonly snapshots = new Set<{abort: AbortController; finish: (error?: Error | HAPStatus, bytes?: Buffer) => void}>();
+  private snapshotPolicyChange: Promise<void> | null = null;
+  private readonly snapshots = new Set<{abort: AbortController; allowed: () => boolean; finish: (error?: Error | HAPStatus, bytes?: Buffer) => void}>();
   constructor(private readonly native: CameraDelegate, private readonly options: VideoCameraOptions) { }
   get count(): number { return this.sessions.size; }
 
@@ -101,15 +103,16 @@ export class HapVideoDelegate implements CameraStreamingDelegate {
   }
   handleSnapshotRequest(request: Parameters<CameraStreamingDelegate["handleSnapshotRequest"]>[0],
     callback: Parameters<CameraStreamingDelegate["handleSnapshotRequest"]>[1]): void {
+    const allowed = (): boolean => this.available() && (this.options.snapshotAllowed?.(request.reason) ?? true);
     let supported = false;
-    try {supported = this.available() && this.native.info.capabilities.snapshot;} catch {}
+    try {supported = allowed() && this.native.info.capabilities.snapshot;} catch {}
     if (!supported || this.snapshots.size >= 2 ||
       !Number.isSafeInteger(request.width) || request.width < 1 || request.width > 4096 ||
       !Number.isSafeInteger(request.height) || request.height < 1 || request.height > 4096 || request.width * request.height > 8_000_000) {
       callback(HAPStatus.SERVICE_COMMUNICATION_FAILURE); return;
     }
     const abort = new AbortController(); let completed = false;
-    const job = {abort, finish: (error?: Error | HAPStatus, bytes?: Buffer): void => {
+    const job = {abort, allowed, finish: (error?: Error | HAPStatus, bytes?: Buffer): void => {
       if (completed) return; completed = true; clearTimeout(timer); this.snapshots.delete(job); callback(error, bytes);
     }};
     const timer = setTimeout(() => {abort.abort(); job.finish(HAPStatus.OPERATION_TIMED_OUT);}, 20_000);
@@ -118,11 +121,12 @@ export class HapVideoDelegate implements CameraStreamingDelegate {
     // and future/unknown values never become an explicit fresh camera wakeup.
     const reason = request.reason === ResourceRequestReason.PERIODIC ? "periodic" : request.reason === ResourceRequestReason.EVENT ? "event" : "unknown";
     void (async () => {
+      await this.snapshotPolicyChange;
       await this.synchronizePolicy();
-      if (!this.available() || abort.signal.aborted) throw new ProtocolError("snapshot-retired");
+      if (!allowed() || abort.signal.aborted) throw new ProtocolError("snapshot-retired");
       const scope = this.native.info.scope;
       const bytes = await this.native.snapshot(request.width, request.height, reason, abort.signal);
-      if (!this.available() || abort.signal.aborted || JSON.stringify(scope) !== JSON.stringify(this.native.info.scope) ||
+      if (!allowed() || abort.signal.aborted || JSON.stringify(scope) !== JSON.stringify(this.native.info.scope) ||
         !Buffer.isBuffer(bytes) || bytes.length < 4 || bytes.length > 8 * 1024 * 1024 ||
         bytes[0] !== 0xff || bytes[1] !== 0xd8 || bytes.at(-2) !== 0xff || bytes.at(-1) !== 0xd9) throw new ProtocolError("snapshot-unavailable");
       job.finish(undefined, bytes);
@@ -299,6 +303,24 @@ export class HapVideoDelegate implements CameraStreamingDelegate {
   async activeChanged(): Promise<void> {
     if (!this.options.active()) await this.fence();
     if (!this.closed) await this.synchronizePolicy();
+  }
+  snapshotPolicyChanged(): Promise<void> {
+    // The wire policy has one aggregate snapshot permission. Cross a denied
+    // parent epoch even if the other reason stays enabled, so no cached image
+    // from before this privacy change can be reused after a quick off/on.
+    for (const job of [...this.snapshots]) {
+      job.abort.abort(); job.finish(HAPStatus.SERVICE_COMMUNICATION_FAILURE);
+    }
+    const changing = (this.snapshotPolicyChange ?? Promise.resolve()).then(async () => {
+      if (this.closed) return;
+      await this.native.ensurePolicy({...this.policy(), snapshots: false});
+      if (!this.closed) await this.synchronizePolicy();
+    });
+    this.snapshotPolicyChange = changing;
+    void changing.then(() => {
+      if (this.snapshotPolicyChange === changing) this.snapshotPolicyChange = null;
+    }, () => {});
+    return changing;
   }
   async close(): Promise<void> {
     this.closed = true;

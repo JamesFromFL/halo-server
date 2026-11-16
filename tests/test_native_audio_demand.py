@@ -1,6 +1,7 @@
 """Native service modes retain original Opus without allocating the legacy lane."""
 
 import asyncio
+import time
 from functools import partial
 from types import SimpleNamespace
 
@@ -14,6 +15,7 @@ from test_native_service import Camera, Sessions
 from test_ring_decoded_integration import NativePeer
 from test_ring_media import FakeDevice, FakeMicrophoneTrack
 
+from halo_server.camera_privacy import ring_privacy_receipt
 from halo_server.configuration import ServerConfiguration, ServerMode
 from halo_server.media import decoded_audio, ring_media
 from halo_server.media import session as session_module
@@ -38,6 +40,8 @@ def test_service_factory_applies_immutable_mode_to_real_capture_and_retries(tmp_
     )
     service._media_client, service._media_scope = client, sessions.active_scope
     service._account_integrations_ready = True
+    client._camera_privacy_receipt = ring_privacy_receipt(client.all_devices, time.monotonic())
+    service._remember_camera_privacy(client)
     capture = service._create_media_session("42")
     assert isinstance(capture, CameraMediaSession)
     capture.acquire(LeasePurpose.HOMEKIT_LIVE)

@@ -313,14 +313,15 @@ class WebConsole:
     async def read_owner(self, request):
         name = request.match_info["read"]
         methods = {
-            "selection": self.client.homekit_cameras,
-            "controls": self.client.camera_controls,
-            "recording": self.client.homekit_recording_cameras,
-            "configuration": self.client.configuration_get,
+            "selection": "homekit_cameras",
+            "controls": "camera_controls",
+            "recording": "homekit_recording_cameras",
+            "configuration": "configuration_get",
+            "privacy": "camera_privacy_list",
         }
         if name not in methods:
             raise WebError("not_found", "Endpoint was not found", status=404)
-        return success(await self.pool.call(methods[name]))
+        return success(await self.pool.call(getattr(self.client, methods[name])))
 
     async def pairing_page(self, *, force=False):
         state = await self.state.get(force=force)
@@ -540,6 +541,34 @@ class WebConsole:
                 "warm",
                 value,
                 lambda: self.pool.call(self.client.homekit_recording_warm, **params),
+            )
+        )
+
+    async def privacy(self, request):
+        value = await body(
+            request,
+            (
+                "profile_id",
+                "account_generation",
+                "camera_id",
+                "expected_revision",
+                "mode",
+                "operation_id",
+            ),
+        )
+        _scope(value)
+        integer(value["expected_revision"])
+        if not isinstance(value["mode"], str) or value["mode"] not in {"ring", "homekit"}:
+            raise WebError("bad_request", "Camera privacy mode is unsupported")
+        self.auth.recent(request[SESSION])
+        identifier = operation_id(value["operation_id"])
+        params = {key: item for key, item in value.items() if key != "operation_id"}
+        return success(
+            await self.operations.run(
+                identifier,
+                "configuration",
+                {"target": "camera_privacy", **value},
+                lambda: self.pool.call(self.client.camera_privacy_set, **params),
             )
         )
 
@@ -1150,13 +1179,17 @@ def create_application(console, *, static_root=None):
         web.post(PREFIX + "/devices/bridge/pairing/reveal", console.device_bridge_reveal),
         web.post(PREFIX + "/devices/bridge/pairing/reset", console.device_bridge_reset),
         web.get(PREFIX + "/events", console.events),
-        web.get(PREFIX + "/{read:selection|controls|recording|configuration}", console.read_owner),
+        web.get(
+            PREFIX + "/{read:selection|controls|recording|configuration|privacy}",
+            console.read_owner,
+        ),
         web.get(PREFIX + "/pairing", console.pairing_list),
         web.post(PREFIX + "/pairing/reveal", console.reveal),
         web.post(PREFIX + "/pairing/reset", console.reset),
         web.post(PREFIX + "/selection", console.select),
         web.post(PREFIX + "/controls", console.control),
         web.post(PREFIX + "/recording/warm", console.warm),
+        web.post(PREFIX + "/privacy", console.privacy),
         web.post(PREFIX + "/configuration", console.configuration),
         web.post(PREFIX + "/ring/login", console.ring_login),
         web.post(PREFIX + "/ring/challenge", console.ring_challenge),

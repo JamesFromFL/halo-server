@@ -142,6 +142,29 @@ class PairingOwner:
     async def camera_controls(self):
         return await self.homekit_pairing_list()
 
+    async def camera_privacy_list(self):
+        return self.scope | {
+            "available": True,
+            "cameras": [
+                {
+                    "camera_id": camera["camera_id"],
+                    "revision": 0,
+                    "mode": "ring",
+                    "source_fresh": True,
+                    "ring_live_allowed": True,
+                    "ring_recording_allowed": True,
+                    "ring_snapshot_allowed": True,
+                    "effective_live_allowed": True,
+                    "effective_recording_allowed": True,
+                    "effective_snapshot_allowed": True,
+                    "reason": None,
+                    "ring_audio_allowed": True,
+                    "effective_audio_allowed": True,
+                }
+                for camera in self.cameras
+            ],
+        }
+
     async def configuration_get(self):
         return {"saved": {}, "applied": {}, "restart_required": False}
 

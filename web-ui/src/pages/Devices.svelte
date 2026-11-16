@@ -10,12 +10,21 @@
   } from '../lib/model.ts';
   import { cameraDetailTarget, noncameraDevice } from '../lib/noncamera.ts';
   import { recordingEligibility, recordingReadiness, recordingSources } from '../lib/recording.ts';
+  import {
+    cameraPrivacy,
+    privacyAccess,
+    privacyBody,
+    privacyReason,
+    validPrivacyPage,
+  } from '../lib/privacy.ts';
   import type {
     StateEnvelope,
     CameraPage,
     PairingCamera,
     PairingSecret,
     Operation,
+    CameraPrivacyMode,
+    CameraPrivacyPage,
   } from '../lib/types.ts';
   import Row from '../components/Row.svelte';
   import Status from '../components/Status.svelte';
@@ -47,11 +56,12 @@
   let pairing = $state<CameraPage<PairingCamera> | null>(null);
   let recording = $state<CameraPage | null>(null);
   let controls = $state<CameraPage | null>(null);
+  let privacy = $state<CameraPrivacyPage | null>(null);
   let secret = $state<PairingSecret | null>(null);
   let error = $state('');
   let loading = $state(false);
   let busy = $state(false);
-  let confirmation = $state<'reset' | 'siren' | 'warm' | null>(null);
+  let confirmation = $state<'reset' | 'siren' | 'warm' | 'privacy' | null>(null);
   let operation = $state<Operation | null>(null);
   let serial = 0;
   let destroyed = false;
@@ -82,6 +92,9 @@
   );
   const batteryCapable = $derived(device?.capabilities.includes('battery') === true);
   const control = $derived(controls?.cameras.find((d) => d.camera_id === device?.camera_id));
+  const privacyCamera = $derived(cameraPrivacy(privacy, device));
+  const privacyFresh = $derived(fresh && privacyCamera?.source_fresh === true);
+  const privacyEffectiveFresh = $derived(fresh && privacy?.available === true && !!privacyCamera);
   const unsettled = $derived(operation?.status === 'unknown' || operation?.status === 'pending');
   const disabled = $derived(!fresh || busy || loading || unsettled);
   $effect(() => {
@@ -101,6 +114,7 @@
       selection = null;
       recording = null;
       controls = null;
+      privacy = null;
       loading = false;
       confirmation = null;
     }
@@ -127,6 +141,7 @@
     selection = null;
     recording = null;
     controls = null;
+    privacy = null;
     loading = true;
     error = '';
     const values = await Promise.allSettled([
@@ -134,12 +149,19 @@
       api.get<CameraPage<PairingCamera>>('pairing'),
       api.get<CameraPage>('recording'),
       api.get<CameraPage>('controls'),
+      api.get<unknown>('privacy'),
     ]);
     if (destroyed || token !== serial) return;
     if (values[0].status === 'fulfilled') selection = values[0].value;
     if (values[1].status === 'fulfilled') pairing = values[1].value;
     if (values[2].status === 'fulfilled') recording = values[2].value;
     if (values[3].status === 'fulfilled') controls = values[3].value;
+    if (values[4].status === 'fulfilled') {
+      if (validPrivacyPage(values[4].value)) privacy = values[4].value;
+      else
+        error =
+          'Halo returned incomplete camera privacy information. Refresh this device before saving privacy changes.';
+    }
     const failure = values.find((v) => v.status === 'rejected');
     if (failure?.status === 'rejected') error = errorMessage(failure.reason);
     loading = false;
@@ -274,6 +296,32 @@
       },
       id,
     );
+  }
+  async function setPrivacy(mode: CameraPrivacyMode, confirmed = false) {
+    if (!device || !privacy || !privacyCamera || disabled || !privacy.available) return;
+    if (mode === 'homekit' && !confirmed) {
+      confirmation = 'privacy';
+      return;
+    }
+    const requestedScope = { generation, deviceId, serial };
+    const body = privacyBody(privacy, device, mode);
+    confirmation = null;
+    busy = true;
+    try {
+      if (
+        !(await reauthenticate()) ||
+        destroyed ||
+        !samePairingScope(requestedScope, { generation, deviceId, serial }) ||
+        !fresh
+      )
+        return;
+      await mutate('privacy', body, operationId());
+    } catch (e) {
+      if (!destroyed && samePairingScope(requestedScope, { generation, deviceId, serial }))
+        error = errorMessage(e);
+    } finally {
+      busy = false;
+    }
   }
 </script>
 
@@ -464,6 +512,67 @@
     >
   </div>
   {#if secret}<PairingCode {secret} onhide={() => (secret = null)} />{/if}
+  <h3>Privacy</h3>
+  <div class="group">
+    <Row
+      title="Use Apple Home privacy controls"
+      subtitle="Default: follow Ring privacy. This per-camera choice controls how Halo applies Ring’s reported privacy settings."
+      ><input
+        type="checkbox"
+        role="switch"
+        aria-label="Use Apple Home privacy controls"
+        checked={privacyCamera?.mode === 'homekit'}
+        disabled={disabled || !privacyCamera || privacy?.available !== true}
+        onchange={(event) => {
+          event.currentTarget.checked = privacyCamera?.mode === 'homekit';
+          void setPrivacy(privacyCamera?.mode === 'homekit' ? 'ring' : 'homekit');
+        }}
+      /></Row
+    >
+    <Row title="Saved privacy choice"
+      ><span
+        >{privacyCamera?.mode === 'homekit'
+          ? 'Apple Home'
+          : privacyCamera?.mode === 'ring'
+            ? 'Follow Ring'
+            : 'Unavailable'}</span
+      ></Row
+    >
+    <Row
+      title="Live View source access"
+      subtitle={`Ring reports Live View: ${privacyAccess(privacyFresh, privacyCamera?.ring_live_allowed)}.`}
+      ><span>{privacyAccess(privacyEffectiveFresh, privacyCamera?.effective_live_allowed)}</span
+      ></Row
+    >
+    <Row
+      title="Recording source access"
+      subtitle={`Ring permits recording source: ${privacyAccess(privacyFresh, privacyCamera?.ring_recording_allowed)}. Apple Home recording preferences still apply.`}
+      ><span
+        >{privacyAccess(privacyEffectiveFresh, privacyCamera?.effective_recording_allowed)}</span
+      ></Row
+    >
+    <Row
+      title="Snapshot source access"
+      subtitle={`Ring permits snapshot source: ${privacyAccess(privacyFresh, privacyCamera?.ring_snapshot_allowed)}.`}
+      ><span>{privacyAccess(privacyEffectiveFresh, privacyCamera?.effective_snapshot_allowed)}</span
+      ></Row
+    >
+    <Row
+      title="Audio capture source access"
+      subtitle={`Ring reports audio recording: ${privacyAccess(privacyFresh, privacyCamera?.ring_audio_allowed)}. Apple Home microphone preferences still apply.`}
+      ><span>{privacyAccess(privacyEffectiveFresh, privacyCamera?.effective_audio_allowed)}</span
+      ></Row
+    >
+  </div>
+  {#if privacyCamera?.reason}<p class="inline-note">{privacyReason(privacyCamera.reason)}</p>{/if}
+  <p class="inline-note">
+    Following Ring privacy blocks background capture and snapshots when motion recording is off;
+    manual Live View is checked separately. Source access does not mean a stream or recording is
+    active. Halo cannot override restrictions enforced by Ring or change Ring cloud recording. Ring
+    mode changes take effect after the next source refresh. Following Ring privacy blocks source
+    access while that information is stale or unknown. These permissions were reported at the last
+    camera details refresh; refresh the details to check for changes.
+  </p>
   <h3>Recording</h3>
   <div class="group">
     <Row
@@ -557,6 +666,25 @@
       <button onclick={() => (confirmation = null)}>Cancel</button><button
         class="danger"
         onclick={() => command('siren', true)}>Sound siren</button
+      >
+    </div></Confirm
+  >
+{:else if confirmation === 'privacy'}<Confirm
+    title="Use Apple Home privacy controls?"
+    onclose={() => (confirmation = null)}
+    ><p>
+      In the Ring app, allow Live View and enable motion detection/recording for this camera in
+      every mode you intend to use. Allow Ring audio recording if you want audio in Apple Home. Then
+      choose when to stream or record in Apple Home. Halo cannot override restrictions enforced by
+      Ring or change Ring cloud recording.
+    </p>
+    <p>
+      This changes only this camera’s saved privacy choice. Your Halo password is required to save.
+    </p>
+    <div class="actions end">
+      <button onclick={() => (confirmation = null)}>Cancel</button><button
+        class="primary"
+        onclick={() => setPrivacy('homekit', true)}>Continue</button
       >
     </div></Confirm
   >

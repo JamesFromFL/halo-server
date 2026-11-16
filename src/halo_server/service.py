@@ -17,6 +17,7 @@ from typing import Any
 from ring_doorbell import AuthenticationError, Requires2FAError
 
 from halo_server import __version__
+from halo_server.account_scope import AccountScope, valid_profile_id
 from halo_server.api.admin import AdminProtocolError, AdminServer
 from halo_server.api.events import EventJournal, EventJournalError
 from halo_server.api.plugin import (
@@ -28,6 +29,12 @@ from halo_server.api.plugin import (
     PluginIntercomStream,
 )
 from halo_server.api.tokens import PluginTokenStore, PluginTokenStoreError
+from halo_server.camera_privacy import (
+    CameraPrivacy,
+    CameraPrivacyConflict,
+    CameraPrivacyError,
+    Preference,
+)
 from halo_server.configuration import ServerConfiguration
 from halo_server.homekit.bridge import HomeKitBridge
 from halo_server.homekit.controller import HomeKitController
@@ -178,6 +185,7 @@ class HaloService:
         from halo_server.release_execution import validate_operating_mode
 
         validate_operating_mode(self.configuration)
+        self._camera_privacy = CameraPrivacy(paths.state_directory / "camera-privacy.json")
         from halo_server.owner_admin import OwnerAdministration
 
         self._owner_admin = OwnerAdministration(self)
@@ -518,6 +526,7 @@ class HaloService:
             self._media_epoch += 1
         self._media_client = client
         self._media_scope = self._current_account_scope()
+        self._remember_camera_privacy(client)
         try:
             await self._sync_rtsp_cameras()
             await self._replace_listener(client)
@@ -1392,6 +1401,7 @@ class HaloService:
     async def _tick_incidents(self) -> None:
         while True:
             await asyncio.sleep(TICK_INTERVAL)
+            self._fence_camera_privacy_changes(self._camera_privacy.expire())
             try:
                 await self._owner_admin.stream_capture.reconcile()
             except Exception:
@@ -1457,6 +1467,7 @@ class HaloService:
             ):
                 return
             camera_ids = [device["id"] for device in summarize_cameras(devices)]
+            self._remember_camera_privacy(client)
             try:
                 await self._sync_rtsp_cameras(camera_ids)
                 await self._reconcile_refreshed_media(camera_ids)
@@ -1611,6 +1622,8 @@ class HaloService:
                     )
             if ensure_event_generation is None:
                 return
+            if not self._camera_privacy_allowed(camera_id, LeasePurpose.EVENT):
+                return
             if self.configuration.homekit_enabled and not self.configuration.compatibility_enabled:
                 # Direct-mode recording demand has its own scoped policy and
                 # lease owner. An unsolicited event must not bypass HomeKit-off
@@ -1652,6 +1665,7 @@ class HaloService:
                 or self._media_sessions.get(camera_id) is not session
                 or not self._account_authority_current()
                 or not self._camera_source_current(camera_id, session)
+                or not self._camera_privacy_allowed(camera_id, LeasePurpose.EVENT)
             ):
                 await owned_thread(
                     session.release,
@@ -1674,8 +1688,196 @@ class HaloService:
             legacy_audio_enabled=self.configuration.compatibility_enabled,
             **({"diagnostic_trace": trace} if trace is not None else {}),
         )
+        audio_gate = getattr(session, "set_source_audio_admission", None)
+        if callable(audio_gate):
+            privacy_epoch = self._camera_privacy_epoch(camera_id, homekit=True)
+            audio_gate(lambda: self._camera_source_audio_current(camera_id, privacy_epoch))
         self._media_sessions[camera_id] = session
         return session
+
+    def _camera_source_audio_current(self, camera_id, epoch):
+        # Ring's receive callbacks must not wait behind account persistence or
+        # policy updates. A contended authority read drops audio, never permits it.
+        acquired = []
+        try:
+            for lock in (getattr(self._sessions, "_lock", None), self._camera_privacy._lock):
+                if lock is not None:
+                    if not lock.acquire(blocking=False):
+                        return False
+                    acquired.append(lock)
+            return epoch == self._camera_privacy_epoch(
+                camera_id, homekit=True
+            ) and self._camera_privacy_allowed(camera_id, "audio", homekit=True)
+        finally:
+            for lock in reversed(acquired):
+                lock.release()
+
+    def _remember_camera_privacy(self, client):
+        if client is not self._media_client or not self._account_authority_current():
+            self._fence_camera_privacy_changes(self._camera_privacy.invalidate())
+            return
+        from halo_server.ring.devices import CAMERA_FAMILIES
+
+        devices = [
+            device
+            for device in client.all_devices
+            if getattr(device, "family", None) in CAMERA_FAMILIES
+        ]
+        changed = self._camera_privacy.observe(
+            self._current_account_scope(),
+            client,
+            devices,
+            getattr(client, "_camera_privacy_receipt", None),
+        )
+        self._fence_camera_privacy_changes(changed)
+
+    def _camera_privacy_allowed(self, camera_id, purpose, *, homekit=False):
+        client = self._media_client
+        return bool(
+            client is not None
+            and self._account_authority_current()
+            and self._account_integrations_ready
+            and client.is_authenticated
+            and self._camera_privacy.current(
+                self._current_account_scope(), client, camera_id, self._find_media_device(camera_id)
+            )
+            and self._camera_privacy.allowed(camera_id, purpose, homekit=homekit)
+        )
+
+    def _camera_privacy_epoch(self, camera_id, *, homekit=False):
+        return (self._media_epoch, self._camera_privacy.epoch(camera_id, homekit=homekit))
+
+    def _camera_privacy_admission(self, camera_id, purpose, homekit, admission):
+        epoch = self._camera_privacy_epoch(camera_id, homekit=homekit)
+        return lambda: (
+            epoch == self._camera_privacy_epoch(camera_id, homekit=homekit)
+            and self._camera_privacy_allowed(camera_id, purpose, homekit=homekit)
+            and (admission is None or admission())
+        )
+
+    def _fence_camera_privacy_changes(self, camera_ids, reason="camera_privacy_changed"):
+        if not camera_ids:
+            return
+        for camera_id in camera_ids:
+            session = self._media_sessions.get(camera_id)
+            if session is None:
+                continue
+            self._captures.retire(camera_id, session)
+            self._intercom_leases.pop(camera_id, None)
+            fence = getattr(session, "fence", None)
+            requests = fence(reason) if callable(fence) else None
+
+            async def stop(camera_id=camera_id, session=session, requests=requests):
+                async with self._camera_media_lock(camera_id):
+                    if requests is None:
+                        await owned_thread(session.stop_all, reason)
+                    else:
+                        await owned_thread(session.finish_fence, requests)
+                    self._captures.finish_retirement(camera_id, session)
+
+            task = asyncio.create_task(stop(), name="camera-privacy-cleanup")
+            self._media_tasks.add(task)
+            task.add_done_callback(self._media_task_done)
+        self._notify_homekit_inventory()
+
+    def camera_privacy_list(self):
+        scope = self._current_account_scope()
+        available = (
+            isinstance(scope, AccountScope)
+            and self._media_client is not None
+            and self._account_authority_current()
+            and self._account_integrations_ready
+            and self._media_client.is_authenticated
+            and self._camera_privacy.available
+        )
+        cameras = []
+        if available:
+            for camera in summarize_cameras(self._media_client.all_devices):
+                camera_id = camera["id"]
+                if self._camera_privacy.current(
+                    scope, self._media_client, camera_id, self._find_media_device(camera_id)
+                ):
+                    cameras.append(self._camera_privacy.view(camera_id))
+        return {
+            "profile_id": scope.profile_id if isinstance(scope, AccountScope) else None,
+            "account_generation": scope.generation if isinstance(scope, AccountScope) else None,
+            "available": bool(available),
+            "cameras": cameras,
+        }
+
+    async def camera_privacy_set(
+        self, *, profile_id, account_generation, camera_id, mode, expected_revision
+    ):
+        try:
+            Preference(profile_id, camera_id, mode, expected_revision)
+        except (CameraPrivacyError, TypeError):
+            raise AdminProtocolError("bad_params", "Camera privacy settings are invalid") from None
+        if (
+            not valid_profile_id(profile_id)
+            or type(account_generation) is not int
+            or account_generation < 1
+        ):
+            raise AdminProtocolError("bad_params", "Camera privacy account is invalid")
+        async with self._session_change_lock:
+            scope = self._current_account_scope()
+            if (
+                not isinstance(scope, AccountScope)
+                or scope.profile_id != profile_id
+                or scope.generation != account_generation
+                or not self._account_integrations_ready
+                or not self._account_authority_current()
+                or not self._camera_privacy.current(
+                    scope, self._media_client, camera_id, self._find_media_device(camera_id)
+                )
+            ):
+                raise AdminProtocolError(
+                    "account_changed", "Camera privacy account changed; refresh first"
+                )
+            current = self._camera_privacy.view(camera_id)
+            if current["revision"] != expected_revision:
+                raise AdminProtocolError(
+                    "configuration_conflict", "Camera privacy changed; refresh first"
+                )
+            changing = current["mode"] != mode
+            # Reject a known stale CAS without disrupting viewers. A genuine
+            # change fences before durable I/O; an idempotent save still checks
+            # disk CAS, but keeps current captures when no authority changed.
+            if changing:
+                self._fence_camera_privacy_changes(self._camera_privacy.begin_change(camera_id))
+            saved_changes = set()
+            try:
+                saved_changes = await owned_thread(
+                    self._camera_privacy.set_mode,
+                    profile_id,
+                    camera_id,
+                    mode,
+                    expected_revision=expected_revision,
+                )
+            except CameraPrivacyConflict:
+                raise AdminProtocolError(
+                    "configuration_conflict", "Camera privacy changed; refresh first"
+                ) from None
+            except CameraPrivacyError:
+                raise AdminProtocolError(
+                    "configuration_unavailable", "Camera privacy could not be saved"
+                ) from None
+            finally:
+                self._fence_camera_privacy_changes(
+                    saved_changes | self._camera_privacy.finish_change(camera_id)
+                )
+            if self._current_account_scope() != scope or not self._account_authority_current():
+                raise AdminProtocolError(
+                    "account_changed", "Camera privacy account changed; refresh first"
+                )
+            row = self._camera_privacy.view(camera_id)
+            return {
+                "status": "completed",
+                "profile_id": profile_id,
+                "account_generation": account_generation,
+                "camera_id": camera_id,
+                "revision": row["revision"],
+                "mode": row["mode"],
+            }
 
     def _camera_source_current(self, camera_id: str, session: CameraMediaSession) -> bool:
         owns_source = getattr(session, "owns_source", None)
@@ -1747,7 +1949,10 @@ class HaloService:
             )
 
     async def _stop_media_sessions(self, reason: str) -> None:
-        self._invalidate_media_access()
+        self._invalidate_media_access(reason)
+        # Join privacy retirement already scheduled by invalidation; do not
+        # issue a second stop for a receiver whose first teardown is in flight.
+        await self._drain_media_tasks()
         sessions = list((self._captures.retiring | self._media_sessions).items())
         for camera_id, session in sessions:
             self._captures.retire(camera_id, session)
@@ -1790,6 +1995,7 @@ class HaloService:
                 self._account_authority_current()
                 and self._media_sessions.get(camera_id) is session
                 and self._camera_source_current(camera_id, session)
+                and self._camera_privacy_allowed(camera_id, LeasePurpose.SCRYPTED_LIVE)
                 and (
                     not callable(getattr(session, "is_lease_active", None))
                     or session.is_lease_active(lease_id)
@@ -1809,7 +2015,9 @@ class HaloService:
         purpose: LeasePurpose,
         *,
         admission: Callable[[], bool] | None = None,
+        homekit: bool = False,
     ) -> tuple[CameraMediaSession, str]:
+        admission = self._camera_privacy_admission(camera_id, purpose, homekit, admission)
         prefixes = {
             LeasePurpose.HOMEKIT_LIVE: "homekit",
             LeasePurpose.SCRYPTED_LIVE: "rtsp",
@@ -1893,7 +2101,9 @@ class HaloService:
             session = self._media_sessions.get(camera_id)
             if session is None or not self._account_authority_current():
                 return False
-            if not self._camera_source_current(camera_id, session):
+            if not self._camera_source_current(
+                camera_id, session
+            ) or not self._camera_privacy_allowed(camera_id, LeasePurpose.SCRYPTED_LIVE):
                 return False
             lease = await asyncio.to_thread(session.renew, lease_id)
             return bool(
@@ -1901,6 +2111,7 @@ class HaloService:
                 and epoch == self._media_epoch
                 and self._media_sessions.get(camera_id) is session
                 and self._camera_source_current(camera_id, session)
+                and self._camera_privacy_allowed(camera_id, LeasePurpose.SCRYPTED_LIVE)
             )
 
     def _close_rtsp_consumer(self, camera_id: str, lease_id: str) -> None:
@@ -1921,8 +2132,13 @@ class HaloService:
         return await self._open_camera_speaker(camera_id, admission=admission)
 
     async def _open_camera_speaker(
-        self, camera_id: str, *, admission: Callable[[], bool] | None = None
+        self,
+        camera_id: str,
+        *,
+        admission: Callable[[], bool] | None = None,
+        homekit: bool = False,
     ) -> PluginIntercomStream:
+        admission = self._camera_privacy_admission(camera_id, "talkback", homekit, admission)
         async with self._camera_media_lock(camera_id):
             _require_plugin_admission(admission, intercom=True)
             epoch = self._media_epoch
@@ -2261,7 +2477,9 @@ class HaloService:
         fresh: bool,
         *,
         admission: Callable[[], bool] | None = None,
+        homekit: bool = False,
     ) -> bytes:
+        admission = self._camera_privacy_admission(camera_id, "snapshot", homekit, admission)
         async with self._session_change_lock:
             client, device = self._active_ring_camera(camera_id)
             epoch = self._media_epoch
@@ -2320,6 +2538,7 @@ class HaloService:
                     "Ring camera operations are temporarily unavailable",
                     status=503,
                 )
+        _require_plugin_admission(admission)
         if not snapshot:
             raise PluginCameraOperationError(
                 "snapshot_unavailable",
@@ -2377,7 +2596,8 @@ class HaloService:
             self._homekit_bridge.notify_inventory()
             self._homekit_bridge.notify_event()
 
-    def _invalidate_media_access(self) -> None:
+    def _invalidate_media_access(self, reason="camera_privacy_changed") -> None:
+        self._fence_camera_privacy_changes(self._camera_privacy.invalidate(), reason)
         self._notify_homekit_inventory()
         self._media_epoch += 1
         self._media_client = None

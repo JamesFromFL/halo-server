@@ -12,6 +12,7 @@ import pytest
 
 from halo_server.configuration import ConfigurationStore, ServerConfiguration, ServerMode
 from halo_server.release_activation import (
+    READER_VERSION,
     ActivationConflict,
     ActivationError,
     PolicyStore,
@@ -140,12 +141,15 @@ async def test_local_failure_rolls_back_only_code_compatible_with_current_floor(
     newer, service = setup(
         tmp_path / "newer",
         service=Service({B.release_id: False}),
-        readers={A.release_id: 14, B.release_id: 16},
+        readers={A.release_id: 14, B.release_id: READER_VERSION + 1},
     )
     first = await newer.activate(A, expected_revision=0)
     result = await newer.activate(B, expected_revision=first.selection.revision)
     assert result.status == "stopped" and result.code == "rollback_incompatible"
-    assert newer.policy.load().minimum_reader == 16 and newer.selection.load().active == B
+    assert (
+        newer.policy.load().minimum_reader == READER_VERSION + 1
+        and newer.selection.load().active == B
+    )
     assert service.events[-1] == "stop"
     with pytest.raises(ActivationError) as error:
         await newer.activate(A, expected_revision=result.selection.revision)
@@ -278,13 +282,13 @@ async def test_crossprefix_floor_change_after_verification_is_rechecked_under_gl
     async def stop():
         await original_stop()
         # A separate prefix won EX between initial verification and this stop.
-        activation.policy.advance(16)
+        activation.policy.advance(READER_VERSION + 1)
 
     service.stop = stop
     with pytest.raises(ActivationError) as error:
         await activation.activate(A, expected_revision=0)
     assert error.value.code == "operator_reader_too_old"
-    assert activation.policy.load().minimum_reader == 16
+    assert activation.policy.load().minimum_reader == READER_VERSION + 1
     assert not activation.selection.path.exists()
 
 

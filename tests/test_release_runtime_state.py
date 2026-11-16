@@ -9,7 +9,7 @@ from test_native_service import service_fixture
 from halo_server.diagnostics import local_doctor
 from halo_server.homekit.bridge import AdapterResources
 from halo_server.paths import ServerPaths, ensure_private_directory
-from halo_server.release_activation import ActivationError, PolicyStore
+from halo_server.release_activation import READER_VERSION, ActivationError, PolicyStore
 from halo_server.release_execution import validate_runtime_state
 from halo_server.release_guard import ReleaseGuardError
 
@@ -24,7 +24,7 @@ def test_new_code_refuses_future_floor_and_enrolled_floor_loss(tmp_path):
     store = PolicyStore(tmp_path)
     store.advance(14)
     validate_runtime_state(tmp_path)
-    store.advance(16)
+    store.advance(READER_VERSION + 1)
     with pytest.raises(ReleaseGuardError):
         validate_runtime_state(tmp_path)
     store.path.unlink()
@@ -35,7 +35,7 @@ def test_new_code_refuses_future_floor_and_enrolled_floor_loss(tmp_path):
 @pytest.mark.asyncio
 async def test_service_refuses_future_floor_before_starting_owner_resources(tmp_path):
     service, _, _ = service_fixture(tmp_path)
-    PolicyStore(service.paths.state_directory).advance(16)
+    PolicyStore(service.paths.state_directory).advance(READER_VERSION + 1)
     with pytest.raises(ReleaseGuardError):
         await service.start()
     assert service._started_at is None and service._main_loop is None

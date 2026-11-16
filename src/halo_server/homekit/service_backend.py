@@ -33,6 +33,8 @@ from halo_server.ring.devices import (
 if TYPE_CHECKING:
     from halo_server.service import HaloService
 
+_DIAGNOSTIC_SCOPE_ONLY = object()
+
 
 @dataclass
 class _RecordingMediaConsumer(BufferedMediaConsumer):
@@ -208,19 +210,21 @@ class ServiceHomeKitBackend:
                 )
             )
 
-    def diagnostic_scope_current(self, scope: MediaScope) -> bool | None:
+    def diagnostic_scope_current(
+        self, scope: MediaScope, *, privacy_token=_DIAGNOSTIC_SCOPE_ONLY
+    ) -> bool | None:
         """Check current ownership without making observation wait on inventory.
 
         None means lock contention, not revoked authority. The diagnostic owner
         must skip and count that observation; it must not admit it using a cached
-        permission. The real account properties also take an RLock, so both
-        locks must be available before invoking the unchanged ownership checks.
+        permission. Account properties and optional privacy checks also take
+        RLocks; each must be available before invoking the ownership checks.
         """
         if not isinstance(scope, MediaScope):
             return False
         if not self._lock.acquire(blocking=False):
             return None
-        account_lock = None
+        account_lock = privacy_lock = None
         try:
             candidate = getattr(self._service._sessions, "_lock", None)
             if candidate is not None:
@@ -231,17 +235,67 @@ class ServiceHomeKitBackend:
                 if not candidate.acquire(blocking=False):
                     return None
                 account_lock = candidate
-            return self.scope_current(scope)
+            if privacy_token is not _DIAGNOSTIC_SCOPE_ONLY:
+                candidate = self._service._camera_privacy._lock
+                if not isinstance(candidate, type(self._lock)):
+                    return None
+                if not candidate.acquire(blocking=False):
+                    return None
+                privacy_lock = candidate
+            if not self.scope_current(scope):
+                return False
+            if privacy_token is _DIAGNOSTIC_SCOPE_ONLY:
+                return True
+            # Diagnostic media is a separate local recorder, not a HAP viewer.
+            # A HomeKit-only override therefore cannot authorize this capture.
+            return bool(
+                self._service._camera_privacy_epoch(scope.camera_id) == privacy_token
+                and self._service._camera_privacy_allowed(scope.camera_id, "live")
+                and self._service._camera_privacy_allowed(scope.camera_id, "audio")
+            )
         except Exception:
             return False
         finally:
+            if privacy_lock is not None:
+                privacy_lock.release()
             if account_lock is not None:
                 account_lock.release()
             self._lock.release()
 
-    def _guard(self, scope: MediaScope, admission: Callable[[], bool]) -> Callable[[], bool]:
+    def privacy_token(self, scope: MediaScope):
+        """Material Ring/owner authority changes fence already admitted media."""
+        return self._service._camera_privacy_epoch(scope.camera_id, homekit=True)
+
+    def permission_allowed(self, scope: MediaScope, permission: str) -> bool:
+        if permission == "controls":
+            return True
+        purpose = {
+            "streaming": "live",
+            "live_audio": "audio",
+            "talkback": "talkback",
+            "snapshots": "snapshot",
+            "recording": "recording",
+            "recording_audio": "audio",
+        }.get(permission)
+        if purpose is None:
+            return False
+        return self._service._camera_privacy_allowed(scope.camera_id, purpose, homekit=True)
+
+    def _guard(
+        self, scope: MediaScope, admission: Callable[[], bool], permission: str | None = None
+    ) -> Callable[[], bool]:
+        token = self.privacy_token(scope) if permission is not None else None
+
         def current() -> bool:
-            return self.scope_current(scope) and bool(admission())
+            return (
+                self.scope_current(scope)
+                and bool(admission())
+                and (
+                    permission is None
+                    or self.privacy_token(scope) == token
+                    and self.permission_allowed(scope, permission)
+                )
+            )
 
         if not current():
             raise HomeKitOperationError("stale_scope")
@@ -259,13 +313,14 @@ class ServiceHomeKitBackend:
         return await self._acquire_buffered(scope, purpose, admission, recording=True)
 
     async def _acquire_buffered(self, scope, purpose, admission, recording=False):
-        guard = self._guard(scope, admission)
+        guard = self._guard(scope, admission, "recording" if recording else "streaming")
         service = self._service
         try:
             session, lease_id = await service._acquire_camera_consumer(
                 scope.camera_id,
                 purpose,
                 admission=guard,
+                homekit=True,
             )
         except RuntimeError as exc:
             raise HomeKitOperationError("camera_unavailable") from exc
@@ -317,10 +372,10 @@ class ServiceHomeKitBackend:
     ) -> bytes:
         if type(fresh) is not bool:
             raise HomeKitOperationError("invalid_request")
-        guard = self._guard(scope, admission)
+        guard = self._guard(scope, admission, "snapshots")
         try:
             image = await self._service._get_camera_snapshot(
-                scope.camera_id, fresh, admission=guard
+                scope.camera_id, fresh, admission=guard, homekit=True
             )
         except PluginCameraOperationError as exc:
             raise HomeKitOperationError(exc.code) from exc
@@ -329,9 +384,11 @@ class ServiceHomeKitBackend:
         return image
 
     async def open_speaker(self, scope: MediaScope, *, admission: Callable[[], bool]):
-        guard = self._guard(scope, admission)
+        guard = self._guard(scope, admission, "talkback")
         try:
-            return await self._service._open_camera_speaker(scope.camera_id, admission=guard)
+            return await self._service._open_camera_speaker(
+                scope.camera_id, admission=guard, homekit=True
+            )
         except PluginIntercomOpenError as exc:
             raise HomeKitOperationError(exc.code) from exc
 

@@ -402,6 +402,108 @@ class AdminClient:
             raise AdminClientError("bad_response", "Daemon returned an invalid control view")
         return result
 
+    async def camera_privacy_list(self) -> dict[str, Any]:
+        result = await self._object("camera_privacy_list")
+        cameras = result.get("cameras")
+        nullable = (
+            "ring_live_allowed",
+            "ring_recording_allowed",
+            "ring_snapshot_allowed",
+            "ring_audio_allowed",
+        )
+        flags = (
+            "source_fresh",
+            "effective_live_allowed",
+            "effective_recording_allowed",
+            "effective_snapshot_allowed",
+            "effective_audio_allowed",
+        )
+        reasons = {
+            None,
+            "ring_live_disabled",
+            "ring_motion_disabled",
+            "ring_audio_disabled",
+            "source_unknown",
+            "source_stale",
+            "account_unavailable",
+        }
+        valid = (
+            type(result.get("available")) is bool
+            and (result.get("profile_id") is None or isinstance(result["profile_id"], str))
+            and (
+                result.get("account_generation") is None
+                and result.get("available") is False
+                or type(result.get("account_generation")) is int
+                and 0 <= result["account_generation"] < 2**53
+            )
+            and (
+                result.get("available") is False
+                or bool(result.get("profile_id"))
+                and type(result.get("account_generation")) is int
+                and result["account_generation"] >= 1
+            )
+            and isinstance(cameras, list)
+            and len(cameras) <= 256
+        )
+        seen = set()
+        if valid:
+            for row in cameras:
+                if (
+                    not isinstance(row, dict)
+                    or not isinstance(row.get("camera_id"), str)
+                    or not 1 <= len(row["camera_id"]) <= 128
+                    or row["camera_id"] in seen
+                    or type(row.get("revision")) is not int
+                    or not 0 <= row["revision"] < 2**53
+                    or not isinstance(row.get("mode"), str)
+                    or row["mode"] not in {"ring", "homekit"}
+                    or any(
+                        key not in row or type(row[key]) not in {bool, type(None)}
+                        for key in nullable
+                    )
+                    or any(type(row.get(key)) is not bool for key in flags)
+                    or "reason" not in row
+                    or not (row["reason"] is None or isinstance(row["reason"], str))
+                    or row["reason"] not in reasons
+                ):
+                    valid = False
+                    break
+                seen.add(row["camera_id"])
+        if not valid:
+            raise AdminClientError("bad_response", "Daemon returned an invalid camera privacy view")
+        return result
+
+    async def camera_privacy_set(
+        self,
+        profile_id: str,
+        account_generation: int,
+        camera_id: str,
+        expected_revision: int,
+        mode: str,
+    ) -> dict[str, Any]:
+        result = await self._object(
+            "camera_privacy_set",
+            profile_id=profile_id,
+            account_generation=account_generation,
+            camera_id=camera_id,
+            expected_revision=expected_revision,
+            mode=mode,
+        )
+        if (
+            result.get("status") != "completed"
+            or result.get("profile_id") != profile_id
+            or type(result.get("account_generation")) is not int
+            or result.get("account_generation") != account_generation
+            or result.get("camera_id") != camera_id
+            or result.get("mode") != mode
+            or type(result.get("revision")) is not int
+            or not expected_revision <= result["revision"] <= expected_revision + 1
+        ):
+            raise AdminClientError(
+                "bad_response", "Daemon returned an invalid camera privacy outcome"
+            )
+        return result
+
     async def camera_control(
         self,
         profile_id: str,

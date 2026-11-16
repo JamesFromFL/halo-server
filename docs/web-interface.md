@@ -188,6 +188,34 @@ warm-history state without a fixed camera-count cap. Starting sources and pendin
 are included in the count. Installing the interface never enables capture. These states
 describe the last device refresh, not verified Apple Home clip delivery.
 
+### Camera privacy
+
+In **Devices → camera → Privacy**, Halo follows Ring's camera privacy settings by
+default. Live View and motion recording are separate permissions: disabling Ring
+motion detection blocks background recording and snapshots, while manual viewing
+can remain available if Ring still permits Live View. Recording capture also needs
+Live View permission because it uses the same upstream connection. Missing or stale
+Ring permissions block the affected access rather than assuming consent. Settings
+normally propagate on the next inventory refresh (up to about a minute); the last
+successful Ring observation expires after two minutes.
+Ring's audio privacy setting also gates the camera microphone in live and recorded
+media; HomeKit's microphone and recording-audio permissions remain additional gates.
+
+**HomeKit-managed privacy** is an explicit, password-confirmed choice for each
+camera. In the Ring app, allow Live View and enable motion detection/recording in
+every mode you intend to use; then choose when the camera may stream or record in
+Apple Home. Halo still enforces Apple's camera, microphone, snapshot and recording
+permissions. The setting only changes Halo's admission of HomeKit requests: it
+does not change Ring settings or Ring cloud recordings, enable HKSV by itself,
+or bypass a restriction enforced by Ring. Other integrations continue to follow
+Ring privacy settings. Subscription status is not guessed from an alarm mode or
+used to silently enable this override.
+
+Saved privacy choices and current source permissions are displayed separately.
+Changing a choice retires existing media authority and old snapshot/history data;
+returning permission does not revive an old request. Pairings and other cameras'
+saved choices are preserved. Opening this settings page never starts a camera.
+
 ## Scope
 
 The interface manages cameras, non-camera monitoring, Halo Bridge imports,

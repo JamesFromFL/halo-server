@@ -21,9 +21,10 @@ from halo_server.media.manager import owned_thread, settle_owned
 from halo_server.paths import open_private_directory
 from halo_server.private_json import MAX_REVISION, PrivateJsonError, PrivateJsonStore
 
-READER_VERSION = 15
-# Reader15 adds keypad registry mappings. Existing reader14 policies remain
-# readable; activation raises the floor before new code may persist mappings.
+READER_VERSION = 16
+# Reader16 enforces Ring camera privacy and its per-camera management preferences.
+# Activation raises the floor before new code runs; an older reader must not
+# silently reopen media that the current privacy policy has forbidden.
 MINIMUM_READER = 14
 DIGEST = re.compile(r"[0-9a-f]{64}\Z")
 

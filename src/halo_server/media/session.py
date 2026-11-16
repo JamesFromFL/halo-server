@@ -125,6 +125,7 @@ class CameraMediaSession:
         self._recording_seen_idr = False
         self._receiver_supervisor = receiver_supervisor
         self._on_raw_audio = on_raw_audio
+        self._source_audio_admission = None
         self._audio_encoder_factory = audio_encoder_factory
         # The service mode is fixed for this capture's lifetime. Native live
         # and recording consumers read original Opus directly.
@@ -141,6 +142,7 @@ class CameraMediaSession:
         self._audio_encoder: NormalizedOpusEncoder | None = None
         self._audio_owner = None
         self._retiring_audio = set()
+        self._privacy_fenced = False
         self._receiver_completed = None
         self._keyframe_requester = None
         self._legacy_failure = None
@@ -495,13 +497,28 @@ class CameraMediaSession:
                 observation, capture_epoch=self._buffer.capture_epoch
             )
 
+    def set_source_audio_admission(self, admission):
+        """Install the source privacy gate before this capture can acquire."""
+        if not callable(admission):
+            raise ValueError("source audio admission must be callable")
+        with self._lock:
+            if self._future is not None or self._leases.snapshot().leases:
+                raise RuntimeError("source audio admission cannot change during capture")
+            self._source_audio_admission = admission
+
+    def _source_audio_current(self):
+        try:
+            return self._source_audio_admission is None or self._source_audio_admission() is True
+        except Exception:
+            return False
+
     def _encoded_audio(self, generation, payload, timestamp, **frame_metadata):
         entered = self._ingress_entry(generation, "audio", timestamp)
         started = self._diagnostic_time()
         if entered is not None and started is not None:
             self._metric("observe", "audio_pre_admission", max(0, started - entered))
         with self._measured_state_lock("audio_admission_wait"):
-            if not self._accepts_media_locked(generation):
+            if not self._accepts_media_locked(generation) or not self._source_audio_current():
                 self._metric("count", "audio_admission_rejected")
                 return False
             epoch = self._buffer.capture_epoch
@@ -595,6 +612,8 @@ class CameraMediaSession:
         stop_requests: list[_ReceiverStopRequest] = []
         try:
             with self._lock:
+                if self._privacy_fenced:
+                    raise RuntimeError("camera privacy authority was retired")
                 current_time = self._now(now)
                 intercom_was_active = self._intercom_active_locked()
                 lease, actions = self._leases.acquire(
@@ -667,6 +686,25 @@ class CameraMediaSession:
             self._clear_retry_without_demand_locked()
             self._retry_if_due_locked(current_time)
         self._wait_for_stop_requests(stop_requests)
+
+    def fence(self, reason: str = "camera_privacy_changed"):
+        """Retire this capture permanently and clear history without waiting on I/O.
+
+        The owner removes it from admission first, then joins finish_fence on a
+        worker. A previously queued acquire cannot reopen this retired object.
+        """
+        with self._lock:
+            self._privacy_fenced = True
+            active = self._intercom_active_locked()
+            requests = self._apply_actions_locked(self._leases.stop_all(reason))
+            self._finish_intercom_if_inactive_locked(active)
+            self._clear_retry_without_demand_locked()
+            self._clear_media_locked()
+            self._microphone_source.clear()
+            return requests
+
+    def finish_fence(self, requests) -> None:
+        self._wait_for_stop_requests(requests)
 
     def stop_all(self, reason: str = "service_stop") -> None:
         with self._lock:
@@ -829,6 +867,7 @@ class CameraMediaSession:
                     self._runner_generation == action.generation
                     and self._stop is stop
                     and not stop.is_set()
+                    and self._source_audio_current()
                 ),
                 source_generation=action.generation,
             )
@@ -1093,7 +1132,11 @@ class CameraMediaSession:
         self._metric("count", "legacy_audio_calls")
         with self._measured_state_lock("legacy_audio_wait"):
             owner = self._audio_owner
-            if not self._accepts_media_locked(generation) or owner is None:
+            if (
+                not self._accepts_media_locked(generation)
+                or owner is None
+                or not self._source_audio_current()
+            ):
                 return None
             if not owner.claim():
                 self._metric("count", "legacy_admission_busy")
@@ -1110,6 +1153,7 @@ class CameraMediaSession:
         generation, epoch, owner, stop, attempt = token
         return (
             self._accepts_media_locked(generation)
+            and self._source_audio_current()
             and self._buffer.capture_epoch == epoch
             and self._audio_owner is owner
             and self._stop is stop

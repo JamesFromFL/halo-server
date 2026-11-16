@@ -202,6 +202,22 @@ function replayCameraPage(kind) {
             warm_state: 'disabled',
           }
         : {}),
+      ...(kind === 'privacy'
+        ? {
+            revision: 1,
+            mode: 'ring',
+            ring_live_allowed: replay ? null : true,
+            ring_recording_allowed: replay ? null : true,
+            ring_snapshot_allowed: replay ? null : true,
+            ring_audio_allowed: replay ? null : true,
+            source_fresh: !replay,
+            effective_live_allowed: !replay,
+            effective_recording_allowed: !replay,
+            effective_snapshot_allowed: !replay,
+            effective_audio_allowed: !replay,
+            reason: replay ? 'source_unknown' : null,
+          }
+        : {}),
       ...(kind === 'controls'
         ? {
             has_light: device.capabilities.includes('light'),
@@ -243,7 +259,9 @@ const server = createServer(async (request, response) => {
     request.on('close', () => subscribers.delete(response));
     return;
   }
-  if (['pairing', 'recording', 'controls'].some((name) => path === `/api/web/v1/${name}`))
+  if (
+    ['pairing', 'recording', 'controls', 'privacy'].some((name) => path === `/api/web/v1/${name}`)
+  )
     return send(replayCameraPage(path.split('/').at(-1)));
   if (path === '/api/web/v1/selection' && request.method === 'GET') {
     if (!available) {

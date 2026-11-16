@@ -37,6 +37,7 @@ CONTROL_SECONDS = 30.0
 CLEANUP_SECONDS = 5.0
 MAX_READ_SECONDS = 1.0
 MAX_HANDLE_WORK = 2
+_UNKNOWN_PRIVACY = object()
 
 
 class HomeKitBackend(Protocol):
@@ -61,6 +62,7 @@ class _Camera:
     policy: CameraPolicy = field(default_factory=CameraPolicy)
     recording_floor: float = float("inf")
     recording_audio_floor: float = float("inf")
+    upstream_privacy: object = None
 
 
 @dataclass(eq=False)
@@ -125,6 +127,24 @@ class HomeKitController:
             raise HomeKitOperationError("generation_exhausted")
         return self._privacy_generation
 
+    def _upstream_privacy(self, scope):
+        callback = getattr(self._backend, "privacy_token", None)
+        if callback is None:
+            return None
+        try:
+            return callback(scope)
+        except Exception:
+            return _UNKNOWN_PRIVACY
+
+    def _permits(self, entry, permission):
+        if not entry.policy.permits(permission):
+            return False
+        callback = getattr(self._backend, "permission_allowed", None)
+        try:
+            return callback is None or callback(entry.scope, permission) is True
+        except Exception:
+            return False
+
     async def attach(self, boot_id: str, selected_scopes=()) -> NativeInventory:
         self._owner()
         _identifier(boot_id)
@@ -155,7 +175,10 @@ class HomeKitController:
                 self._quiesced_sources.clear()
             self._boot = boot_id
             self._cameras = {
-                scope.source_key: _Camera(replace(scope, privacy_generation=self._next_privacy()))
+                scope.source_key: _Camera(
+                    replace(scope, privacy_generation=self._next_privacy()),
+                    upstream_privacy=self._upstream_privacy(scope),
+                )
                 for scope in selected
             }
         await self._retire(claims)
@@ -200,8 +223,10 @@ class HomeKitController:
             # Shared live/legacy history is not authority to replay footage
             # captured before this recording policy epoch was admitted.
             now = self._owner().time()
-            entry.recording_floor = now if policy.permits("recording") else float("inf")
-            entry.recording_audio_floor = now if policy.permits("recording_audio") else float("inf")
+            entry.recording_floor = now if self._permits(entry, "recording") else float("inf")
+            entry.recording_audio_floor = (
+                now if self._permits(entry, "recording_audio") else float("inf")
+            )
             claims = tuple(
                 claim
                 for claim in self._claims.values()
@@ -218,6 +243,13 @@ class HomeKitController:
     async def reconcile(self) -> NativeInventory:
         self._owner()
         with self._lock:
+            for entry in self._cameras.values():
+                privacy = self._upstream_privacy(entry.scope)
+                if privacy != entry.upstream_privacy:
+                    entry.upstream_privacy = privacy
+                    entry.scope = replace(entry.scope, privacy_generation=self._next_privacy())
+                    entry.policy = CameraPolicy()
+                    entry.recording_floor = entry.recording_audio_floor = float("inf")
             claims = tuple(claim for claim in self._claims.values() if not self._valid(claim))
             for claim in claims:
                 claim.retired = True
@@ -228,7 +260,13 @@ class HomeKitController:
         if self._closed or self._boot is None or self._boot != boot_id:
             raise HomeKitOperationError("boot_changed")
         entry = self._cameras.get(scope.source_key)
-        if entry is None or entry.scope != scope or not self._backend.scope_current(scope):
+        if (
+            entry is None
+            or entry.scope != scope
+            or not self._backend.scope_current(scope)
+            or entry.upstream_privacy is _UNKNOWN_PRIVACY
+            or entry.upstream_privacy != self._upstream_privacy(scope)
+        ):
             raise HomeKitOperationError("scope_changed")
         if self._quiesced_boot == boot_id and scope.source_key in self._quiesced_sources:
             raise HomeKitOperationError("maintenance_pending")
@@ -237,7 +275,7 @@ class HomeKitController:
     def authorize(self, boot_id: str, scope: MediaScope, permission: str) -> None:
         """Recheck selected source/privacy authority without acquiring a resource."""
         with self._lock:
-            if not self._entry(boot_id, scope).policy.permits(permission):
+            if not self._permits(self._entry(boot_id, scope), permission):
                 raise HomeKitOperationError("policy_denied")
 
     def validate_selected_scope(self, boot_id: str, scope: MediaScope) -> None:
@@ -247,7 +285,7 @@ class HomeKitController:
     def recording_floor(self, boot_id: str, scope: MediaScope, *, audio: bool = False) -> float:
         with self._lock:
             entry = self._entry(boot_id, scope)
-            if not entry.policy.permits("recording_audio" if audio else "recording"):
+            if not self._permits(entry, "recording_audio" if audio else "recording"):
                 raise HomeKitOperationError("policy_denied")
             return entry.recording_audio_floor if audio else entry.recording_floor
 
@@ -281,7 +319,7 @@ class HomeKitController:
             return (
                 self._claims.get(claim.session_id) is claim
                 and not claim.retired
-                and entry.policy.permits(_permission(claim.kind))
+                and self._permits(entry, _permission(claim.kind))
             )
 
     def _admission(self, claim: _Claim) -> bool:
@@ -315,7 +353,7 @@ class HomeKitController:
         session_id = str(uuid4()) if session_id is None else _identifier(session_id)
         with self._lock:
             entry = self._entry(boot_id, scope)
-            if not entry.policy.permits(_permission(kind)):
+            if not self._permits(entry, _permission(kind)):
                 raise HomeKitOperationError("policy_denied")
             existing = self._claims.get(session_id)
             if existing is not None:
@@ -766,7 +804,7 @@ class NativeLiveHandle:
                     )
                 entry = self._controller._cameras[self.scope.source_key]
                 audio = (
-                    entry.policy.permits("live_audio")
+                    self._controller._permits(entry, "live_audio")
                     and self._controller._camera(self.scope).capabilities.audio
                 )
                 return BufferRead(

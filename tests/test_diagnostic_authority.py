@@ -9,6 +9,7 @@ import pytest
 from test_diagnostic_capture import PausedCapture
 from test_native_service import Camera, service_fixture
 
+from halo_server.camera_privacy import ring_privacy_receipt
 from halo_server.media.diagnostic_capture import DiagnosticCapture
 from halo_server.owner_capture import ScopedTrace
 from halo_server.ring.client import RingClient, RingSessionManager
@@ -25,17 +26,32 @@ def backend_fixture(tmp_path):
     sessions = RingSessionManager(None)
     sessions._client, sessions._active_scope = client, old_sessions.active_scope
     service._sessions, service._media_client = sessions, client
+    service._camera_privacy.observe(
+        sessions.active_scope,
+        client,
+        cached.all_devices,
+        ring_privacy_receipt(cached.all_devices, time.monotonic()),
+    )
     backend = service._owner_admin.control_backend
     scope = backend.inventory().cameras[0].scope
     return backend, scope, sessions, cached
 
 
-@pytest.mark.parametrize("which", ["inventory", "account"])
+@pytest.mark.parametrize("which", ["inventory", "account", "privacy"])
 def test_real_backend_contention_skips_observation_without_waiting_or_revoking(tmp_path, which):
     backend, scope, sessions, _ = backend_fixture(tmp_path)
     capture = PausedCapture(tmp_path / "locked")
-    trace = ScopedTrace(capture, lambda: backend.diagnostic_scope_current(scope))
-    lock = backend._lock if which == "inventory" else sessions._lock
+    token = backend._service._camera_privacy_epoch(scope.camera_id)
+
+    def current():
+        return backend.diagnostic_scope_current(scope, privacy_token=token)
+
+    trace = ScopedTrace(capture, current)
+    lock = {
+        "inventory": backend._lock,
+        "account": sessions._lock,
+        "privacy": backend._service._camera_privacy._lock,
+    }[which]
     entered, release = threading.Event(), threading.Event()
 
     def hold():
@@ -48,7 +64,7 @@ def test_real_backend_contention_skips_observation_without_waiting_or_revoking(t
     assert entered.wait(1)
     try:
         began = time.monotonic()
-        assert backend.diagnostic_scope_current(scope) is None
+        assert current() is None
         assert not trace.event("source_rtp", "audio", seq=1)
         assert time.monotonic() - began < 0.1
         assert not trace.revoked.is_set()
@@ -56,7 +72,7 @@ def test_real_backend_contention_skips_observation_without_waiting_or_revoking(t
         release.set()
         worker.join(1)
         assert not worker.is_alive()
-    assert backend.diagnostic_scope_current(scope) is True
+    assert current() is True
     assert trace.event("source_rtp", "audio", seq=2)
     capture.release.set()
     result = capture.close()

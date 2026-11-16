@@ -10,6 +10,7 @@ from test_service import FakeListener, FakeMediaSession, FakeSessions
 from halo_server.configuration import ServerConfiguration, ServerMode
 from halo_server.paths import ServerPaths
 from halo_server.release_activation import PolicyStore
+from halo_server.release_execution import READER_VERSION
 from halo_server.release_guard import (
     GUARD_FD_ENV,
     GUARD_STATE_ENV,
@@ -136,11 +137,16 @@ async def test_failed_startup_retains_guard_only_when_compensation_is_incomplete
 @pytest.mark.asyncio
 async def test_source_reader_floor_is_checked_under_guard_before_admin_start(tmp_path):
     owner = service(tmp_path)
-    PolicyStore(owner.paths.state_directory).advance(16)
-    with pytest.raises(ReleaseGuardError, match="cannot read"):
-        await owner.start()
-    assert owner._source_guard_lease is None and not owner.paths.admin_socket.exists()
-    ReleaseGuard.acquire(owner.paths.state_directory, exclusive=True, nonblocking=True).close()
+    PolicyStore(owner.paths.state_directory).advance(READER_VERSION + 1)
+    try:
+        with pytest.raises(ReleaseGuardError, match="cannot read"):
+            await owner.start()
+        assert owner._source_guard_lease is None and not owner.paths.admin_socket.exists()
+        ReleaseGuard.acquire(owner.paths.state_directory, exclusive=True, nonblocking=True).close()
+    finally:
+        # A failed expectation must not leave a real daemon guard in this
+        # process and turn unrelated subsequent tests into guard conflicts.
+        await owner.stop()
 
 
 @pytest.mark.asyncio

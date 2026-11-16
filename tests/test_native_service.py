@@ -3,6 +3,7 @@
 import asyncio
 import concurrent.futures
 import threading
+import time
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -11,6 +12,7 @@ from test_media_session import SPS_PPS_IDR
 
 from halo_server.account_scope import AccountScope
 from halo_server.api.plugin import PluginIntercomOpenError
+from halo_server.camera_privacy import ring_privacy_receipt
 from halo_server.configuration import ServerConfiguration, ServerMode
 from halo_server.homekit.models import CameraPolicy, HomeKitOperationError
 from halo_server.media.buffer import EncodedMediaBuffer, MediaStreamKind
@@ -33,6 +35,13 @@ class Camera:
         self.capabilities = set(capabilities)
         self.light_values = []
         self.snapshot_calls = 0
+        self._attrs = {
+            "settings": {
+                "live_view_disabled": False,
+                "motion_detection_enabled": True,
+                "enable_audio_recording": True,
+            }
+        }
 
     def has_capability(self, capability):
         return capability in self.capabilities
@@ -57,6 +66,7 @@ class Client:
         self.all_devices = list(cameras)
         self.submissions = 0
         self.snapshot_future = None
+        self._camera_privacy_receipt = ring_privacy_receipt(self.all_devices, time.monotonic())
 
     def submit(self, coroutine):
         self.submissions += 1
@@ -148,6 +158,7 @@ def service_fixture(tmp_path, *, cameras=None, mode=ServerMode.HOMEKIT):
     service._media_client = client
     service._media_scope = sessions.active_scope
     service._account_integrations_ready = True
+    service._remember_camera_privacy(client)
     if service._homekit_bridge is not None:
         service._homekit_bridge._publication_enabled = False
     return service, client, sessions
@@ -355,6 +366,7 @@ async def test_logout_retires_native_handles_and_allows_later_attach(tmp_path):
     service._media_client = client
     service._media_scope = sessions.active_scope
     service._account_integrations_ready = True
+    service._remember_camera_privacy(client)
     new_boot, new_scope = await select(service, streaming=True)
     assert new_boot != boot and new_scope.account_generation == 2
     new_handle = await service.homekit.open_live(new_boot, new_scope)
@@ -445,7 +457,7 @@ async def test_new_device_scope_cannot_reuse_old_shared_capture_before_reconcili
         await service.homekit.open_live(new_boot, new_scope)
     with pytest.raises(HomeKitOperationError):
         await service.homekit.open_speaker(new_boot, new_scope)
-    with pytest.raises(RuntimeError, match="reconciliation"):
+    with pytest.raises(RuntimeError, match="authority|reconciliation"):
         await service._acquire_rtsp_consumer("42")
     assert capture.acquired == [LeasePurpose.HOMEKIT_LIVE]
     assert not capture.leases

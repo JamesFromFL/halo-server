@@ -9,7 +9,7 @@ import pytest
 from test_release_activation import A, setup
 
 from halo_server.configuration import ConfigurationStore, ServerConfiguration, ServerMode
-from halo_server.release_activation import ActivationError
+from halo_server.release_activation import READER_VERSION, ActivationError
 from halo_server.release_guard import ReleaseGuard, ReleaseGuardError
 from halo_server.release_modes import ManagedModeStore
 
@@ -165,7 +165,7 @@ async def test_old_source_operator_refuses_floor_before_any_configuration_read(
     tmp_path, monkeypatch
 ):
     activation, service = setup(tmp_path)
-    activation.policy.advance(16)
+    activation.policy.advance(READER_VERSION + 1)
     configuration = activation.state_directory / "configuration.json"
     configuration.write_text("future configuration must never be decoded by this reader")
     configuration.chmod(0o600)

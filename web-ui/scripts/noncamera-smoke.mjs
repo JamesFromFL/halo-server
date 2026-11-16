@@ -266,7 +266,7 @@ const server = createServer(async (request, response) => {
     publish();
     return send({ operation_id: value.operation_id, status: 'completed' });
   }
-  if (/^\/api\/web\/v1\/(selection|pairing|recording|controls)$/.test(path))
+  if (/^\/api\/web\/v1\/(selection|pairing|recording|controls|privacy)$/.test(path))
     return send({
       ...monitoring.scope,
       boot_id: 'adapter-test',
@@ -306,7 +306,7 @@ const page = await context.newPage();
 page.on('pageerror', (error) => errors.push(error.message));
 const cameraRequests = () =>
   requests.filter((request) =>
-    /^\/api\/web\/v1\/(selection|pairing|recording|controls)$/.test(request.path),
+    /^\/api\/web\/v1\/(selection|pairing|recording|controls|privacy)$/.test(request.path),
   );
 try {
   await page.goto(`http://127.0.0.1:${server.address().port}/#/devices`);

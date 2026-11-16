@@ -1,6 +1,6 @@
 import {
   Accessory, AudioRecordingCodecType, AudioRecordingSamplerate, MediaContainerType, PhysicalConnectionBudget, VideoCodecType, AudioBitrate, AudioStreamingCodecType, AudioStreamingSamplerate, CameraController, Categories, Characteristic, DoorbellController,
-  H264Level, H264Profile, HAPStatus, Service, SRTPCryptoSuites, StreamRequestTypes,
+  H264Level, H264Profile, HAPStatus, ResourceRequestReason, Service, SRTPCryptoSuites, StreamRequestTypes,
   type CameraRecordingDelegate, type CameraStreamingDelegate,
 } from "@homebridge/hap-nodejs";
 import { ProtocolError, type AccessoryAudio, type AccessoryRecording, type CameraPolicy, type MediaScope } from "./protocol.js";
@@ -65,6 +65,7 @@ export class CameraAccessory {
       active: () => !this.retired && this.homeKitActive() && this.streamingActive() && this.audioControls?.available !== false,
       policy: () => this.policy,
       audio: () => this.audioControls?.current ?? identity.audio ?? null,
+      snapshotAllowed: reason => this.snapshotAllowed(reason),
       forceStop: hapId => this.controller.forceStopStreamingSession(hapId),
       ...(options.reportError === undefined ? {} : {reportError: options.reportError}),
       failure: options.failure ?? (() => {}),
@@ -118,6 +119,11 @@ export class CameraAccessory {
       this.applyState(this.lastState);
       void Promise.all([this.streamingDelegate?.activeChanged(), this.recordingDelegate?.activeChanged()]).catch(() => options.failure?.());
     });
+    for (const type of [Characteristic.EventSnapshotsActive, Characteristic.PeriodicSnapshotsActive]) {
+      operating?.getCharacteristic(type).on("change", () => {
+        void this.streamingDelegate?.snapshotPolicyChanged().catch(() => options.failure?.());
+      });
+    }
     this.applyState({motion: null, synchronized: false, source_state: "connecting"});
   }
 
@@ -134,11 +140,23 @@ export class CameraAccessory {
     const value = operating.getCharacteristic(Characteristic.HomeKitCameraActive).value;
     return value === true || value === 1;
   }
+  private snapshotAllowed(reason?: ResourceRequestReason): boolean {
+    if (this.retired || !this.homeKitActive() || !this.streamingActive()) return false;
+    const operating = this.controller.recordingManagement?.operatingModeService;
+    if (!operating) return true;
+    const enabled = (type: typeof Characteristic.EventSnapshotsActive | typeof Characteristic.PeriodicSnapshotsActive): boolean => {
+      const value = operating.getCharacteristic(type).value;
+      return value === true || value === 1;
+    };
+    const event = enabled(Characteristic.EventSnapshotsActive), periodic = enabled(Characteristic.PeriodicSnapshotsActive);
+    return reason === ResourceRequestReason.EVENT ? event : reason === ResourceRequestReason.PERIODIC ? periodic : event && periodic;
+  }
   get policy(): CameraPolicy {
     const active = !this.retired && this.homeKitActive() && this.audioControls?.available !== false;
     const streaming = active && this.streamingActive(), audio = this.audioControls?.current ?? this.identity.audio ?? null;
     const recording = this.recordingDelegate?.permissions ?? {recording: false, recording_audio: false};
-    return {synchronized: true, streaming, snapshots: streaming && this.current.capabilities.snapshot,
+    return {synchronized: true, streaming, snapshots: streaming && this.current.capabilities.snapshot &&
+      (this.snapshotAllowed(ResourceRequestReason.EVENT) || this.snapshotAllowed(ResourceRequestReason.PERIODIC)),
       live_audio: streaming && audio?.microphone === true && !audio.microphone_muted && audio.microphone_volume > 0,
       talkback: streaming && this.current.capabilities.talkback && audio?.speaker === true && !audio.speaker_muted && audio.speaker_volume > 0,
       controls: active && this.controls?.available === true, recording: active && recording.recording, recording_audio: active && recording.recording_audio};

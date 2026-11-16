@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "source_hash": "6ba8eaba3e20dcfdcfbfe4b8bd6d74613d746e1527fc4c0602a7493158d849af",
+  "source_hash": "241313498888c974505b2105dd4f0b67aa295369167a4d868e5e43c6fc08322a",
   "source_files": [
     {
       "path": ".prettierignore",
@@ -76,15 +76,19 @@
     },
     {
       "path": "scripts/noncamera-smoke.mjs",
-      "sha256": "39ec8111e4e2ad165c0bbb4c8415b52680540688d207187b611ac974e48ae433"
+      "sha256": "5664bff2bb3173ba0a22205de9a934ac3b5ff50e40c7c4dc20a4049e66a87788"
     },
     {
       "path": "scripts/pages-smoke.mjs",
-      "sha256": "d1946bcbc65f504561111b70281c6d9fd761374a2974ceee8360a4a4c64589ba"
+      "sha256": "46d4265db5c2c7665f47e76c1b308535f37d46054ec2e0150e0886e224be1cb5"
     },
     {
       "path": "scripts/pairing-smoke.mjs",
       "sha256": "8533fa41a467b0df52da2633f60d32e25523bbb3c0bb235771c1ac66b68ccf9b"
+    },
+    {
+      "path": "scripts/privacy-smoke.mjs",
+      "sha256": "3a0ab72f759c2e7c93879b65da302544e0a410e16097293699e5920bbfa49f8b"
     },
     {
       "path": "scripts/shell-smoke.mjs",
@@ -199,12 +203,16 @@
       "sha256": "df2227735cb933e92ee9c93feced7b17dba8d674168a54b97d5d87f588765913"
     },
     {
+      "path": "src/lib/privacy.ts",
+      "sha256": "f80a32cbacaeca73298a2c854fb93598157eb8b95d66d1bfdf35fc324db7ade0"
+    },
+    {
       "path": "src/lib/recording.ts",
       "sha256": "359a51113584c0a65ad5de0cd83841a096bece0c3441e01e99e2b58604e634ab"
     },
     {
       "path": "src/lib/types.ts",
-      "sha256": "f0ade9bf6db0cc6ff5c65a30810467ad7bbbdc4a6d3af684b278bc19baf158ca"
+      "sha256": "6bef724eae24819f4983d82e60d54003cc0d057f04ebbb957cee3d73526e8cef"
     },
     {
       "path": "src/main.ts",
@@ -216,7 +224,7 @@
     },
     {
       "path": "src/pages/Devices.svelte",
-      "sha256": "95c72990ef5d20ba91ccc4d2532574b12594c57e37e9ab9f7ddcea97c074a99e"
+      "sha256": "6615aa10e41c41ae8d1bf7736c954dfd5e7fe28001386f1ba46bd0c757352b74"
     },
     {
       "path": "src/pages/Diagnostics.svelte",
@@ -287,6 +295,10 @@
       "sha256": "c9fc83e405380e310bfac0b5c2fa75dba2f6c8cdc333402be08e6c22a43bc312"
     },
     {
+      "path": "tests/privacy.test.ts",
+      "sha256": "369ca2fc1a8dc9b2ec023285f639348655234115dcb369d27c1b78feb40306be"
+    },
+    {
       "path": "tests/recording.test.ts",
       "sha256": "24d4de35917cadf5110ae56610d512fecf9ab760fadad460d40f9a6d03de853b"
     },
@@ -309,8 +321,8 @@
       "sha256": "7535816b4e8693ab146ba556a9766b5bf9a2c86dfdc12e5cfd1e3057979345f0"
     },
     {
-      "path": "assets/index-dAaj-jEW.js",
-      "sha256": "0638c2047cfb465f95ffddf54e3e580613ff679a82f80676c191721526dd59d2"
+      "path": "assets/index-ea-Hri1w.js",
+      "sha256": "c089faf80299aa0e67e54fbb754fda4ccf48c0fd07d1d0e2edb7e3938bed5776"
     },
     {
       "path": "halo.png",
@@ -318,7 +330,7 @@
     },
     {
       "path": "index.html",
-      "sha256": "e71d32a0109921f95d3e0d20f9cf075a13d29e773cefa53659ea408a5efdd295"
+      "sha256": "79c0d93a254828ccb90e1f2257bf7eda289ecf4859fc96c1e3783553878d6edd"
     }
   ]
 }

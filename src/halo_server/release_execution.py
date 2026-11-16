@@ -8,7 +8,7 @@ from pathlib import Path
 
 from halo_server.release_guard import ReleaseGuardError, inherited_guard_fds
 
-READER_VERSION = 15
+READER_VERSION = 16
 _RELEASE_KEYS = (
     "HALO_RELEASE_ROOT",
     "HALO_RELEASE_MANIFEST_SHA256",

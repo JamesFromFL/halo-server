@@ -82,8 +82,7 @@ class OwnerCapture:
                 self.scope is not None
                 and self.scope.camera_id == camera_id
                 and self.trace is not None
-                and not self.trace.closed
-                and self.owner.control_backend.scope_current(self.scope)
+                and self.trace._allowed()
                 and self.capture.status().get("accepting", False)
             ):
                 return self.trace
@@ -101,7 +100,7 @@ class OwnerCapture:
         return self.capture.status() | {
             "capture_id": self.request["capture_id"],
             "directory": str(self.path),
-            "authority_current": self.owner.control_backend.scope_current(self.scope),
+            "authority_current": self.trace._allowed(),
         }
 
     async def handle(self, method, params):
@@ -154,9 +153,14 @@ class OwnerCapture:
         if not inventory.complete or camera is None or not camera.capabilities.video:
             raise AdminProtocolError("camera_unavailable", "Camera authority is unavailable")
         scope = camera.scope
+        privacy_token = service._camera_privacy_epoch(camera_id)
         async with service._camera_media_lock(camera_id):
             if not backend.scope_current(scope):
                 raise AdminProtocolError("stale_scope", "Camera authority changed")
+            if backend.diagnostic_scope_current(scope, privacy_token=privacy_token) is not True:
+                raise AdminProtocolError(
+                    "privacy_denied", "Ring must permit Live View and audio for diagnostic capture"
+                )
             if service._captures.retiring:
                 raise AdminProtocolError("busy", "Wait for camera cleanup before capture")
             for session in service._media_sessions.values():
@@ -178,12 +182,12 @@ class OwnerCapture:
                 raise AdminProtocolError("busy", "Wait for media consumers to finish")
             # Publishing in the owned worker also retains the capture if the admin caller leaves.
             try:
-                await owned_thread(self._create, request, scope)
+                await owned_thread(self._create, request, scope, privacy_token)
             except BaseException:
                 if self.request == request:
                     await self._close()
                 raise
-            if not backend.scope_current(scope):
+            if backend.diagnostic_scope_current(scope, privacy_token=privacy_token) is not True:
                 await self._close()
                 raise AdminProtocolError("stale_scope", "Camera authority changed during start")
             existing = service._media_sessions.get(camera_id)
@@ -199,7 +203,7 @@ class OwnerCapture:
                     ) from error
             return self.status()
 
-    def _create(self, request, scope):
+    def _create(self, request, scope, privacy_token):
         from halo_server.media.diagnostic_capture import DiagnosticCapture
         from halo_server.release_execution import release_status
 
@@ -220,7 +224,10 @@ class OwnerCapture:
             capture = DiagnosticCapture(path, duration_seconds=request["seconds"])
             self.capture, self.path, self.scope, self.request = capture, path, scope, request
             self.trace = ScopedTrace(
-                capture, lambda: self.owner.control_backend.diagnostic_scope_current(scope)
+                capture,
+                lambda: self.owner.control_backend.diagnostic_scope_current(
+                    scope, privacy_token=privacy_token
+                ),
             )
             try:
                 leaf = open_private_directory(path)
@@ -259,9 +266,9 @@ class OwnerCapture:
             await owned_thread(self.capture.close)
 
     async def reconcile(self):
-        if self.trace is not None and (
-            self.trace.closed or not self.owner.control_backend.scope_current(self.scope)
-        ):
+        if self.trace is not None:
+            self.trace._allowed()
+        if self.trace is not None and self.trace.closed:
             async with self.lock:
                 if not self.capture.status().get("finished", False):
                     self.trace.revoked.set()
