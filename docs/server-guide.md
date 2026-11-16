@@ -459,6 +459,7 @@ uv build --out-dir dist
 Run `npm run check`, `npm run build`, `npm test` in `homekit-adapter`, and
 `npm run verify` in `web-ui`. Full Python tests need system media/built adapter;
 browser tests need pinned Playwright browsers. [CI](../.github/workflows/ci.yml)
+checks collected versus reported test counts across four bounded groups and
 also performs advisory and installed-wheel checks. Fixtures/probes do not prove
 every physical model, controller, recording load or notification delivery.
 

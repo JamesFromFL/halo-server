@@ -10,7 +10,7 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 30
     env:
       VIRTUAL_ENV: ${{ github.workspace }}/.venv
       PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
@@ -60,23 +60,94 @@ jobs:
           npm run check
           npm test
           npm run build
-      - run: .venv/bin/ruff check --no-cache src tests scripts/check_web_browser.py scripts/check_web_pairing_browser.py
-      - run: .venv/bin/ruff format --check --no-cache src tests scripts/check_web_browser.py scripts/check_web_pairing_browser.py
-      - name: Run Python suite with bounded execution
+      - run: .venv/bin/ruff check --no-cache src tests scripts/check_web_browser.py scripts/check_web_pairing_browser.py scripts/ci_test_groups.py
+      - run: .venv/bin/ruff format --check --no-cache src tests scripts/check_web_browser.py scripts/check_web_pairing_browser.py scripts/ci_test_groups.py
+      - name: Collect and partition every Python test
         run: |
-          set -o pipefail
-          mkdir -p test-evidence
-          PYTHONUNBUFFERED=1 timeout --signal=INT --kill-after=30s 10m \
-            .venv/bin/pytest -v -x -o faulthandler_timeout=60 \
-            -p pytest_asyncio.plugin -p no:cacheprovider \
-            2>&1 | tee test-evidence/pytest.log
-      - name: Preserve Python test output
+          timeout --signal=INT --kill-after=15s 2m \
+            .venv/bin/python scripts/ci_test_groups.py collect --output-dir test-evidence
+      - name: Run Python test group-1
+        run: |
+          PYTHONUNBUFFERED=1 timeout --signal=INT --kill-after=30s 5m \
+            bash -o pipefail -c '
+              .venv/bin/pytest @test-evidence/group-1.txt -v -x \
+                -o faulthandler_timeout=60 -p pytest_asyncio.plugin -p no:cacheprovider \
+                --junitxml=test-evidence/group-1.xml \
+                2>&1 | tee test-evidence/group-1.log
+            '
+      - name: Preserve Python test group-1 output
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: python-test-output
-          path: test-evidence/
+          name: python-test-group-1
+          path: |
+            test-evidence/manifest.json
+            test-evidence/group-1.txt
+            test-evidence/group-1.log
+            test-evidence/group-1.xml
           retention-days: 14
+      - name: Run Python test group-2
+        run: |
+          PYTHONUNBUFFERED=1 timeout --signal=INT --kill-after=30s 5m \
+            bash -o pipefail -c '
+              .venv/bin/pytest @test-evidence/group-2.txt -v -x \
+                -o faulthandler_timeout=60 -p pytest_asyncio.plugin -p no:cacheprovider \
+                --junitxml=test-evidence/group-2.xml \
+                2>&1 | tee test-evidence/group-2.log
+            '
+      - name: Preserve Python test group-2 output
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: python-test-group-2
+          path: |
+            test-evidence/manifest.json
+            test-evidence/group-2.txt
+            test-evidence/group-2.log
+            test-evidence/group-2.xml
+          retention-days: 14
+      - name: Run Python test group-3
+        run: |
+          PYTHONUNBUFFERED=1 timeout --signal=INT --kill-after=30s 5m \
+            bash -o pipefail -c '
+              .venv/bin/pytest @test-evidence/group-3.txt -v -x \
+                -o faulthandler_timeout=60 -p pytest_asyncio.plugin -p no:cacheprovider \
+                --junitxml=test-evidence/group-3.xml \
+                2>&1 | tee test-evidence/group-3.log
+            '
+      - name: Preserve Python test group-3 output
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: python-test-group-3
+          path: |
+            test-evidence/manifest.json
+            test-evidence/group-3.txt
+            test-evidence/group-3.log
+            test-evidence/group-3.xml
+          retention-days: 14
+      - name: Run Python test group-4
+        run: |
+          PYTHONUNBUFFERED=1 timeout --signal=INT --kill-after=30s 5m \
+            bash -o pipefail -c '
+              .venv/bin/pytest @test-evidence/group-4.txt -v -x \
+                -o faulthandler_timeout=60 -p pytest_asyncio.plugin -p no:cacheprovider \
+                --junitxml=test-evidence/group-4.xml \
+                2>&1 | tee test-evidence/group-4.log
+            '
+      - name: Preserve Python test group-4 output
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: python-test-group-4
+          path: |
+            test-evidence/manifest.json
+            test-evidence/group-4.txt
+            test-evidence/group-4.log
+            test-evidence/group-4.xml
+          retention-days: 14
+      - name: Verify every collected Python test was reported
+        run: .venv/bin/python scripts/ci_test_groups.py verify --output-dir test-evidence
       - name: Audit locked runtime and tooling separately
         run: |
           mkdir -p audit
