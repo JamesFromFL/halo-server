@@ -7,7 +7,14 @@ import time
 from types import SimpleNamespace
 
 import pytest
-from test_device_bridge_runtime import envelope, fake_child, runtime, snapshot, wait_state
+from test_device_bridge_runtime import (
+    envelope,
+    fake_child,
+    publish_json_result,
+    runtime,
+    snapshot,
+    wait_state,
+)
 
 from halo_server.devices import ipc
 from halo_server.devices.runtime import DeviceBridgeRuntimeError
@@ -57,10 +64,7 @@ if (!issued) {
         else "send(last);"
     )
     publish += "}\n"
-    result = (
-        "results.push(message.payload);require('node:fs').writeFileSync("
-        f"{json.dumps(str(output))},JSON.stringify(results));"
-    )
+    result = "results.push(message.payload);" + publish_json_result(output, "results")
     if duplicate:
         result += "if(results.length===1)send(last);"
     entry = fake_child(
@@ -74,9 +78,60 @@ if (!issued) {
 
 async def wait_results(path, count=1):
     async with asyncio.timeout(4):
-        while not path.exists() or len(json.loads(path.read_text())) < count:
+        while True:
+            if path.exists():
+                results = json.loads(path.read_text())
+                if len(results) >= count:
+                    return results
             await asyncio.sleep(0.005)
-    return json.loads(path.read_text())
+
+
+@pytest.mark.asyncio
+async def test_command_result_reader_never_sees_partial_publication(tmp_path):
+    output = tmp_path / "results.json"
+    staged, release = tmp_path / "staged", tmp_path / "release"
+    output.write_text("[]")
+    # Hold a real fake-child write after its first byte. The reader must still
+    # see the previous complete JSON until the sibling file is renamed.
+    before = f"""
+const fs = require('node:fs');
+const originalWrite = fs.writeFileSync;
+fs.writeFileSync = (path, data) => {{
+  const fd = fs.openSync(path, 'w');
+  try {{
+    fs.writeSync(fd, data.slice(0, 1));
+    originalWrite({json.dumps(str(staged))}, 'ready');
+    const deadline = Date.now() + 4000;
+    while (!fs.existsSync({json.dumps(str(release))})) {{
+      if (Date.now() > deadline) throw new Error('Result write was not released');
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1);
+    }}
+    fs.writeSync(fd, data.slice(1));
+  }} finally {{ fs.closeSync(fd); }}
+}};
+"""
+    entry = fake_child(
+        tmp_path,
+        before=before,
+        publish=publish_json_result(output, "[{accepted:true}]"),
+    )
+    child = runtime(tmp_path, entry=entry)
+    waiter = asyncio.create_task(wait_results(output))
+    try:
+        await child.start()
+        await child.publish(snapshot())
+        async with asyncio.timeout(3):
+            while not staged.exists():
+                await asyncio.sleep(0.005)
+        assert json.loads(output.read_text()) == []
+        assert not waiter.done()
+        release.touch()
+        assert await waiter == [{"accepted": True}]
+    finally:
+        release.touch()
+        waiter.cancel()
+        await asyncio.gather(waiter, return_exceptions=True)
+        await child.stop()
 
 
 def test_alarm_protocol_accepts_only_explicit_mode_commands_and_state():

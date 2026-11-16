@@ -219,6 +219,16 @@ def test_pairing_metadata_validates_exact_manifest_and_never_accepts_partial_sec
     ipc.encode_frame(reveal)
 
 
+def publish_json_result(path, expression):
+    """Publish a complete fake-process result without exposing truncate/write gaps."""
+    pending = json.dumps(str(path.with_name(path.name + ".pending")))
+    destination = json.dumps(str(path))
+    return (
+        f"require('node:fs').writeFileSync({pending},JSON.stringify({expression}));"
+        f"require('node:fs').renameSync({pending},{destination});"
+    )
+
+
 def fake_child(tmp_path, *, hello="", ping="", before="", publish="", command_result=""):
     path = tmp_path / "fake.cjs"
     path.write_text(

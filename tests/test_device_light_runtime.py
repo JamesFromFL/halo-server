@@ -2,12 +2,18 @@
 
 import asyncio
 import copy
-import json
 from uuid import uuid4
 
 import pytest
 from test_device_alarm_runtime import wait_results
-from test_device_bridge_runtime import envelope, fake_child, runtime, snapshot, wait_state
+from test_device_bridge_runtime import (
+    envelope,
+    fake_child,
+    publish_json_result,
+    runtime,
+    snapshot,
+    wait_state,
+)
 
 from halo_server.devices import ipc
 
@@ -51,10 +57,7 @@ if (!issued) {
 """.replace("CHILDREN", "p.children" if all_children else "[p.children[0]]").replace(
         "MUTATE", mutate
     )
-    result = (
-        "results.push(message.payload);require('node:fs').writeFileSync("
-        f"{json.dumps(str(output))},JSON.stringify(results));"
-    )
+    result = "results.push(message.payload);" + publish_json_result(output, "results")
     if duplicate:
         result += "if(results.length===1)send(last);"
     return fake_child(
