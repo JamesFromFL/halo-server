@@ -1,249 +1,121 @@
-# Halo Server
+<p align="center">
+  <img src="web-ui/public/halo.png" width="128" alt="Halo app icon">
+</p>
 
-Halo Server is the headless Ring event and media backend for Halo integrations. Its daemon
-owns the Ring account session and real-time event listener. A separate Textual client
-and a GTK-style HTTPS web console administer it through an owner-only Unix socket.
+<h1 align="center">Halo Server</h1>
 
-## Current Status
+<p align="center">
+  <strong>Your Ring home. Connected to Apple Home.</strong><br>
+  Bring cameras, sensors, lights, and your Ring Alarm together through a server you control.<br>
+  Watch in Apple Home. Manage your setup from a familiar, beautifully simple web interface.
+</p>
 
-Direct HomeKit live video/audio, talkback, prompt events, JPEG snapshots and bounded
-HKSV H.264/AAC recording delivery are implemented through a supervised HAP adapter.
-Explicit camera selection, protected stable pairing identities, owner configuration,
-setup reveal/reset, warm-recording opt-in and diagnostics are available through the
-local CLI/TUI. Native output and encrypted recording transport are tested locally;
-real Apple/Ring device qualification remains pending. Verified offline release
-packaging, explicit user-service installation and controlled upgrades are implemented.
-The plugin/RTSP path remains available as optional compatibility mode. See the
-[owner administration guide](docs/owner-administration.md) for setup and commands, and
-[direct HomeKit engineering status](docs/direct-homekit-status.md) for validation boundaries.
-The [web interface guide](docs/web-interface.md) covers the browser console, local owner
-enrollment, certificate trust, managed companion service, and recovery.
-Non-camera discovery and Halo Bridge are implemented locally with qualified sensor
-mappings, guarded normal Alarm controls, individual/group lighting and legacy Chime
-controls. See the [non-camera acceptance guide](docs/noncamera-acceptance.md) before
-the first server pilot. Monitoring, bridge publication and control grants are
-separate opt-ins; physical model and Apple Home qualification remains pending.
+<p align="center">
+  <a href="#meet-halo-server">Product Tour</a> &middot;
+  <a href="#made-for-your-home">Features</a> &middot;
+  <a href="docs/server-guide.md#installation">Install</a> &middot;
+  <a href="docs/server-guide.md">Server Guide</a>
+</p>
 
-Implemented:
+<p align="center">
+  <a href="https://github.com/JamesFromFL/halo-server/actions/workflows/ci.yml"><img src="https://github.com/JamesFromFL/halo-server/actions/workflows/ci.yml/badge.svg" alt="Build and tests"></a>
+  <img src="https://img.shields.io/badge/platform-Linux-1793D1?style=flat-square" alt="Linux">
+  <img src="https://img.shields.io/badge/home-Self--hosted-4A86CF?style=flat-square" alt="Self-hosted">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0--or--later-2F855A?style=flat-square" alt="GPL-3.0-or-later"></a>
+</p>
 
-- private, transactional Ring account and push-event credential storage
-- Ring login, two-factor login, token restore, refresh persistence, and logout
-- supervised real-time Ring motion and doorbell events
-- per-camera incident timing with a 30-second quiet period
-- event-driven, expiring per-camera media leases with one shared Ring receiver
-- bounded H.264/Opus prebuffer gated on a retained SPS/PPS/IDR boundary
-- H.264 passthrough and mono 48 kHz Opus normalization for compatibility clients
-- development native HomeKit live video/audio, talkback, events and JPEG snapshots
-- separate recording permissions, measured pre-roll and bounded native HKSV/HDS delivery
-- camera inventory with an allowlisted public schema
-- authenticated, versioned plugin HTTP and WebSocket APIs with event replay
-- a server-owned protocol-v3 schema and fixture corpus shipped in the wheel
-- revocable Scrypted pairing tokens
-- digest-authenticated, on-demand loopback RTSP delivery
-- cached-by-default JPEG snapshots with bounded explicit fresh capture
-- capability-gated camera light and siren controls with nullable observed state
-- per-camera validated two-way audio with bounded WebRTC readiness and activation signaling
-- local daemon status, login, logout, shutdown, mode CAS and saved/applied settings
-- explicit HomeKit selection, scoped setup reveal/reset and warm-recording owner opt-in
-- verified owner light/siren actions and sanitized diagnostics/support exports
-- Textual status, login, two-factor, logout, pairing, camera, and recent-event views
-- independent HTTPS owner console with camera management, HomeKit pairing, diagnostics,
-  bounded recent activity, session management, and saved/applied settings
-- the proven Halo Ring WebRTC video and audio compatibility layer
-- account-scoped non-camera inventory, hub events and stable Halo Bridge identities
-- read-only contact, motion, leak, smoke/CO and Alarm observations with explicit faults
-- separately permitted normal Alarm modes, finite individual/group lighting requests,
-  legacy Chime settings with deliberate sound tests, and keypad brightness with
-  a persistent brightness lock and evidence-qualified proximity motion
+![Halo Server overview with connection health and HomeKit integration information](docs/images/halo-server-overview.webp)
 
-Not implemented yet:
+<p align="center"><sub>Actual Halo Server interface with demonstration devices and account data. No private camera feeds or Ring account were used for these screenshots.</sub></p>
 
-- TLS-protected remote plugin and media access
-- real Ring/Apple Home hub acceptance and measured end-to-end performance
-- additional non-camera model qualification, including brightness, generic switches,
-  locks, newer Chimes and access-control products
+## Meet Halo Server
 
-## Platform Support
+Your cameras belong alongside the rest of your home. Halo Server connects Ring
+to Apple Home directly, while a dedicated server keeps devices, events, and
+connections running in the background. Open the web console when you need it;
+close it when you are done.
 
-Halo Server currently uses owner-checked Unix sockets, POSIX file permissions, and advisory
-file locking to protect Ring credentials and local administration. Platform labels reflect
-that security boundary, not just whether Python can import the package.
+The interface shares Halo GTK's visual language: clean navigation, familiar
+controls, light and dark appearances, and layouts that fit a desktop or phone.
 
-| Platform | Validation tier | Notes |
-| --- | --- | --- |
-| Arch Linux | Verified | The complete suite and package gate run on the current Arch development host. |
-| Ubuntu 24.04 or newer | Primary CI target | The checked-in workflow installs and validates the native media stack on Ubuntu. |
-| Debian 12 or newer | Supported source target; distro CI pending | Official packages provide the required Python and media stack. |
-| Fedora 42 or newer | Supported source target; distro CI pending | Official packages provide the required Python and media stack. |
-| macOS (Apple Silicon and Intel) | Experimental | Uses Homebrew GStreamer and Apple's `getpeereid`; automated and real-camera acceptance on macOS are still required. |
-| Native Windows | Unsupported | Windows does not provide Halo's current Unix credential, locking, or admin-socket security model. |
-| Windows with WSL2 | Experimental | Halo can run inside Linux, but direct HomeKit discovery/networking and unattended operation under WSL2 remain unqualified. |
+### Cameras that feel at home
 
-A supported source target has no known runtime or dependency blocker and has a documented
-native package set. Debian and Fedora still require clean-host install and media smoke jobs
-before their packages can be promoted as release-verified environments.
-Current Linux verification is x86_64 only; ARM64 remains unverified on every Linux target.
-The direct HomeKit worker CPU-affinity contract currently targets Linux; macOS
-native delivery requires its own qualification.
+See who's at the door, check the garden, or answer from another room. Halo brings
+live video, camera audio, two-way talk, snapshots, motion, and doorbell events
+into Apple Home. Each camera pairs as its own accessory, ready to place in the
+right room and use with your Home automations.
 
-Direct HomeKit publication is currently Linux-only. macOS and WSL2 labels above
-cover experimental source use; they do not qualify direct HomeKit delivery there.
-A native Windows port needs a designed credential store, file lock, local IPC
-authentication and service installer. A loopback TCP admin port would weaken the
-current owner boundary.
+Enable **HomeKit Secure Video** support for the cameras you choose, then set
+streaming, recording, and recording-audio preferences in Apple Home. Halo's web
+console keeps each camera's connection, privacy, and recording choices together.
 
-## Run From Source
+![Halo camera settings with HomeKit recording and privacy controls](docs/images/halo-server-camera.webp)
 
-Python dependencies are locked with `uv 0.11.24`. Install that exact version through
-[Astral's versioned installer](https://docs.astral.sh/uv/getting-started/installation/) before
-running project commands:
+### One bridge. More of your home.
 
-```bash
-curl -LsSf https://astral.sh/uv/0.11.24/install.sh | sh
-uv --version
-```
+Pair **Halo Bridge** once to bring selected Ring devices into Apple Home alongside
+your cameras. Choose what belongs in your home, keep related devices organized,
+and grant control separately from monitoring.
 
-PyGObject, GStreamer introspection, and the
-GStreamer app, RTP, Opus, and H.264 parser plugins must be installed by the operating
-system. Use the package set for the host:
+- **Ring Alarm:** view security state and use normal Home, Away, and Disarm controls.
+- **Sensors:** bring supported contact, motion, leak, smoke, and carbon monoxide
+  observations into Home.
+- **Lighting:** control supported Ring Smart Lighting and lighting groups, plus
+  the lights on compatible cameras.
+- **Keypads:** manage supported keypad brightness, lock the chosen level, and use
+  reported proximity motion.
+- **Chimes:** manage supported Chime volume, snooze, and nightlight settings from
+  the web console, with deliberate sound tests when you need them.
 
-```bash
-# Arch Linux
-sudo pacman -S --needed python-gobject gst-rtsp-server \
-  gst-plugins-base gst-plugins-good gst-plugins-bad
+Available services and controls depend on the device and Ring account. The
+[device guide](docs/server-guide.md#devices-and-controls) covers those details.
 
-# Fedora
-sudo dnf install python3-gobject gstreamer1-rtsp-server \
-  gstreamer1-plugins-base gstreamer1-plugins-good gstreamer1-plugins-bad-free
+![Halo Server device inventory showing an alarm, sensors, a keypad, lighting, and a Chime](docs/images/halo-server-devices.webp)
 
-# Debian/Ubuntu
-sudo apt install python3-gi gir1.2-gst-rtsp-server-1.0 \
-  gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad
-```
+### Privacy with a clear choice
 
-Use the distribution's own Python 3.11 through 3.14 so its PyGObject package and GStreamer
-typelibs share one ABI. In particular, Ubuntu 22.04's default Python 3.10 is below Halo's
-minimum; use Ubuntu 24.04 or newer instead of mixing an independently downloaded Python with
-the system PyGObject package.
+Halo respects Ring's camera privacy settings by default. For a home managed
+through Apple Home, choose **HomeKit-managed privacy** per camera and configure
+when it may stream or record there. Camera access and microphone permissions
+remain explicit, and opening the web console never starts a camera stream.
 
-Halo Server validates `appsrc`, `queue`, `h264parse`, `rtph264pay`, and `rtpopuspay`
-before binding the RTSP gateway. A missing system plugin therefore fails startup with its
-element name instead of producing a camera stream that fails later.
+## Made for your home
 
-```bash
-uv venv --python /usr/bin/python3 --system-site-packages
-uv sync --frozen --all-groups
-uv run halo-server daemon
-```
+| Feature | What it brings to your day |
+| --- | --- |
+| **Direct Apple Home integration** | Standalone cameras and a shared device bridge, managed from one place. |
+| **Live video and two-way audio** | Watch, listen, and talk through compatible Ring cameras in Apple Home. |
+| **HomeKit Secure Video** | Per-camera recording support with recording choices controlled in Apple Home. |
+| **Motion and doorbell events** | Ring events carried into Home for notifications and automations. |
+| **A familiar web console** | Manage devices, pairing, privacy, activity, and settings from a desktop or phone. |
+| **Protected administration** | HTTPS, an owner sign-in, and password confirmation for sensitive actions. |
+| **Deliberate device controls** | Separate control permissions, confirmation for sensitive actions, and visible reported state. |
+| **Useful diagnostics** | Connection health, recent activity, local checks, and sanitized support reports. |
+| **Independent operation** | A background service with browser, terminal, and command-line administration. |
 
-On experimental macOS, Homebrew's `gstreamer` formula bundles the former
-GStreamer base, good, bad, RTSP server, and Python-binding formulae. The virtual environment
-must inherit packages from Homebrew's matching Python interpreter:
+## Make room for Halo
 
-```bash
-brew install gstreamer
-BREW_PYTHON="$(brew --prefix)/bin/python3"
-"$BREW_PYTHON" -c \
-  'import sys; assert (3, 11) <= sys.version_info < (3, 15), "Halo requires Python 3.11 through 3.14"'
-"$BREW_PYTHON" -c \
-  'import gi; gi.require_version("Gst", "1.0"); gi.require_version("GstRtspServer", "1.0"); from gi.repository import Gst, GstRtspServer'
-uv venv --python "$BREW_PYTHON" --system-site-packages
-uv sync --frozen --all-groups
-uv run halo-server daemon
-```
+Start with a Linux server, your Ring account, and Apple Home. The
+**[Server Guide](docs/server-guide.md)** walks through supported platforms,
+installation, secure browser access, pairing, and everyday operation.
 
-These macOS commands are a development path, not a supported unattended service install.
-Before promoting macOS, CI must exercise the full suite on both architectures and live testing
-must cover GStreamer RTSP, Ring media, clean shutdown, and restart persistence.
+- [Choose a platform and check requirements](docs/server-guide.md#platforms-and-requirements)
+- [Install Halo Server](docs/server-guide.md#installation)
+- [Set up the web console](docs/server-guide.md#web-console)
+- [Connect cameras and Halo Bridge to Apple Home](docs/server-guide.md#connect-to-apple-home)
+- [Configure recording and privacy](docs/server-guide.md#recording-and-privacy)
+- [Updates, recovery, and troubleshooting](docs/server-guide.md#operations-and-troubleshooting)
 
-Open the TUI in another terminal:
+Halo uses Ring's online services. HomeKit Secure Video requires an eligible Apple
+Home setup and [iCloud+ plan](https://support.apple.com/en-gb/guide/icloud/mme054c72692/icloud); Ring features remain subject to device capabilities
+and account permissions. See the guide for requirements and compatibility details.
 
-```bash
-uv run halo-server tui
-```
+## Part of Halo
 
-Status and clean shutdown are also available without the TUI:
+Prefer a native desktop companion? **[Halo GTK](https://github.com/JamesFromFL/halo-gtk)**
+brings Ring live monitoring, event history, and media tools to Linux with GTK 4
+and libadwaita. Halo Server carries the same visual identity into your home server.
 
-```bash
-uv run halo-server status
-uv run halo-server shutdown
-```
-
-The plugin API listens on `127.0.0.1:18443` and the media gateway on
-`127.0.0.1:18554` by default. Both listeners intentionally accept only loopback bind
-addresses. Halo Server and Scrypted must currently run in the same network namespace, such
-as on the same host or in a container using host networking.
-
-By default, credentials are stored under
-`${XDG_STATE_HOME:-$HOME/.local/state}/halo-server` and the admin socket is placed under
-`${XDG_RUNTIME_DIR:-/run/user/$UID}/halo-server`. Use `--state-directory` and
-`--runtime-directory` after a command to override them.
-
-## Architecture And Safety
-
-The TUI is only an admin client. Closing it does not stop the daemon, Ring events, or an
-active incident. The local admin socket validates the peer user and never returns Ring
-tokens or raw Ring SDK objects.
-
-Media sessions are event-driven or explicitly leased. Halo Server does not expose permanent
-Ring camera mounts or advertise continuous Ring-to-DVR recording. One upstream Ring session
-is shared by bounded downstream consumers for each camera, and every lease has both an idle
-expiry and an absolute lifetime. The current absolute limits are 10 minutes for event and live
-video, 5 minutes for intercom, and 30 seconds for snapshots. A client must reopen an expired
-session; Halo does not silently roll a continuously held connection into permanent recording.
-The authenticated capabilities API and daemon status publish these limits.
-
-The RTSP URLs are private transport details returned only to an authenticated plugin. Their
-credentials are random, rotate when plugin access is revoked, and are never displayed in
-daemon status. Connecting to one starts a bounded Scrypted media lease; disconnecting releases
-it. Do not configure these URLs as permanent DVR inputs.
-
-Snapshot requests use Ring's cached image endpoint by default. If that image returns HTTP 404,
-positively identified mains-only cameras can make one bounded fresh snapshot attempt through
-the existing Ring SDK. Battery, mixed-power and unknown models remain cache-only unless the
-caller explicitly requests fresh capture. An authenticated plugin can request a fresh event
-snapshot; that operation may wake the camera and falls back to the cached image when Ring does not publish a
-new timestamp. Snapshot work is limited to 8 seconds and 8 MiB, accepts JPEG data only, and is
-always returned with `Cache-Control: no-store`.
-
-Light and siren plugin routes accept exactly `{"on": true|false}` and are exposed for the
-capabilities reported by the pinned Ring SDK, plus the exact mini-v3 override documented below.
-Turning a siren on requests a bounded 30-second duration; turning it off requests zero seconds.
-Calls for each camera are serialized so a rapid on/off sequence cannot complete out of order.
-The only non-SDK control inference is the exact observed `stickup_cam_mini_v3` kind: its
-validated 2K media profile matches Ring's Indoor Cam Plus product contract, which includes a
-remote siren. Halo does not infer controls for other unknown kinds or from raw status fields.
-
-## Development
-
-```bash
-uv lock --check
-uv run --frozen pytest
-uv run --frozen ruff check --no-cache src tests
-uv run --frozen ruff format --check --no-cache src tests
-uv run --frozen pip-audit --local --progress-spinner=off
-uv build --out-dir dist
-```
-
-The project requires uv 0.11.24. CI installs the wheel into a clean environment and verifies
-the installed CLI, media dependency contract, and packaged protocol resources. The build job
-records its Git commit and SHA-256 artifact checksums; publishing and deployment remain
-separate, explicitly authorized release steps.
-
-Managed offline releases bundle the locked Python dependencies, production HomeKit
-adapter and official Node runtime. First installation includes an explicit user
-unit; verified launchers, revision-checked atomic selection, a monotonic reader
-floor and inherited lifetime locks protect upgrades and compatible code rollback.
-The initial archive is qualified for its exact Linux host/interpreter/library
-hashes. See [managed releases](docs/managed-releases.md) and
-[activation and rollback](docs/managed-release-activation.md). Real Ring/Apple
-qualification follows the [acceptance runbook](docs/homekit-acceptance.md).
-
-Halo Server owns the canonical plugin wire contract under
-`src/halo_server/api/protocol/v3`. Protocol v2 remains immutable for compatibility history.
-Plugin repositories vendor exact copies with source-commit and SHA-256 provenance. Breaking wire
-changes require a new protocol version.
-
-## License
-
-GPL-3.0-or-later
+Halo Server is free and open source under the [GPL-3.0-or-later license](LICENSE).
+It is an independent project and is not affiliated with or endorsed by Ring,
+Amazon, or Apple.
