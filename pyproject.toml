@@ -25,7 +25,7 @@ dependencies = [
     "av==17.1.0",
     "cryptography>=50.0.2,<51",
     # Security floors for transitive runtime dependencies also apply to wheels.
-    "dnspython>=2.9.0,<3",
+    "dnspython>=2.9.2,<3",
     # The per-listener push adapter is qualified against this exact SDK.
     "firebase-messaging==0.4.5",
     "multidict>=6.9.1,<7",
