@@ -62,7 +62,7 @@ jobs:
           npm run build
       - run: .venv/bin/ruff check --no-cache src tests scripts/check_web_browser.py scripts/check_web_pairing_browser.py
       - run: .venv/bin/ruff format --check --no-cache src tests scripts/check_web_browser.py scripts/check_web_pairing_browser.py
-      - run: .venv/bin/pytest -q -p pytest_asyncio.plugin -p no:cacheprovider
+      - run: .venv/bin/pytest -q -x -o faulthandler_timeout=60 -p pytest_asyncio.plugin -p no:cacheprovider
       - name: Audit locked runtime and tooling separately
         run: |
           mkdir -p audit
