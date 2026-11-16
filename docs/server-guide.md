@@ -26,7 +26,7 @@ model, host configuration or distribution release has been tested.
 | Platform | Qualification | Notes |
 | --- | --- | --- |
 | Arch Linux, x86_64 | Development and local package verification | Principal development environment; managed archives must match the receiving host. |
-| Ubuntu 24.04 or newer, x86_64 | Primary CI target | Workflow uses `ubuntu-latest` with native dependencies; this does not establish results for every Ubuntu version. |
+| Ubuntu 24.04, x86_64 | Primary CI target | Native integration, package and browser checks use an explicit Ubuntu 24.04 runner. Portable Python contracts also run on `ubuntu-latest`; this does not establish native results for every Ubuntu version. |
 | Debian 12 or newer, x86_64 | Source target | Documented dependencies; distribution-specific clean-host/media qualification remains separate. |
 | Fedora 42 or newer, x86_64 | Source target | Documented dependencies; distribution-specific clean-host/media qualification remains separate. |
 | Linux ARM64 | Unqualified | x86_64 packages/results do not establish ARM64 support. |
